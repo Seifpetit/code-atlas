@@ -158,6 +158,18 @@ An edge shown only after clicking an object.
 Purpose:
 - Explains the focused object's local import neighborhood without turning the whole context into a dependency graph.
 
+**Outgoing Edge**
+A focus-revealed edge from the focused object to something it imports.
+
+Purpose:
+- Shows what the focused object depends on.
+
+**Incoming Edge**
+A focus-revealed edge from something that imports the focused object.
+
+Purpose:
+- Shows what depends on the focused object.
+
 ## Interaction Language
 
 **Hover**
@@ -202,6 +214,13 @@ The right-side metadata panel shown after clicking an object.
 
 Current rule:
 - The details panel is click-driven, not hover-driven.
+
+**Relation Lens**
+The relationship section inside the details panel for the focused object.
+
+Purpose:
+- Summarizes imports, imported-by counts, outside-context relationships, and visible incoming/outgoing neighbors.
+- Gives meaning to focused edges without relying on canvas geometry alone.
 
 ## Layout Concepts
 

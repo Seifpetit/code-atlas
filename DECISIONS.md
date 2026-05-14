@@ -72,3 +72,23 @@ Implications:
 - The default view prioritizes spatial structure and object grouping.
 - Import relationships are available on demand through click focus.
 - React Flow connection handles should not be visually prominent in read-only navigation mode.
+
+## 6. Focused Relations Use A Relation Lens
+
+Status:
+- Accepted
+
+Decision:
+- Clicking an object should show a relation lens in the details panel.
+- The relation lens summarizes imports, imported-by counts, outside-context relationships, and visible incoming/outgoing neighbors.
+- Directional edge styling is used only inside the focused relation neighborhood.
+
+Rationale:
+- Lines alone are not enough to explain relationships.
+- A compact relation summary gives meaning before the user has to interpret edge geometry.
+- Incoming and outgoing relationships answer different questions and should be visually distinct.
+
+Implications:
+- Relation understanding is primarily panel-supported, with graph edges as supporting evidence.
+- Outgoing and incoming edges can use different calm styles.
+- Relation UI should remain tied to focused objects, not default canvas state.

@@ -4,6 +4,7 @@ import {
   BackgroundVariant,
   Controls,
   MiniMap,
+  MarkerType,
   ReactFlow,
   type NodeMouseHandler,
   type ReactFlowInstance
@@ -33,6 +34,22 @@ function isStructuralNode(node: AtlasFlowNode): node is AtlasFlowNode {
 
 function canEnter(node: AtlasNode): boolean {
   return node.type === "folder" && Number(node.metadata?.childCount ?? 0) > 0;
+}
+
+function ownsPath(owner: AtlasNode, path: string): boolean {
+  if (owner.type === "file") {
+    return owner.path === path;
+  }
+
+  return path === owner.path || path.startsWith(`${owner.path}/`);
+}
+
+function contextOwnsPath(contextId: string | null, path: string): boolean {
+  if (!contextId) {
+    return true;
+  }
+
+  return path === contextId || path.startsWith(`${contextId}/`);
 }
 
 export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps) {
@@ -124,7 +141,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       const matchesSearch = normalizedSearch.length > 0 && data.path.toLowerCase().includes(normalizedSearch);
       const isActive = activeNodeId === node.id;
       const isNeighbor = !isActive && connectedNodeIds.has(node.id);
-      const shouldFade = Boolean(activeNodeId) && !connectedNodeIds.has(node.id);
+      const shouldFade = Boolean(activeNodeId) && connectedNodeIds.size > 1 && !connectedNodeIds.has(node.id);
       const className = [
         matchesSearch ? "is-search-match" : "",
         isActive ? "is-focused-node" : "",
@@ -152,12 +169,84 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
     return laidOut.edges
       .filter((edge) => edge.source === activeNodeId || edge.target === activeNodeId)
-      .map((edge) => ({
-        ...edge,
-        animated: Boolean(focusedNodeId),
-        className: "is-related-edge"
-      }));
+      .map((edge) => {
+        const isOutgoing = edge.source === activeNodeId;
+
+        return {
+          ...edge,
+          animated: false,
+          className: isOutgoing ? "is-outgoing-edge" : "is-incoming-edge",
+          markerEnd: isOutgoing
+            ? {
+                type: MarkerType.ArrowClosed,
+                color: "#2dd4bf"
+              }
+            : undefined,
+          markerStart: isOutgoing
+            ? undefined
+            : {
+                type: MarkerType.ArrowClosed,
+                color: "#facc15"
+              }
+        };
+      });
   }, [activeNodeId, focusedNodeId, laidOut]);
+
+  const relationLens = useMemo(() => {
+    if (!graph || !laidOut || !selectedNode) {
+      return null;
+    }
+
+    const visibleById = new Map(laidOut.nodes.map((node) => [node.id, node.data as AtlasNode]));
+    const visibleOutgoing = laidOut.edges
+      .filter((edge) => edge.source === selectedNode.id)
+      .map((edge) => ({
+        id: edge.id,
+        label: visibleById.get(edge.target)?.label ?? edge.target,
+        count: Number(edge.data?.importCount ?? 1)
+      }));
+    const visibleIncoming = laidOut.edges
+      .filter((edge) => edge.target === selectedNode.id)
+      .map((edge) => ({
+        id: edge.id,
+        label: visibleById.get(edge.source)?.label ?? edge.source,
+        count: Number(edge.data?.importCount ?? 1)
+      }));
+    let internalOutgoing = 0;
+    let internalIncoming = 0;
+    let externalOutgoing = 0;
+    let externalIncoming = 0;
+
+    for (const edge of graph.edges) {
+      const sourceOwned = ownsPath(selectedNode, edge.source);
+      const targetOwned = ownsPath(selectedNode, edge.target);
+
+      if (sourceOwned && !targetOwned) {
+        if (contextOwnsPath(currentContextId, edge.target)) {
+          internalOutgoing += 1;
+        } else {
+          externalOutgoing += 1;
+        }
+      }
+
+      if (!sourceOwned && targetOwned) {
+        if (contextOwnsPath(currentContextId, edge.source)) {
+          internalIncoming += 1;
+        } else {
+          externalIncoming += 1;
+        }
+      }
+    }
+
+    return {
+      visibleOutgoing,
+      visibleIncoming,
+      internalOutgoing,
+      internalIncoming,
+      externalOutgoing,
+      externalIncoming
+    };
+  }, [currentContextId, graph, laidOut, selectedNode]);
 
   const importedByCount = useMemo(() => {
     if (!graph || !selectedNode || selectedNode.type !== "file") {
@@ -326,6 +415,57 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
             <button type="button" className="metadata-panel__action" onClick={() => navigateToContext(selectedNode.id)}>
               Enter
             </button>
+          ) : null}
+          {relationLens ? (
+            <section className="relation-lens" aria-label="Focused relation lens">
+              <div className="relation-lens__title">Relations</div>
+              <div className="relation-lens__stats">
+                <div>
+                  <span>Imports</span>
+                  <strong>{relationLens.internalOutgoing + relationLens.externalOutgoing}</strong>
+                </div>
+                <div>
+                  <span>Imported by</span>
+                  <strong>{relationLens.internalIncoming + relationLens.externalIncoming}</strong>
+                </div>
+                <div>
+                  <span>Outside</span>
+                  <strong>{relationLens.externalOutgoing + relationLens.externalIncoming}</strong>
+                </div>
+              </div>
+              <div className="relation-lens__columns">
+                <div>
+                  <div className="relation-lens__subtitle">Visible imports</div>
+                  {relationLens.visibleOutgoing.length > 0 ? (
+                    <ul>
+                      {relationLens.visibleOutgoing.slice(0, 6).map((relation) => (
+                        <li key={relation.id}>
+                          <span>{relation.label}</span>
+                          <strong>{relation.count}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No visible outgoing imports.</p>
+                  )}
+                </div>
+                <div>
+                  <div className="relation-lens__subtitle">Visible imported by</div>
+                  {relationLens.visibleIncoming.length > 0 ? (
+                    <ul>
+                      {relationLens.visibleIncoming.slice(0, 6).map((relation) => (
+                        <li key={relation.id}>
+                          <span>{relation.label}</span>
+                          <strong>{relation.count}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No visible incoming imports.</p>
+                  )}
+                </div>
+              </div>
+            </section>
           ) : null}
         </aside>
       ) : null}
