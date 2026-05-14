@@ -381,6 +381,7 @@ input {
   height: 8px;
   border: 1px solid #dbeafe;
   background: #60a5fa;
+  opacity: 0;
 }
 
 .is-search-match .atlas-node {

@@ -150,6 +150,13 @@ Current structural meaning:
 
 Rule:
 - Edges are secondary. They should stay calm, thin, and contextual.
+- Edges are focus-revealed, not visible by default.
+
+**Focus-Revealed Edge**
+An edge shown only after clicking an object.
+
+Purpose:
+- Explains the focused object's local import neighborhood without turning the whole context into a dependency graph.
 
 ## Interaction Language
 

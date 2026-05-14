@@ -147,18 +147,16 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     }
 
     if (!activeNodeId) {
-      return laidOut.edges;
+      return [];
     }
 
-    return laidOut.edges.map((edge) => {
-      const isRelated = edge.source === activeNodeId || edge.target === activeNodeId;
-
-      return {
+    return laidOut.edges
+      .filter((edge) => edge.source === activeNodeId || edge.target === activeNodeId)
+      .map((edge) => ({
         ...edge,
-        animated: isRelated && Boolean(focusedNodeId),
-        className: isRelated ? "is-related-edge" : "is-muted-edge"
-      };
-    });
+        animated: Boolean(focusedNodeId),
+        className: "is-related-edge"
+      }));
   }, [activeNodeId, focusedNodeId, laidOut]);
 
   const importedByCount = useMemo(() => {

@@ -53,3 +53,22 @@ Rationale:
 Implications:
 - The UI clusters structural-only files through layout, not by adding a new React Flow cluster object.
 - Domain, folder, and file remain the only structural node object types.
+
+## 5. Edges Are Focus-Revealed, Not Always Visible
+
+Status:
+- Accepted
+
+Decision:
+- Structural mode should not show dependency edges by default.
+- Clicking an object reveals only the import edges directly connected to that focused object.
+
+Rationale:
+- Always-visible edges create visual noise and make the structural view feel like a raw dependency graph.
+- Edges are secondary context, not the main navigation surface.
+- A focused edge neighborhood is easier to understand than a context full of lines.
+
+Implications:
+- The default view prioritizes spatial structure and object grouping.
+- Import relationships are available on demand through click focus.
+- React Flow connection handles should not be visually prominent in read-only navigation mode.
