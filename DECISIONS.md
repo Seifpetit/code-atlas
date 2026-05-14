@@ -19,3 +19,37 @@ Only `structural` is implemented right now. `functional` and `runtime` exist as 
 The interface uses contextual progressive disclosure instead of infinite zoom.
 
 Double-clicking an enterable object enters that selected object as the current context. The visible graph is then replaced by the direct children of that context, preserving orientation through breadcrumbs.
+
+## 3. Structural Visibility Is Broader Than Import Parsing
+
+Status:
+- Accepted
+
+Decision:
+- Structural mode should show common repository files such as Markdown, JSON, YAML, CSS, scripts, and source files.
+- Import parsing should remain limited to JS/TS source-like files for now.
+
+Rationale:
+- Structural exploration is about repository topology, not only code imports.
+- Folders such as `ai-skills` must be enterable when they contain documentation files.
+- Import edge extraction should stay focused and avoid pretending every file type has dependency semantics.
+
+Implications:
+- The backend separates structural file visibility from import-parsed files.
+- A file can appear in the atlas without contributing import edges.
+
+## 4. Structural-Only Files Are Grouped By Type
+
+Status:
+- Accepted
+
+Decision:
+- Structural-only files should be spatially grouped by file type in structural mode.
+
+Rationale:
+- Files that do not participate in import parsing are easier to understand as type groups.
+- This keeps documentation, config, styles, scripts, and other support files readable without implying import relationships.
+
+Implications:
+- The UI clusters structural-only files through layout, not by adding a new React Flow cluster object.
+- Domain, folder, and file remain the only structural node object types.

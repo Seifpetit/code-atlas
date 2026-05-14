@@ -13,7 +13,26 @@ const IGNORED_DIRECTORIES = new Set([
   ".git"
 ]);
 
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+const IMPORT_PARSE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+const STRUCTURAL_FILE_EXTENSIONS = new Set([
+  ...IMPORT_PARSE_EXTENSIONS,
+  ".css",
+  ".scss",
+  ".sass",
+  ".less",
+  ".html",
+  ".json",
+  ".md",
+  ".mdx",
+  ".yml",
+  ".yaml",
+  ".toml",
+  ".xml",
+  ".svg",
+  ".txt",
+  ".ps1",
+  ".sh"
+]);
 const RESOLUTION_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".json"];
 const INDEX_FILES = RESOLUTION_EXTENSIONS.map((extension) => `index${extension}`);
 
@@ -84,7 +103,7 @@ async function walkRepo(directory: string, repoRoot: string, structure: Extracte
       continue;
     }
 
-    if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name))) {
+    if (entry.isFile() && STRUCTURAL_FILE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
       structure.files.add(relativePath);
       addParentFolders(structure, relativePath);
     }
@@ -118,7 +137,9 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
     }
   });
 
-  const filePaths = [...structure.files].sort();
+  const filePaths = [...structure.files]
+    .filter((filePath) => IMPORT_PARSE_EXTENSIONS.has(path.extname(filePath).toLowerCase()))
+    .sort();
   const sourceFiles = filePaths.map((filePath) => project.addSourceFileAtPath(path.join(repoRoot, filePath)));
   const seenEdges = new Set<string>();
 

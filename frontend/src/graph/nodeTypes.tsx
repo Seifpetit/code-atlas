@@ -7,6 +7,10 @@ type StructuralKind = "domain" | "folder" | "file";
 
 function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
   if (structuralKind === "file") {
+    if (data.isImportParsed === false) {
+      return `${String(data.fileClusterType ?? "Structural")} file`;
+    }
+
     return `${data.metadata?.importCount ?? 0} imports`;
   }
 

@@ -100,6 +100,48 @@ Examples:
 Technical representation:
 - React Flow node type: `file`
 
+**Structural File**
+A file that appears in the atlas because it is part of repository topology.
+
+Examples:
+- `.ts`
+- `.tsx`
+- `.md`
+- `.json`
+- `.yml`
+- `.css`
+
+Rule:
+- Structural files are visible even when they are not parsed for imports.
+
+**Import-Parsed File**
+A file that the backend scans for import/export relationships.
+
+Current examples:
+- `.ts`
+- `.tsx`
+- `.js`
+- `.jsx`
+- `.mts`
+- `.cts`
+- `.mjs`
+- `.cjs`
+
+Rule:
+- Import parsing is narrower than structural visibility.
+
+**Structural-Only File**
+A structural file that is visible in the atlas but is not scanned for import/export relationships.
+
+Examples:
+- `.md`
+- `.json`
+- `.yml`
+- `.css`
+
+UI rule:
+- Structural-only files are grouped spatially by file type inside the current context.
+
 **Edge**
 A visible relationship between two objects.
 

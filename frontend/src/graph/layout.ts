@@ -33,6 +33,27 @@ const FILE_NODE_WIDTH = 226;
 const FILE_NODE_HEIGHT = 96;
 const GRID_GAP_X = 46;
 const GRID_GAP_Y = 34;
+const GROUP_GAP_Y = 70;
+
+const IMPORT_PARSE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+const EXTENSION_LABELS = new Map<string, string>([
+  [".md", "Docs"],
+  [".mdx", "Docs"],
+  [".json", "Config"],
+  [".yml", "Config"],
+  [".yaml", "Config"],
+  [".toml", "Config"],
+  [".css", "Styles"],
+  [".scss", "Styles"],
+  [".sass", "Styles"],
+  [".less", "Styles"],
+  [".html", "Markup"],
+  [".svg", "Assets"],
+  [".xml", "Data"],
+  [".txt", "Text"],
+  [".ps1", "Scripts"],
+  [".sh", "Scripts"]
+]);
 
 function depthOf(path: string): number {
   return path.split("/").length - 1;
@@ -62,10 +83,45 @@ function scoreNode(node: AtlasNode): number {
   return Number(node.metadata?.importCount ?? 0);
 }
 
+function extensionOf(node: AtlasNode): string {
+  return String(node.metadata?.extension ?? "").toLowerCase();
+}
+
+function fileClusterType(node: AtlasNode): string {
+  const extension = extensionOf(node);
+
+  if (IMPORT_PARSE_EXTENSIONS.has(extension)) {
+    return "Source";
+  }
+
+  return EXTENSION_LABELS.get(extension) ?? (extension ? extension.slice(1).toUpperCase() : "Other");
+}
+
+function childSortGroup(node: AtlasNode): string {
+  if (node.type === "folder") {
+    return "0:Folders";
+  }
+
+  if (IMPORT_PARSE_EXTENSIONS.has(extensionOf(node))) {
+    return "1:Source";
+  }
+
+  return `2:${fileClusterType(node)}`;
+}
+
 function prioritizeChildren(children: AtlasNode[]): AtlasNode[] {
-  return children
-    .slice()
-    .sort((a, b) => scoreNode(b) - scoreNode(a) || a.path.localeCompare(b.path));
+  return children.slice().sort((a, b) => {
+    const groupComparison = childSortGroup(a).localeCompare(childSortGroup(b));
+    if (groupComparison !== 0) {
+      return groupComparison;
+    }
+
+    if (a.type === "folder" || b.type === "folder" || childSortGroup(a) === "1:Source") {
+      return scoreNode(b) - scoreNode(a) || a.path.localeCompare(b.path);
+    }
+
+    return a.path.localeCompare(b.path);
+  });
 }
 
 function nodeDimensions(node: AtlasNode, level: number): { width: number; height: number; scale: number } {
@@ -97,7 +153,9 @@ function withLayoutData(node: AtlasNode, level: number): AtlasNode {
     layoutScale: dimensions.scale,
     layoutWidth: dimensions.width,
     layoutHeight: dimensions.height,
-    viewVariant: flowNodeType(node, level) === "domain" ? "domain-card" : "rect"
+    viewVariant: flowNodeType(node, level) === "domain" ? "domain-card" : "rect",
+    fileClusterType: node.type === "file" ? fileClusterType(node) : undefined,
+    isImportParsed: node.type === "file" ? IMPORT_PARSE_EXTENSIONS.has(extensionOf(node)) : undefined
   };
 }
 
@@ -133,23 +191,44 @@ function columnsForCount(count: number, level: number): number {
 }
 
 function buildVisibleNodes(visibleChildren: AtlasNode[], level: number): AtlasFlowNode[] {
-  const columns = columnsForCount(visibleChildren.length, level);
+  const groupedChildren = new Map<string, AtlasNode[]>();
 
-  return visibleChildren.map((child, index) => {
-    const dimensions = nodeDimensions(child, level);
-    const column = index % columns;
-    const row = Math.floor(index / columns);
+  for (const child of visibleChildren) {
+    const group = childSortGroup(child);
+    const existing = groupedChildren.get(group) ?? [];
+    existing.push(child);
+    groupedChildren.set(group, existing);
+  }
 
-    return {
+  const nodes: AtlasFlowNode[] = [];
+  let yOffset = 0;
+
+  for (const [, groupChildren] of [...groupedChildren.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const columns = columnsForCount(groupChildren.length, level);
+    let maxBottom = yOffset;
+
+    groupChildren.forEach((child, index) => {
+      const dimensions = nodeDimensions(child, level);
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      const y = yOffset + row * (dimensions.height + GRID_GAP_Y);
+
+      maxBottom = Math.max(maxBottom, y + dimensions.height);
+      nodes.push({
       id: child.id,
       type: flowNodeType(child, level),
       position: {
         x: column * (dimensions.width + GRID_GAP_X),
-        y: row * (dimensions.height + GRID_GAP_Y)
+        y
       },
       data: withLayoutData(child, level)
-    };
-  });
+      });
+    });
+
+    yOffset = maxBottom + GROUP_GAP_Y;
+  }
+
+  return nodes;
 }
 
 function ownsPath(owner: AtlasNode, path: string): boolean {
