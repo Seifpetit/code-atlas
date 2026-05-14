@@ -1,0 +1,44 @@
+export interface AtlasNode extends Record<string, unknown> {
+  id: string;
+  type: "folder" | "file";
+  label: string;
+  path: string;
+  parent?: string;
+  metadata?: {
+    extension?: string;
+    importCount?: number;
+    childCount?: number;
+  };
+}
+
+export interface AtlasEdge extends Record<string, unknown> {
+  id: string;
+  source: string;
+  target: string;
+  type: "import";
+}
+
+export interface AtlasGraph {
+  nodes: AtlasNode[];
+  edges: AtlasEdge[];
+}
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+
+export async function analyzeRepo(repoUrl: string): Promise<AtlasGraph> {
+  const response = await fetch(`${API_BASE_URL}/analyze`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ repoUrl })
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to analyze repository.");
+  }
+
+  return payload as AtlasGraph;
+}

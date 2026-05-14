@@ -1,0 +1,21 @@
+name: Archive Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  archive-check:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check archive drift
+        shell: pwsh
+        run: |
+          ./scripts/archive-pass-check.ps1
