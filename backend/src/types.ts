@@ -23,6 +23,8 @@ export interface GraphEdge {
 export interface GraphJson {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  commits?: CommitInfo[];
+  fileHistory?: Record<string, FileHistoryInfo>;
 }
 
 export interface ExtractedStructure {
@@ -32,4 +34,43 @@ export interface ExtractedStructure {
     source: string;
     target: string;
   }>;
+}
+
+export interface CommitInfo {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  date: string;
+  changedFiles: string[];
+}
+
+export interface FileHistoryInfo {
+  path: string;
+  commitCount: number;
+  lastModified: string;
+  authors: string[];
+  recentCommits: Array<{
+    hash: string;
+    shortHash: string;
+    message: string;
+    author: string;
+    date: string;
+  }>;
+}
+
+export type DiffFileStatus = "added" | "modified" | "deleted" | "renamed";
+
+export interface DiffFile {
+  path: string;
+  oldPath?: string;
+  status: DiffFileStatus;
+  additions: number;
+  deletions: number;
+}
+
+export interface DiffResult {
+  baseCommit: string;
+  targetCommit: string;
+  changedFiles: DiffFile[];
 }

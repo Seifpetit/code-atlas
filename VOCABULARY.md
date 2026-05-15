@@ -204,6 +204,90 @@ A focus-revealed edge from something that imports the focused object.
 Purpose:
 - Shows what depends on the focused object.
 
+**History Layer**
+A temporal overlay that shows how the repository changed over time.
+
+Purpose:
+- Adds repository evolution without replacing the structural map.
+
+Rule:
+- History decorates structure; it does not become the primary canvas model.
+
+**Timeline Panel**
+The UI panel listing recent commits.
+
+Purpose:
+- Lets the user preview or select one commit at a time.
+
+**Commit Preview**
+A temporary changed-file highlight caused by hovering a commit.
+
+Purpose:
+- Shows where a commit touched the current structural context without committing to a persistent selection.
+
+**Selected Commit**
+The single persisted commit selection in the timeline.
+
+Purpose:
+- Keeps changed-file highlights visible until the selection is cleared or replaced.
+
+**Changed File Highlight**
+A visual decoration on files or containing folders touched by the active commit.
+
+Purpose:
+- Shows where change happened while preserving structural readability.
+
+**File History Metadata**
+Per-file history information such as commit count, last modified date, authors, and recent commits.
+
+Purpose:
+- Adds temporal context to the file details panel without opening a git client.
+
+**Commit Diff Mode**
+A temporary mode for comparing one base commit against one target commit.
+
+Purpose:
+- Shows what changed between two commits at the architecture level.
+
+Rule:
+- Diff mode is a file state overlay, not a git client or code review view.
+
+**Base Commit**
+The older or starting commit selected for comparison.
+
+Purpose:
+- Defines the before state of the comparison.
+
+**Target Commit**
+The newer or ending commit selected for comparison.
+
+Purpose:
+- Defines the after state of the comparison.
+
+**Diff Overlay**
+The visual layer applied to structural nodes during commit comparison.
+
+Purpose:
+- Shows changed areas spatially without changing the structural layout.
+
+**Diff Summary Panel**
+A concise panel showing base/target commits, changed file counts, status counts, and additions/deletions.
+
+Purpose:
+- Holds comparison truth without making the canvas noisy.
+
+**File Change State**
+The per-file status returned by git diff.
+
+Values:
+- `added`
+- `modified`
+- `deleted`
+- `renamed`
+
+Purpose:
+- Drives the diff overlay visual treatment.
+
 **Edge Lane**
 A deterministic offset path used to separate multiple focused edges.
 

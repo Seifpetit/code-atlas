@@ -108,3 +108,69 @@ Needs fixing:
 - Increase node click tolerance with `nodeClickDistance`.
 - Re-evaluate whether structural nodes should be draggable at all.
 - Ensure relation stubs do not steal normal node-selection clicks except when explicitly tracing relationships.
+
+## Third-Party React Flow UI Defaults Override Atlas Styling
+
+Status:
+- Fixed / watch for recurrence
+
+Severity:
+- Low
+
+Area:
+- React Flow controls, minimap, and built-in UI styling
+
+Observed:
+- The bottom-left zoom controls appeared as a white rectangle that looked like a screen glitch.
+- Editing `.react-flow__controls` and `.react-flow__controls-button` initially appeared to do nothing.
+- The minimap also appeared mostly white and did not visually communicate the current structural objects clearly.
+
+Expected:
+- Built-in React Flow UI should visually match Code Atlas chrome.
+- Zoom controls should show clear `+`, `-`, and fit/center symbols with strong contrast.
+- The minimap should use a dark background and visible node colors for domains, folders, and files.
+
+Cause:
+- `@xyflow/react/dist/style.css` was imported after `frontend/src/styles.css`, so React Flow defaults overrode local Atlas styles.
+- React Flow minimap defaults use a white background unless overridden by props or CSS variables/classes.
+
+Fix:
+- Import `@xyflow/react/dist/style.css` before `frontend/src/styles.css` in `frontend/src/main.tsx`.
+- Add explicit dark styling for `.react-flow__controls`, `.react-flow__controls-button`, `.react-flow__minimap`, `.react-flow__minimap-svg`, and `.react-flow__minimap-node`.
+- Pass explicit MiniMap props: `bgColor`, `nodeColor`, `nodeStrokeColor`, `nodeStrokeWidth`, `maskColor`, `maskStrokeColor`, and `maskStrokeWidth`.
+
+Needs watching:
+- Any new React Flow built-in component should be checked against Atlas styling after import order changes.
+- If a style override does nothing, first verify CSS load order and whether the component is driven by React Flow CSS variables or props.
+
+## React Flow MiniMap Did Not Render Structural Objects
+
+Status:
+- Fixed
+
+Severity:
+- Medium
+
+Area:
+- React Flow minimap, structural layout metadata
+
+Observed:
+- The minimap background rendered after styling fixes, but structural objects did not appear inside it.
+- The minimap looked empty even though graph nodes were visible on the main canvas.
+
+Expected:
+- The minimap should show the current visible structural context.
+- Domains, folders, and files should appear as small colored rectangles matching their structural object type.
+
+Cause:
+- React Flow MiniMap only renders nodes that have measurable dimensions.
+- Code Atlas custom nodes were visually sized through CSS variables from `data.layoutWidth` and `data.layoutHeight`.
+- The React Flow node objects themselves did not include `width`, `height`, `initialWidth`, or `initialHeight`, so MiniMap skipped them.
+
+Fix:
+- Add `width`, `height`, `initialWidth`, and `initialHeight` to each generated React Flow node in `frontend/src/graph/layout.ts`.
+- Keep the existing `layoutWidth` and `layoutHeight` data fields for custom node CSS sizing.
+
+Needs watching:
+- Any future custom node sizing system must update both the visual node CSS data and the React Flow node dimensions.
+- If MiniMap appears empty while canvas nodes are visible, first check node dimensions on the React Flow node objects.

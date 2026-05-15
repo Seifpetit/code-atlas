@@ -18,7 +18,7 @@ export async function cloneRepo(repoUrl: string): Promise<string> {
   const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), "code-atlas-"));
   const git = simpleGit();
 
-  await git.clone(repoUrl, repoDir, ["--depth", "1", "--single-branch"]);
+  await git.clone(repoUrl, repoDir, ["--depth", "120", "--single-branch"]);
 
   return repoDir;
 }

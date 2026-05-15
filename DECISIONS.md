@@ -158,3 +158,46 @@ Implications:
 - Node activation and relation stubs are the default relationship visualization.
 - Full paths are temporary traces, not focus-mode infrastructure.
 - The relation lens remains the place for fuller relationship truth.
+
+## 10. History Is A Lightweight Overlay
+
+Status:
+- Accepted
+
+Decision:
+- Repository history is shown as a timeline layer over the structural map.
+- Structure remains the stable spatial world.
+- Hovering a commit previews changed files.
+- Clicking a commit persists changed-file highlighting.
+- Commit history does not introduce diff comparison, impact analysis, AI interpretation, or semantic clustering in this cycle.
+
+Rationale:
+- Code Atlas should answer how a repository evolved without becoming a git client.
+- Temporal information is useful when it helps users understand where change happened in the architecture.
+- The canvas must remain calm, readable, and structurally oriented.
+
+Implications:
+- History data is added to the analysis result as `commits` and `fileHistory`.
+- Timeline UI is separate from graph layout logic.
+- Changed-file highlighting should decorate existing structural nodes instead of mutating the graph into a commit dashboard.
+
+## 11. Commit Diff Mode Is A File State Overlay
+
+Status:
+- Accepted
+
+Decision:
+- Commit diff mode compares one base commit and one target commit.
+- Diff visualization decorates structural nodes with file change states.
+- Added, modified, renamed, and deleted files use distinct calm visual accents.
+- Diff mode does not render dependency edges, line-by-line diffs, impact analysis, or git table views.
+
+Rationale:
+- The product should answer what changed between two commits at the architecture level.
+- File state overlays preserve the spatial map while making repository evolution visible.
+- Diff comparison should remain temporary and resettable.
+
+Implications:
+- Timeline commits expose `Base`, `Target`, and `Compare` controls.
+- Backend exposes `/diff` for file-level status and churn metadata.
+- The diff summary panel provides truth that should not be forced into the canvas.

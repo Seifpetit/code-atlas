@@ -127,3 +127,31 @@ Returns:
   ]
 }
 ```
+
+`POST /diff`
+
+Compares two commits from the most recently analyzed repository.
+
+```json
+{
+  "baseCommit": "abc123...",
+  "targetCommit": "def456..."
+}
+```
+
+Returns:
+
+```json
+{
+  "baseCommit": "abc123...",
+  "targetCommit": "def456...",
+  "changedFiles": [
+    {
+      "path": "src/App.tsx",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 4
+    }
+  ]
+}
+```

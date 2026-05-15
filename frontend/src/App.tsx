@@ -21,7 +21,7 @@ export default function App() {
     try {
       const result = await analyzeRepo(repoUrl);
       setGraph(result);
-      setStatus(`${result.nodes.length} nodes, ${result.edges.length} imports`);
+      setStatus(`${result.nodes.length} nodes, ${result.edges.length} imports, ${result.commits?.length ?? 0} commits`);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Analysis failed.";
       setError(message);

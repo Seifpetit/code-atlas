@@ -215,13 +215,17 @@ function buildVisibleNodes(visibleChildren: AtlasNode[], level: number): AtlasFl
 
       maxBottom = Math.max(maxBottom, y + dimensions.height);
       nodes.push({
-      id: child.id,
-      type: flowNodeType(child, level),
-      position: {
-        x: column * (dimensions.width + GRID_GAP_X),
-        y
-      },
-      data: withLayoutData(child, level)
+        id: child.id,
+        type: flowNodeType(child, level),
+        position: {
+          x: column * (dimensions.width + GRID_GAP_X),
+          y
+        },
+        width: dimensions.width,
+        height: dimensions.height,
+        initialWidth: dimensions.width,
+        initialHeight: dimensions.height,
+        data: withLayoutData(child, level)
       });
     });
 

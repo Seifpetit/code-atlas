@@ -28,6 +28,7 @@ function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
 
 function NodeShell({ data, structuralKind }: { data: AtlasNode; structuralKind: StructuralKind }) {
   const relationStub = data.relationStub as RelationStubData | undefined;
+  const historyBadge = typeof data.historyBadge === "string" ? data.historyBadge : undefined;
   const viewVariant = typeof data.viewVariant === "string" ? data.viewVariant : "rect";
   const isDomainCard = structuralKind === "domain";
   const isVeryClose = data.isVeryClose === true;
@@ -73,6 +74,7 @@ function NodeShell({ data, structuralKind }: { data: AtlasNode; structuralKind: 
       <div className="atlas-node__label">{data.label}</div>
       <div className="atlas-node__path">{data.path}</div>
       <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
+      {historyBadge ? <div className="history-badge">{historyBadge}</div> : null}
       {relationStub?.outgoingCount ? (
         <button
           type="button"

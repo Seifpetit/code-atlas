@@ -10,7 +10,11 @@ import {
   type NodeMouseHandler,
   type ReactFlowInstance
 } from "@xyflow/react";
-import type { AtlasGraph, AtlasNode } from "../api";
+import { compareCommits, type AtlasGraph, type AtlasNode, type DiffResult } from "../api";
+import { DiffSummaryPanel } from "../history/DiffSummaryPanel";
+import { TimelinePanel } from "../history/TimelinePanel";
+import { diffFileForNode } from "../history/diffOverlay";
+import { changedFileSet, formatCommitDate, historyBadgeFor, nodeTouchesChangedFiles } from "../history/historyUtils";
 import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
 import { layoutStructuralContext, type AtlasFlowEdge, type AtlasFlowNode } from "./layout";
@@ -136,6 +140,13 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [tracedEdgeId, setTracedEdgeId] = useState<string | null>(null);
+  const [hoveredCommitHash, setHoveredCommitHash] = useState<string | null>(null);
+  const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
+  const [baseCommitHash, setBaseCommitHash] = useState<string | null>(null);
+  const [targetCommitHash, setTargetCommitHash] = useState<string | null>(null);
+  const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
+  const [isComparing, setIsComparing] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [manualNodePositions, setManualNodePositions] = useState<ManualNodePositions>({});
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance<AtlasFlowNode, AtlasFlowEdge> | null>(null);
@@ -170,6 +181,12 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setCurrentContextId(null);
     setFocusedNodeId(null);
     setTracedEdgeId(null);
+    setHoveredCommitHash(null);
+    setSelectedCommitHash(null);
+    setBaseCommitHash(null);
+    setTargetCommitHash(null);
+    setDiffResult(null);
+    setDiffError(null);
     setSelectedNode(null);
     setPageIndex(0);
     setManualNodePositions({});
@@ -181,6 +198,17 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setSelectedNode(null);
     setPageIndex(0);
   }, [currentContextId]);
+
+  useEffect(() => {
+    setFocusedNodeId(null);
+    setTracedEdgeId(null);
+    setSelectedNode(null);
+  }, [selectedCommitHash]);
+
+  useEffect(() => {
+    setDiffResult(null);
+    setDiffError(null);
+  }, [baseCommitHash, targetCommitHash]);
 
   useEffect(() => {
     if (!laidOut || pageIndex === laidOut.currentPage) {
@@ -198,11 +226,34 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     window.requestAnimationFrame(() => {
       reactFlowInstance.fitView({ padding: 0.24, duration: 420 });
     });
-  }, [laidOut, reactFlowInstance]);
+  }, [laidOut, reactFlowInstance, selectedCommitHash]);
 
+  const commits = graph?.commits ?? [];
+  const selectedCommit = useMemo(() => {
+    return commits.find((commit) => commit.hash === selectedCommitHash) ?? null;
+  }, [commits, selectedCommitHash]);
+  const baseCommit = useMemo(() => commits.find((commit) => commit.hash === baseCommitHash), [baseCommitHash, commits]);
+  const targetCommit = useMemo(() => commits.find((commit) => commit.hash === targetCommitHash), [targetCommitHash, commits]);
+  const activeCommit = useMemo(() => {
+    const activeCommitHash = hoveredCommitHash ?? selectedCommitHash;
+    return commits.find((commit) => commit.hash === activeCommitHash) ?? null;
+  }, [commits, hoveredCommitHash, selectedCommitHash]);
+  const selectedChangedFiles = useMemo(() => changedFileSet(selectedCommit), [selectedCommit]);
+  const activeChangedFiles = useMemo(() => changedFileSet(activeCommit), [activeCommit]);
+  const displayedLayoutNodes = useMemo(() => {
+    if (!laidOut) {
+      return [];
+    }
+
+    if (!selectedCommit) {
+      return laidOut.nodes;
+    }
+
+    return laidOut.nodes.filter((node) => nodeTouchesChangedFiles(node.data as AtlasNode, selectedChangedFiles));
+  }, [laidOut, selectedChangedFiles, selectedCommit]);
   const visibleById = useMemo(() => {
-    return new Map(laidOut?.nodes.map((node) => [node.id, node.data as AtlasNode]) ?? []);
-  }, [laidOut]);
+    return new Map(displayedLayoutNodes.map((node) => [node.id, node.data as AtlasNode]));
+  }, [displayedLayoutNodes]);
   const handleNodesChange = useCallback((changes: NodeChange<AtlasFlowNode>[]) => {
     setManualNodePositions((currentPositions) => {
       let nextPositions = currentPositions;
@@ -235,7 +286,12 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       return null;
     }
 
-    return budgetRelationships(laidOut.edges, visibleById, activeNodeId, 6);
+    return budgetRelationships(
+      laidOut.edges.filter((edge) => visibleById.has(edge.source) && visibleById.has(edge.target)),
+      visibleById,
+      activeNodeId,
+      6
+    );
   }, [activeMode, activeNodeId, laidOut, visibleById]);
   const connectedNodeIds = useMemo(() => {
     const ids = new Set<string>();
@@ -258,9 +314,11 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       return [];
     }
 
-    return laidOut.nodes.map((node) => {
+    return displayedLayoutNodes.map((node) => {
       const data = node.data as AtlasNode;
       const matchesSearch = normalizedSearch.length > 0 && data.path.toLowerCase().includes(normalizedSearch);
+      const touchesActiveCommit = nodeTouchesChangedFiles(data, activeChangedFiles);
+      const diffFile = diffFileForNode(data, diffResult);
       const isActive = activeNodeId === node.id;
       const isNeighbor = !isActive && connectedNodeIds.has(node.id);
       const shouldFade = Boolean(activeNodeId) && connectedNodeIds.size > 1 && !connectedNodeIds.has(node.id);
@@ -278,6 +336,10 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         isActive && activeMode === "focus" ? "is-focused-node" : "",
         isNeighbor ? "is-neighbor-node" : "",
         shouldFade && activeMode === "focus" ? "is-faded-node" : "",
+        touchesActiveCommit ? "is-history-changed-node" : "",
+        activeCommit && !touchesActiveCommit ? "is-history-muted-node" : "",
+        diffFile ? `is-diff-${diffFile.status}-node` : "",
+        diffResult && !diffFile ? "is-diff-muted-node" : "",
       ]
         .filter(Boolean)
         .join(" ");
@@ -289,6 +351,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         selectable: true,
         data: {
           ...data,
+          historyBadge: historyBadgeFor(data, graph?.fileHistory),
+          diffFile,
           relationStub:
             shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
               ? {
@@ -310,11 +374,16 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     connectedNodeIds,
     handleTraceEnd,
     handleTraceStart,
+    displayedLayoutNodes,
     laidOut,
     manualNodePositions,
     normalizedSearch,
     relationshipBudget,
-    focusedNodeId
+    focusedNodeId,
+    activeChangedFiles,
+    activeCommit,
+    graph?.fileHistory,
+    diffResult
   ]);
 
   const edges = useMemo(() => {
@@ -448,6 +517,54 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
     return graph.edges.filter((edge) => edge.target === selectedNode.id).length;
   }, [graph, selectedNode]);
+  const selectedFileHistory = selectedNode?.type === "file" ? graph?.fileHistory?.[selectedNode.path] : undefined;
+  const selectedDiffFile = selectedNode?.type === "file" ? diffFileForNode(selectedNode, diffResult) : null;
+
+  const handleBaseSelect = useCallback((commitHash: string) => {
+    setBaseCommitHash(commitHash);
+    if (targetCommitHash === commitHash) {
+      setTargetCommitHash(null);
+    }
+  }, [targetCommitHash]);
+
+  const handleTargetSelect = useCallback((commitHash: string) => {
+    setTargetCommitHash(commitHash);
+    if (baseCommitHash === commitHash) {
+      setBaseCommitHash(null);
+    }
+  }, [baseCommitHash]);
+
+  const handleCompare = useCallback(async () => {
+    if (!baseCommitHash || !targetCommitHash || baseCommitHash === targetCommitHash) {
+      return;
+    }
+
+    setIsComparing(true);
+    setDiffError(null);
+
+    try {
+      setDiffResult(await compareCommits(baseCommitHash, targetCommitHash));
+      setSelectedCommitHash(null);
+      setHoveredCommitHash(null);
+      setFocusedNodeId(null);
+      setTracedEdgeId(null);
+      setSelectedNode(null);
+    } catch (error) {
+      setDiffResult(null);
+      setDiffError(error instanceof Error ? error.message : "Failed to compare commits.");
+    } finally {
+      setIsComparing(false);
+    }
+  }, [baseCommitHash, targetCommitHash]);
+
+  const handleTimelineReset = useCallback(() => {
+    setSelectedCommitHash(null);
+    setHoveredCommitHash(null);
+    setBaseCommitHash(null);
+    setTargetCommitHash(null);
+    setDiffResult(null);
+    setDiffError(null);
+  }, []);
 
   const handleNodeClick: NodeMouseHandler<AtlasFlowNode> = (_event, node) => {
     if (!isStructuralNode(node)) {
@@ -548,6 +665,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
           position="bottom-right"
           pannable
           zoomable
+          bgColor="#020617"
           nodeColor={(node) => {
             if (node.type === "domain") {
               return "#14b8a6";
@@ -555,9 +673,30 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
             return node.type === "folder" ? "#38bdf8" : "#8b5cf6";
           }}
+          nodeStrokeColor="#e5eefb"
+          nodeStrokeWidth={2}
           maskColor="rgba(2, 6, 23, 0.72)"
+          maskStrokeColor="rgba(125, 211, 252, 0.55)"
+          maskStrokeWidth={1}
         />
       </ReactFlow>
+
+      <TimelinePanel
+        commits={commits}
+        selectedCommitHash={selectedCommitHash}
+        hoveredCommitHash={hoveredCommitHash}
+        baseCommitHash={baseCommitHash}
+        targetCommitHash={targetCommitHash}
+        isComparing={isComparing}
+        onCommitHover={setHoveredCommitHash}
+        onCommitSelect={setSelectedCommitHash}
+        onBaseSelect={handleBaseSelect}
+        onTargetSelect={handleTargetSelect}
+        onCompare={handleCompare}
+        onReset={handleTimelineReset}
+      />
+      {diffError ? <div className="diff-error-panel">{diffError}</div> : null}
+      {diffResult ? <DiffSummaryPanel diff={diffResult} baseCommit={baseCommit} targetCommit={targetCommit} /> : null}
 
       <div className="context-panel">
         <div className="context-panel__label">Structural - Level {laidOut.level + 1}</div>
@@ -603,6 +742,22 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                 <dd>{selectedNode.metadata?.importCount ?? 0}</dd>
                 <dt>Imported by</dt>
                 <dd>{importedByCount}</dd>
+                <dt>Commits</dt>
+                <dd>{selectedFileHistory?.commitCount ?? 0}</dd>
+                <dt>Last modified</dt>
+                <dd>{selectedFileHistory ? formatCommitDate(selectedFileHistory.lastModified) : "Unknown"}</dd>
+                <dt>Authors</dt>
+                <dd>{selectedFileHistory?.authors.slice(0, 3).join(", ") || "Unknown"}</dd>
+                {selectedDiffFile ? (
+                  <>
+                    <dt>Diff status</dt>
+                    <dd>{selectedDiffFile.status}</dd>
+                    <dt>Change</dt>
+                    <dd>
+                      +{selectedDiffFile.additions} / -{selectedDiffFile.deletions}
+                    </dd>
+                  </>
+                ) : null}
               </>
             ) : (
               <>
@@ -671,6 +826,19 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                   )}
                 </div>
               </div>
+            </section>
+          ) : null}
+          {selectedFileHistory?.recentCommits.length ? (
+            <section className="file-history" aria-label="Selected file history">
+              <div className="file-history__title">Recent history</div>
+              <ul>
+                {selectedFileHistory.recentCommits.map((commit) => (
+                  <li key={commit.hash}>
+                    <span>{commit.message}</span>
+                    <strong>{commit.shortHash}</strong>
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
         </aside>
