@@ -5,14 +5,8 @@ interface TimelinePanelProps {
   commits: CommitInfo[];
   selectedCommitHash: string | null;
   hoveredCommitHash: string | null;
-  baseCommitHash: string | null;
-  targetCommitHash: string | null;
-  isComparing: boolean;
   onCommitHover: (commitHash: string | null) => void;
   onCommitSelect: (commitHash: string | null) => void;
-  onBaseSelect: (commitHash: string) => void;
-  onTargetSelect: (commitHash: string) => void;
-  onCompare: () => void;
   onReset: () => void;
 }
 
@@ -20,18 +14,11 @@ export function TimelinePanel({
   commits,
   selectedCommitHash,
   hoveredCommitHash,
-  baseCommitHash,
-  targetCommitHash,
-  isComparing,
   onCommitHover,
   onCommitSelect,
-  onBaseSelect,
-  onTargetSelect,
-  onCompare,
   onReset
 }: TimelinePanelProps) {
   const activeCommitHash = hoveredCommitHash ?? selectedCommitHash;
-  const canCompare = Boolean(baseCommitHash && targetCommitHash && baseCommitHash !== targetCommitHash && !isComparing);
 
   return (
     <aside className="timeline-panel" aria-label="Repository history timeline">
@@ -40,24 +27,11 @@ export function TimelinePanel({
           <div className="timeline-panel__label">History</div>
           <div className="timeline-panel__title">{commits.length} commits</div>
         </div>
-        {selectedCommitHash || baseCommitHash || targetCommitHash ? (
+        {selectedCommitHash ? (
           <button type="button" className="timeline-panel__clear" onClick={onReset}>
             Reset
           </button>
         ) : null}
-      </div>
-      <div className="timeline-compare">
-        <div>
-          <span>Base</span>
-          <strong>{commits.find((commit) => commit.hash === baseCommitHash)?.shortHash ?? "Unset"}</strong>
-        </div>
-        <div>
-          <span>Target</span>
-          <strong>{commits.find((commit) => commit.hash === targetCommitHash)?.shortHash ?? "Unset"}</strong>
-        </div>
-        <button type="button" onClick={onCompare} disabled={!canCompare}>
-          {isComparing ? "Comparing" : "Compare"}
-        </button>
       </div>
 
       {commits.length > 0 ? (
@@ -72,9 +46,7 @@ export function TimelinePanel({
                   className={[
                     "timeline-item",
                     isSelected ? "is-selected" : "",
-                    isActive ? "is-active" : "",
-                    baseCommitHash === commit.hash ? "is-base" : "",
-                    targetCommitHash === commit.hash ? "is-target" : ""
+                    isActive ? "is-active" : ""
                   ]
                     .filter(Boolean)
                     .join(" ")}
@@ -96,14 +68,6 @@ export function TimelinePanel({
                     </span>
                     <span className="timeline-item__files">{commit.changedFiles.length} files changed</span>
                   </button>
-                  <div className="timeline-item__actions">
-                    <button type="button" onClick={() => onBaseSelect(commit.hash)}>
-                      Base
-                    </button>
-                    <button type="button" onClick={() => onTargetSelect(commit.hash)}>
-                      Target
-                    </button>
-                  </div>
                 </article>
               </li>
             );

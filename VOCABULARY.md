@@ -41,6 +41,59 @@ UI action:
 **Progressive Focus View**
 The navigation model where the user sees one contextual layer at a time instead of the whole repo at once.
 
+**Structural Descent**
+The act of entering a domain or folder while keeping ancestor context visually present.
+
+Purpose:
+- Preserves spatial memory.
+- Reduces uncertainty about where the user came from.
+- Makes navigation feel like descending into nested architecture.
+
+**Path Anchor**
+A non-interactive React Flow node that represents `Root` or an ancestor context during descent.
+
+Purpose:
+- Keeps the path visible inside the canvas.
+- Keeps parent context visible.
+- Gives the minimap real objects for the navigation chain.
+
+Interaction:
+- Click to jump directly to that context layer.
+- Does not trigger local focus mode.
+
+**Lineage Chain**
+The linked series of path anchors from `Root` to the current parent.
+
+Example:
+- `Root -> frontend -> auth`
+
+Purpose:
+- Shows the user's descent path spatially, not only as external breadcrumb text.
+
+**Current-Parent Fanout**
+The containment links from the most recent path anchor to the currently visible children.
+
+Purpose:
+- Makes it clear that the current layer belongs to the selected parent.
+
+**Significance Propagation**
+The rule that activity deep inside a subtree contributes a subtle signal to its ancestors.
+
+Purpose:
+- Helps users decide where to descend.
+- Prevents important deep changes from being invisible at higher levels.
+
+**Significance Residue**
+The visual signal produced by significance propagation.
+
+Examples:
+- Soft glow.
+- Small residue dot.
+- Subtle container accent.
+
+Rule:
+- Residue is ambient. It should guide attention without becoming a dashboard badge wall.
+
 **Room**
 Informal UX term for a context. Entering a folder should feel like entering a room.
 
@@ -63,6 +116,7 @@ Implemented object types:
 - Domain
 - Folder
 - File
+- Path Anchor
 - Edge
 - Breadcrumb
 
@@ -244,34 +298,35 @@ Purpose:
 - Adds temporal context to the file details panel without opening a git client.
 
 **Commit Diff Mode**
-A temporary mode for comparing one base commit against one target commit.
+Paused concept for comparing one base commit against one target commit.
 
 Purpose:
 - Shows what changed between two commits at the architecture level.
 
 Rule:
-- Diff mode is a file state overlay, not a git client or code review view.
+- Diff mode is not active in the current UI.
+- Do not expose base/target/compare controls until this mode is intentionally resumed.
 
 **Base Commit**
-The older or starting commit selected for comparison.
+Paused diff-mode term for the older or starting commit selected for comparison.
 
 Purpose:
 - Defines the before state of the comparison.
 
 **Target Commit**
-The newer or ending commit selected for comparison.
+Paused diff-mode term for the newer or ending commit selected for comparison.
 
 Purpose:
 - Defines the after state of the comparison.
 
 **Diff Overlay**
-The visual layer applied to structural nodes during commit comparison.
+Paused diff-mode visual layer applied to structural nodes during commit comparison.
 
 Purpose:
 - Shows changed areas spatially without changing the structural layout.
 
 **Diff Summary Panel**
-A concise panel showing base/target commits, changed file counts, status counts, and additions/deletions.
+A paused diff-mode panel concept showing base/target commits, changed file counts, status counts, and additions/deletions.
 
 Purpose:
 - Holds comparison truth without making the canvas noisy.

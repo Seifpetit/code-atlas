@@ -18,7 +18,7 @@ Only `structural` is implemented right now. `functional` and `runtime` exist as 
 
 The interface uses contextual progressive disclosure instead of infinite zoom.
 
-Double-clicking an enterable object enters that selected object as the current context. The visible graph is then replaced by the direct children of that context, preserving orientation through breadcrumbs.
+Double-clicking an enterable object enters that selected object as the current context. The visible layer changes to that object's direct children while an in-canvas lineage chain preserves spatial continuity.
 
 ## 3. Structural Visibility Is Broader Than Import Parsing
 
@@ -184,20 +184,42 @@ Implications:
 ## 11. Commit Diff Mode Is A File State Overlay
 
 Status:
+- Paused
+
+Decision:
+- The explicit commit comparison UI is disabled for now.
+- Base commit selection, target commit selection, compare actions, and diff summary UI are not part of the active product surface.
+- Reusable backend diff extraction may remain available, but it should not drive the current structural navigation UI.
+
+Rationale:
+- The compare workflow created visual crowding and made the app feel closer to a git dashboard.
+- The more important product problem is cross-layer ambiguity during structural descent.
+- Timeline/history should contribute subtle structural significance rather than dominate navigation.
+
+Implications:
+- Timeline commits support preview/select behavior only.
+- Commit comparison can be revisited later as a separate product mode if it supports spatial understanding without crowding.
+
+## 12. Continuity-Preserving Structural Descent
+
+Status:
 - Accepted
 
 Decision:
-- Commit diff mode compares one base commit and one target commit.
-- Diff visualization decorates structural nodes with file change states.
-- Added, modified, renamed, and deleted files use distinct calm visual accents.
-- Diff mode does not render dependency edges, line-by-line diffs, impact analysis, or git table views.
+- Entering a folder/domain should not feel like a hard scene replacement.
+- Ancestor contexts persist as non-interactive React Flow path anchor nodes.
+- Path anchors form a linked in-canvas chain from `Root` to the current parent.
+- The most recent parent anchor links to the current visible children.
+- Child objects emerge below the lineage chain with camera recentering and lightweight transitions.
+- Historical significance propagates upward so path anchors and containers can show subtle residue when activity exists deeper in the subtree.
 
 Rationale:
-- The product should answer what changed between two commits at the architecture level.
-- File state overlays preserve the spatial map while making repository evolution visible.
-- Diff comparison should remain temporary and resettable.
+- Users need confidence that descending into a layer leads toward meaningful information.
+- A purely replaced context creates cross-layer ambiguity and weakens spatial memory.
+- Structure is permanent; history contributes ambient significance without becoming a dashboard.
 
 Implications:
-- Timeline commits expose `Base`, `Target`, and `Compare` controls.
-- Backend exposes `/diff` for file-level status and churn metadata.
-- The diff summary panel provides truth that should not be forced into the canvas.
+- Path anchors are real React Flow nodes so the minimap reflects the navigated structural chain.
+- Lineage links are structural containment links, not import/dependency relationships.
+- Path anchors are click targets for jumping back to an ancestor layer, but they do not enter local focus mode.
+- Collision resolution ignores path anchors so they do not push the current content layer.

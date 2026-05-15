@@ -46,6 +46,12 @@ function expandedBoundsFor(node: AtlasFlowNode): Bounds {
   };
 }
 
+function isLineageNode(node: AtlasFlowNode): boolean {
+  const data = node.data as AtlasNode;
+
+  return typeof data.lineageKind === "string";
+}
+
 function intersects(a: Bounds, b: Bounds): boolean {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
@@ -55,13 +61,14 @@ function verticalPushDistance(a: Bounds, b: Bounds): number {
 }
 
 function markVeryClose(nodes: AtlasFlowNode[]): Set<string> {
+  const contentNodes = nodes.filter((node) => !isLineageNode(node));
   const closeNodeIds = new Set<string>();
 
-  for (let i = 0; i < nodes.length; i += 1) {
-    for (let j = i + 1; j < nodes.length; j += 1) {
-      if (intersects(expandedBoundsFor(nodes[i]), expandedBoundsFor(nodes[j]))) {
-        closeNodeIds.add(nodes[i].id);
-        closeNodeIds.add(nodes[j].id);
+  for (let i = 0; i < contentNodes.length; i += 1) {
+    for (let j = i + 1; j < contentNodes.length; j += 1) {
+      if (intersects(expandedBoundsFor(contentNodes[i]), expandedBoundsFor(contentNodes[j]))) {
+        closeNodeIds.add(contentNodes[i].id);
+        closeNodeIds.add(contentNodes[j].id);
       }
     }
   }
@@ -76,6 +83,7 @@ export function resolveOverlaps(nodes: AtlasFlowNode[]): { nodes: AtlasFlowNode[
     position: { ...node.position }
   }));
   const contentNodes = resolvedNodes
+    .filter((node) => !isLineageNode(node))
     .slice()
     .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x || a.id.localeCompare(b.id));
 

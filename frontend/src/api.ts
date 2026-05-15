@@ -41,22 +41,6 @@ export interface FileHistoryInfo {
   }>;
 }
 
-export type DiffFileStatus = "added" | "modified" | "deleted" | "renamed";
-
-export interface DiffFile {
-  path: string;
-  oldPath?: string;
-  status: DiffFileStatus;
-  additions: number;
-  deletions: number;
-}
-
-export interface DiffResult {
-  baseCommit: string;
-  targetCommit: string;
-  changedFiles: DiffFile[];
-}
-
 export interface AtlasGraph {
   nodes: AtlasNode[];
   edges: AtlasEdge[];
@@ -83,22 +67,4 @@ export async function analyzeRepo(repoUrl: string): Promise<AtlasGraph> {
   }
 
   return payload as AtlasGraph;
-}
-
-export async function compareCommits(baseCommit: string, targetCommit: string): Promise<DiffResult> {
-  const response = await fetch(`${API_BASE_URL}/diff`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ baseCommit, targetCommit })
-  });
-
-  const payload = await response.json();
-
-  if (!response.ok) {
-    throw new Error(payload?.error ?? "Failed to compare commits.");
-  }
-
-  return payload as DiffResult;
 }

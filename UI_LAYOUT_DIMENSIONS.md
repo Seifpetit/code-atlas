@@ -18,16 +18,19 @@ This file records important fixed UI dimensions and panel positions so spatial l
 - Max height: `334px`
 - Timeline list max height: `270px`
 
-**Diff Summary Panel / Diff Error Panel**
-- Position: under timeline panel
-- `top: 410px`
-- `left: 16px`
-- Width: `min(320px, calc(100vw - 32px))`
-
 **Structural Context Panel**
-- Position: upper right, below timeline/diff vertical range
+- Position: upper right
 - `top: 366px`
 - `right: 16px`
+
+**Path Anchor Nodes**
+- Render inside React Flow as non-interactive lineage nodes.
+- Width: `178px`
+- Height: `72px`
+- Horizontal gap: `34px`
+- Top position: `y: 0`
+- Current-layer child offset during descent: `150px` y.
+- The latest path anchor links to each current child.
 
 **MiniMap**
 - React Flow panel position: `bottom-right`

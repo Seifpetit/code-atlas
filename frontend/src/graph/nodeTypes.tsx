@@ -26,9 +26,11 @@ function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
   return `${data.metadata?.childCount ?? 0} items`;
 }
 
-function NodeShell({ data, structuralKind }: { data: AtlasNode; structuralKind: StructuralKind }) {
+function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKind: StructuralKind }) {
   const relationStub = data.relationStub as RelationStubData | undefined;
   const historyBadge = typeof data.historyBadge === "string" ? data.historyBadge : undefined;
+  const significanceLevel = typeof data.significanceLevel === "string" ? data.significanceLevel : undefined;
+  const significanceScore = Number(data.significanceScore ?? 0);
   const viewVariant = typeof data.viewVariant === "string" ? data.viewVariant : "rect";
   const isDomainCard = structuralKind === "domain";
   const isVeryClose = data.isVeryClose === true;
@@ -37,6 +39,7 @@ function NodeShell({ data, structuralKind }: { data: AtlasNode; structuralKind: 
     `atlas-node--${structuralKind}`,
     `atlas-node--${viewVariant}`,
     isDomainCard ? "atlas-node--domain-card" : "",
+    significanceLevel ? `atlas-node--significance-${significanceLevel}` : "",
     isVeryClose ? "atlas-node--very-close" : ""
   ]
     .filter(Boolean)
@@ -74,6 +77,12 @@ function NodeShell({ data, structuralKind }: { data: AtlasNode; structuralKind: 
       <div className="atlas-node__label">{data.label}</div>
       <div className="atlas-node__path">{data.path}</div>
       <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
+      {significanceLevel ? (
+        <div
+          className="significance-residue"
+          title={`${significanceScore} historical touches inside this structural area`}
+        />
+      ) : null}
       {historyBadge ? <div className="history-badge">{historyBadge}</div> : null}
       {relationStub?.outgoingCount ? (
         <button
@@ -97,15 +106,15 @@ function NodeShell({ data, structuralKind }: { data: AtlasNode; structuralKind: 
 }
 
 export function DomainNode({ data }: NodeProps) {
-  return <NodeShell data={data as AtlasNode} structuralKind="domain" />;
+  return <AtlasNodeCard data={data as AtlasNode} structuralKind="domain" />;
 }
 
 export function FolderNode({ data }: NodeProps) {
-  return <NodeShell data={data as AtlasNode} structuralKind="folder" />;
+  return <AtlasNodeCard data={data as AtlasNode} structuralKind="folder" />;
 }
 
 export function FileNode({ data }: NodeProps) {
-  return <NodeShell data={data as AtlasNode} structuralKind="file" />;
+  return <AtlasNodeCard data={data as AtlasNode} structuralKind="file" />;
 }
 
 export const nodeTypes: NodeTypes = {

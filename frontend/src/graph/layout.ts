@@ -11,6 +11,7 @@ export interface ContextBreadcrumbItem {
 export interface ContextLayoutResult {
   nodes: AtlasFlowNode[];
   edges: AtlasFlowEdge[];
+  lineageEdges: AtlasFlowEdge[];
   breadcrumbPath: ContextBreadcrumbItem[];
   contextLabel: string;
   level: number;
@@ -31,6 +32,11 @@ const FOLDER_NODE_WIDTH = 246;
 const FOLDER_NODE_HEIGHT = 108;
 const FILE_NODE_WIDTH = 226;
 const FILE_NODE_HEIGHT = 96;
+const LINEAGE_NODE_WIDTH = 178;
+const LINEAGE_NODE_HEIGHT = 72;
+const LINEAGE_GAP_X = 34;
+const LINEAGE_Y = 0;
+const CHILDREN_Y_OFFSET = 150;
 const GRID_GAP_X = 46;
 const GRID_GAP_Y = 34;
 const GROUP_GAP_Y = 70;
@@ -144,8 +150,39 @@ function flowNodeType(node: AtlasNode, level: number): "domain" | "folder" | "fi
   return node.type;
 }
 
-function withLayoutData(node: AtlasNode, level: number): AtlasNode {
+function significanceForNode(node: AtlasNode, graph: AtlasGraph): number {
+  const fileHistory = graph.fileHistory ?? {};
+
+  if (node.type === "file") {
+    return fileHistory[node.path]?.commitCount ?? 0;
+  }
+
+  return Object.values(fileHistory).reduce((total, history) => {
+    return history.path === node.path || history.path.startsWith(`${node.path}/`)
+      ? total + history.commitCount
+      : total;
+  }, 0);
+}
+
+function significanceLevel(score: number): string | undefined {
+  if (score >= 18) {
+    return "high";
+  }
+
+  if (score >= 6) {
+    return "medium";
+  }
+
+  if (score > 0) {
+    return "low";
+  }
+
+  return undefined;
+}
+
+function withLayoutData(node: AtlasNode, level: number, graph: AtlasGraph): AtlasNode {
   const dimensions = nodeDimensions(node, level);
+  const significanceScore = significanceForNode(node, graph);
 
   return {
     ...node,
@@ -155,11 +192,13 @@ function withLayoutData(node: AtlasNode, level: number): AtlasNode {
     layoutHeight: dimensions.height,
     viewVariant: flowNodeType(node, level) === "domain" ? "domain-card" : "rect",
     fileClusterType: node.type === "file" ? fileClusterType(node) : undefined,
-    isImportParsed: node.type === "file" ? IMPORT_PARSE_EXTENSIONS.has(extensionOf(node)) : undefined
+    isImportParsed: node.type === "file" ? IMPORT_PARSE_EXTENSIONS.has(extensionOf(node)) : undefined,
+    significanceScore,
+    significanceLevel: significanceLevel(significanceScore)
   };
 }
 
-function buildBreadcrumbPath(graph: AtlasGraph, contextId: string | null): ContextBreadcrumbItem[] {
+function ancestorNodesForContext(graph: AtlasGraph, contextId: string | null): AtlasNode[] {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
   const ancestors: AtlasNode[] = [];
   let cursor = contextId ? byId.get(contextId) : undefined;
@@ -168,6 +207,12 @@ function buildBreadcrumbPath(graph: AtlasGraph, contextId: string | null): Conte
     ancestors.unshift(cursor);
     cursor = cursor.parent ? byId.get(cursor.parent) : undefined;
   }
+
+  return ancestors;
+}
+
+function buildBreadcrumbPath(graph: AtlasGraph, contextId: string | null): ContextBreadcrumbItem[] {
+  const ancestors = ancestorNodesForContext(graph, contextId);
 
   return [
     { id: null, label: "Root", path: null },
@@ -190,7 +235,85 @@ function columnsForCount(count: number, level: number): number {
   return Math.min(maxColumns, naturalColumns);
 }
 
-function buildVisibleNodes(visibleChildren: AtlasNode[], level: number): AtlasFlowNode[] {
+function lineageNodeId(id: string): string {
+  return `__lineage__:${id}`;
+}
+
+function makeLineageEdge(source: string, target: string, kind: "lineage-chain" | "lineage-child"): AtlasFlowEdge {
+  return {
+    id: `${kind}:${source}->${target}`,
+    source,
+    target,
+    type: "structural",
+    animated: false,
+    data: {
+      kind
+    }
+  };
+}
+
+function buildLineageNodes(ancestors: AtlasNode[], graph: AtlasGraph): AtlasFlowNode[] {
+  const rootSignificanceScore = Object.values(graph.fileHistory ?? {}).reduce(
+    (total, history) => total + history.commitCount,
+    0
+  );
+  const rootNode: AtlasFlowNode = {
+    id: lineageNodeId("root"),
+    type: "folder",
+    position: { x: 0, y: 0 },
+    zIndex: 0,
+    width: LINEAGE_NODE_WIDTH,
+    height: LINEAGE_NODE_HEIGHT,
+    initialWidth: LINEAGE_NODE_WIDTH,
+    initialHeight: LINEAGE_NODE_HEIGHT,
+    draggable: false,
+    selectable: false,
+    data: {
+      id: "root",
+      type: "folder",
+      label: "Root",
+      path: "Root",
+      metadata: { childCount: graph.nodes.filter((node) => !node.parent).length },
+      layoutWidth: LINEAGE_NODE_WIDTH,
+      layoutHeight: LINEAGE_NODE_HEIGHT,
+      layoutDepth: 0,
+      layoutScale: 0.9,
+      viewVariant: "lineage-anchor",
+      lineageKind: "root",
+      significanceScore: rootSignificanceScore,
+      significanceLevel: significanceLevel(rootSignificanceScore)
+    }
+  };
+  const lineageAncestors = ancestors.map((ancestor, index) => {
+    return {
+      id: lineageNodeId(ancestor.id),
+      type: flowNodeType(ancestor, index) as "domain" | "folder" | "file",
+      position: {
+        x: (index + 1) * (LINEAGE_NODE_WIDTH + LINEAGE_GAP_X),
+        y: LINEAGE_Y
+      },
+      zIndex: index + 1,
+      width: LINEAGE_NODE_WIDTH,
+      height: LINEAGE_NODE_HEIGHT,
+      initialWidth: LINEAGE_NODE_WIDTH,
+      initialHeight: LINEAGE_NODE_HEIGHT,
+      draggable: false,
+      selectable: false,
+      data: {
+        ...withLayoutData(ancestor, index + 1, graph),
+        layoutWidth: LINEAGE_NODE_WIDTH,
+        layoutHeight: LINEAGE_NODE_HEIGHT,
+        layoutScale: 0.9,
+        viewVariant: "lineage-anchor",
+        lineageKind: "ancestor"
+      }
+    };
+  });
+
+  return ancestors.length > 0 ? [rootNode, ...lineageAncestors] : [];
+}
+
+function buildVisibleNodes(visibleChildren: AtlasNode[], level: number, graph: AtlasGraph): AtlasFlowNode[] {
   const groupedChildren = new Map<string, AtlasNode[]>();
 
   for (const child of visibleChildren) {
@@ -219,13 +342,13 @@ function buildVisibleNodes(visibleChildren: AtlasNode[], level: number): AtlasFl
         type: flowNodeType(child, level),
         position: {
           x: column * (dimensions.width + GRID_GAP_X),
-          y
+          y: y + (level > 0 ? CHILDREN_Y_OFFSET : 0)
         },
         width: dimensions.width,
         height: dimensions.height,
         initialWidth: dimensions.width,
         initialHeight: dimensions.height,
-        data: withLayoutData(child, level)
+        data: withLayoutData(child, level, graph)
       });
     });
 
@@ -233,6 +356,21 @@ function buildVisibleNodes(visibleChildren: AtlasNode[], level: number): AtlasFl
   }
 
   return nodes;
+}
+
+function buildLineageEdges(ancestors: AtlasNode[], visibleChildren: AtlasNode[]): AtlasFlowEdge[] {
+  if (ancestors.length === 0) {
+    return [];
+  }
+
+  const lineageIds = [lineageNodeId("root"), ...ancestors.map((ancestor) => lineageNodeId(ancestor.id))];
+  const chainEdges = lineageIds.slice(1).map((targetId, index) => {
+    return makeLineageEdge(lineageIds[index], targetId, "lineage-chain");
+  });
+  const currentParentId = lineageIds[lineageIds.length - 1];
+  const childEdges = visibleChildren.map((child) => makeLineageEdge(currentParentId, child.id, "lineage-child"));
+
+  return [...chainEdges, ...childEdges];
 }
 
 function ownsPath(owner: AtlasNode, path: string): boolean {
@@ -308,8 +446,11 @@ export function layoutStructuralContext(
     (currentPage + 1) * MAX_VISIBLE_CHILDREN
   );
   const hiddenChildren = prioritizedChildren.filter((node) => !visibleChildren.some((visible) => visible.id === node.id));
-  const nodes = buildVisibleNodes(visibleChildren, level);
+  const ancestors = ancestorNodesForContext(graph, resolvedContextId);
+  const lineageNodes = buildLineageNodes(ancestors, graph);
+  const nodes = [...lineageNodes, ...buildVisibleNodes(visibleChildren, level, graph)];
   const edges = buildContextEdges(graph.edges, visibleChildren);
+  const lineageEdges = buildLineageEdges(ancestors, visibleChildren);
   const collisionResult = resolveOverlaps(nodes);
   const resolvedNodes = collisionResult.nodes.map((node) => ({
     ...node,
@@ -323,6 +464,7 @@ export function layoutStructuralContext(
   return {
     nodes: resolvedNodes,
     edges,
+    lineageEdges,
     breadcrumbPath,
     contextLabel: breadcrumbPath[breadcrumbPath.length - 1]?.label ?? "Root",
     level,

@@ -2,6 +2,7 @@ import { BaseEdge, Position, getSmoothStepPath, type EdgeProps, type EdgeTypes }
 
 interface StructuralEdgeData extends Record<string, unknown> {
   direction?: "incoming" | "outgoing";
+  kind?: string;
   laneOffset?: number;
   mode?: "focus";
 }
@@ -9,8 +10,9 @@ interface StructuralEdgeData extends Record<string, unknown> {
 export function StructuralEdge(props: EdgeProps) {
   const data = props.data as StructuralEdgeData | undefined;
   const laneOffset = Number(data?.laneOffset ?? 0);
+  const isLineage = data?.kind === "lineage-chain" || data?.kind === "lineage-child";
   const direction = data?.direction === "incoming" ? "incoming" : "outgoing";
-  const mode = "focus";
+  const mode = isLineage ? "lineage" : "focus";
   const sourceY = props.sourceY + laneOffset;
   const targetY = props.targetY + laneOffset;
   const [edgePath] = getSmoothStepPath({
@@ -25,7 +27,8 @@ export function StructuralEdge(props: EdgeProps) {
   });
   const className = [
     "structural-edge",
-    `structural-edge--${direction}`,
+    isLineage ? "structural-edge--lineage" : `structural-edge--${direction}`,
+    data?.kind === "lineage-child" ? "structural-edge--lineage-child" : "",
     `structural-edge--${mode}`,
     props.selected ? "is-selected" : ""
   ]

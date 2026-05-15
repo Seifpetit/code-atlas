@@ -130,7 +130,8 @@ Returns:
 
 `POST /diff`
 
-Compares two commits from the most recently analyzed repository.
+Backend-only retained endpoint for comparing two commits from the most recently analyzed repository.
+The explicit compare UI is currently disabled while the product focuses on continuity-preserving structural descent.
 
 ```json
 {
