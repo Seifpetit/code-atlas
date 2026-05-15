@@ -23,7 +23,8 @@ export interface AtlasGraph {
   edges: AtlasEdge[];
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+const API_BASE_URL = configuredApiBaseUrl ?? (import.meta.env.DEV ? "http://localhost:4000" : "");
 
 export async function analyzeRepo(repoUrl: string): Promise<AtlasGraph> {
   const response = await fetch(`${API_BASE_URL}/analyze`, {

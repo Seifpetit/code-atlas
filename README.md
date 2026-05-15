@@ -42,6 +42,39 @@ Open the Vite URL and paste a public GitHub repository URL such as:
 https://github.com/vitejs/vite
 ```
 
+## Deploy On Railway
+
+The repository is prepared for a single Railway service.
+
+Deployment shape:
+
+- Railway builds from the root `Dockerfile`.
+- The Docker image builds both `frontend/` and `backend/`.
+- Express serves the built frontend from `frontend/dist`.
+- API requests use the same origin in production, so no separate `VITE_API_BASE_URL` is required.
+- `git` is installed in the runtime image because repo analysis clones public repositories at request time.
+
+Railway setup:
+
+1. Create a new Railway project from this GitHub repository.
+2. Deploy from the repository root.
+3. Let Railway use the root `Dockerfile`.
+4. Generate a public domain for the service.
+5. Open the generated domain and submit a public GitHub repository URL.
+
+Useful endpoints:
+
+- `GET /health`
+- `POST /analyze`
+
+Local production build:
+
+```bash
+npm --prefix frontend run build
+npm --prefix backend run build
+npm --prefix backend start
+```
+
 ## Production Workflow
 
 Use the archive workflow whenever a change affects product intent, UI language, decisions, or known bugs.
