@@ -5,6 +5,15 @@ import type { AtlasNode } from "../api";
 
 type StructuralKind = "domain" | "folder" | "file";
 
+interface RelationStubData {
+  incomingCount: number;
+  outgoingCount: number;
+  firstIncomingEdgeId?: string;
+  firstOutgoingEdgeId?: string;
+  onTraceStart?: (edgeId: string) => void;
+  onTraceEnd?: () => void;
+}
+
 function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
   if (structuralKind === "file") {
     if (data.isImportParsed === false) {
@@ -18,6 +27,7 @@ function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
 }
 
 function NodeShell({ data, structuralKind }: { data: AtlasNode; structuralKind: StructuralKind }) {
+  const relationStub = data.relationStub as RelationStubData | undefined;
   const viewVariant = typeof data.viewVariant === "string" ? data.viewVariant : "rect";
   const isDomainCard = structuralKind === "domain";
   const isVeryClose = data.isVeryClose === true;
@@ -37,12 +47,48 @@ function NodeShell({ data, structuralKind }: { data: AtlasNode; structuralKind: 
   } as CSSProperties;
 
   return (
-    <div className={className} title={data.path} style={style}>
+    <div
+      className={className}
+      title={data.path}
+      style={style}
+    >
       <Handle type="target" position={Position.Left} className="atlas-handle" />
+      {relationStub?.incomingCount ? (
+        <button
+          type="button"
+          className="relation-stub relation-stub--incoming"
+          onPointerEnter={() => {
+            if (relationStub.firstIncomingEdgeId) {
+              relationStub.onTraceStart?.(relationStub.firstIncomingEdgeId);
+            }
+          }}
+          onPointerLeave={() => relationStub.onTraceEnd?.()}
+          aria-label={`${relationStub.incomingCount} incoming relationships`}
+        >
+          <span>&lt;</span>
+          {relationStub.incomingCount}
+        </button>
+      ) : null}
       <div className="atlas-node__kind">{structuralKind}</div>
       <div className="atlas-node__label">{data.label}</div>
       <div className="atlas-node__path">{data.path}</div>
       <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
+      {relationStub?.outgoingCount ? (
+        <button
+          type="button"
+          className="relation-stub relation-stub--outgoing"
+          onPointerEnter={() => {
+            if (relationStub.firstOutgoingEdgeId) {
+              relationStub.onTraceStart?.(relationStub.firstOutgoingEdgeId);
+            }
+          }}
+          onPointerLeave={() => relationStub.onTraceEnd?.()}
+          aria-label={`${relationStub.outgoingCount} outgoing relationships`}
+        >
+          {relationStub.outgoingCount}
+          <span>&gt;</span>
+        </button>
+      ) : null}
       <Handle type="source" position={Position.Right} className="atlas-handle" />
     </div>
   );

@@ -92,3 +92,69 @@ Implications:
 - Relation understanding is primarily panel-supported, with graph edges as supporting evidence.
 - Outgoing and incoming edges can use different calm styles.
 - Relation UI should remain tied to focused objects, not default canvas state.
+
+## 7. Structural Edges Use Orthogonal Lanes
+
+Status:
+- Superseded
+
+Superseded by:
+- 8. Relationships Are Apparition Overlays
+- 9. Relationship Stubs Precede Exact Traces
+
+Decision:
+- Focused structural edges should use custom orthogonal routing with deterministic lane offsets.
+- Outgoing relations leave from the right side of the focused object.
+- Incoming relations enter the left side of the focused object.
+- Multiple focused edges should fan out into separate lanes instead of sharing the same trace.
+
+Rationale:
+- Relationship lines must be traceable to their owning object.
+- Overlapping curves make edges visually merge and force users to untangle geometry mentally.
+- Orthogonal lanes better match the structural, architectural language of the product.
+
+Implications:
+- Structural edge rendering uses a custom React Flow edge type.
+- Edge geometry is still available for exact temporary traces.
+- Edge lanes are no longer the primary relationship display model.
+
+## 8. Relationships Are Apparition Overlays
+
+Status:
+- Accepted
+
+Decision:
+- The default structural canvas must not render relationship networks.
+- Clicking an object enters local focus mode and shows only a budgeted subset of that object's immediate relationships.
+- Extra relationships are represented through counters and relation-lens text instead of more canvas lines.
+- Hover remains CSS-only until a stable hover system exists.
+
+Rationale:
+- Structure is permanent; relationships are ephemeral.
+- The canvas should feel like a calm structural space, not wiring infrastructure.
+- Relationship truth belongs in the relation lens when it exceeds what the eye can trace comfortably.
+
+Implications:
+- `visibleEdges` are derived from `focusedNodeId` and an explicitly traced relationship, not from all current-context imports.
+- Edge overlays must support understanding without becoming the main visual system.
+
+## 9. Relationship Stubs Precede Exact Traces
+
+Status:
+- Accepted
+
+Decision:
+- Focusing an object should primarily show compact incoming/outgoing relationship stubs on the object.
+- Relationship stubs show counts, such as incoming and outgoing totals.
+- Exact relationship traces should appear only when hovering a specific stub or relation item.
+- Relationship stubs are click/focus UI, not hover UI.
+
+Rationale:
+- Counts and activation communicate relationship presence without turning the canvas into wiring.
+- Exact lines are useful only when the user asks to trace a specific relationship.
+- The structural canvas should remain calm even in hover/focus states.
+
+Implications:
+- Node activation and relation stubs are the default relationship visualization.
+- Full paths are temporary traces, not focus-mode infrastructure.
+- The relation lens remains the place for fuller relationship truth.

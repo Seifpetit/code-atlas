@@ -158,6 +158,40 @@ An edge shown only after clicking an object.
 Purpose:
 - Explains the focused object's local import neighborhood without turning the whole context into a dependency graph.
 
+**Relationship Apparition**
+A temporary relationship overlay that appears through click/focus and explicit relationship tracing.
+
+Purpose:
+- Lets relationships feel like contextual explanations rather than permanent wiring.
+
+**Relationship Budget**
+The maximum number of relationship traces allowed on the canvas for a focused object.
+
+Purpose:
+- Keeps relationship overlays traceable and prevents edge networks from taking over the structural view.
+
+**Relationship Stub**
+A compact directional count attached to a focused object.
+
+Examples:
+- Incoming count on the left side.
+- Outgoing count on the right side.
+
+Purpose:
+- Communicates relationship presence without drawing full paths.
+
+**Exact Relationship Trace**
+A single temporary path shown when the user hovers a relationship stub or relation item.
+
+Purpose:
+- Provides traceability for one requested relationship without showing a network.
+
+**Structural Edge**
+A focus-revealed relationship trace in structural mode.
+
+Purpose:
+- Shows import relationships as temporary explanatory overlays, not permanent wiring.
+
 **Outgoing Edge**
 A focus-revealed edge from the focused object to something it imports.
 
@@ -170,6 +204,18 @@ A focus-revealed edge from something that imports the focused object.
 Purpose:
 - Shows what depends on the focused object.
 
+**Edge Lane**
+A deterministic offset path used to separate multiple focused edges.
+
+Purpose:
+- Prevents relationship traces from overlapping and visually merging.
+
+**Orthogonal Edge**
+An edge that uses horizontal/vertical stepped geometry instead of organic curves.
+
+Purpose:
+- Improves traceability and reinforces the structural language of the atlas.
+
 ## Interaction Language
 
 **Hover**
@@ -177,6 +223,8 @@ Temporary visual feedback only.
 
 Current rule:
 - No metadata preview on hover.
+- No relationship apparition on node hover.
+- Hover remains CSS-only until the pointer-event flicker bug is solved.
 
 Reason:
 - Hover preview caused flicker and is listed in `BUGS.md`.

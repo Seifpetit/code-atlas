@@ -271,6 +271,7 @@ input {
 }
 
 .atlas-node {
+  position: relative;
   width: var(--atlas-node-width, 210px);
   min-height: var(--atlas-node-height, 92px);
   border: 1px solid #334155;
@@ -338,7 +339,6 @@ input {
 
 .atlas-node:hover {
   border-color: #f8fafc;
-  transform: translateY(-1px);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
 }
 
@@ -382,6 +382,50 @@ input {
   border: 1px solid #dbeafe;
   background: #60a5fa;
   opacity: 0;
+  pointer-events: none;
+}
+
+.relation-stub {
+  position: absolute;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 32px;
+  height: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  background: rgba(15, 23, 42, 0.94);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+}
+
+.relation-stub span {
+  color: currentColor;
+  font-size: 10px;
+}
+
+.relation-stub--incoming {
+  left: -13px;
+  top: 50%;
+  color: #facc15;
+  transform: translate(-50%, -50%);
+}
+
+.relation-stub--outgoing {
+  right: -13px;
+  top: 50%;
+  color: #2dd4bf;
+  transform: translate(50%, -50%);
+}
+
+.relation-stub:hover {
+  border-color: currentColor;
+  background: #101827;
 }
 
 .is-search-match .atlas-node {
@@ -404,19 +448,43 @@ input {
   opacity: 0.18;
 }
 
-.is-outgoing-edge path {
+.structural-edge {
+  fill: none;
+  stroke-width: 1.3;
+  opacity: 0.68;
+  pointer-events: none;
+}
+
+.structural-edge--outgoing {
   stroke: #2dd4bf;
-  stroke-width: 2.4;
+  stroke-dasharray: 7 9;
+  animation: structural-flow-out 1.6s linear infinite;
 }
 
-.is-incoming-edge path {
+.structural-edge--incoming {
   stroke: #facc15;
-  stroke-width: 2.2;
-  stroke-dasharray: 6 6;
+  stroke-dasharray: 5 8;
+  animation: structural-flow-in 1.8s linear infinite;
 }
 
-.is-muted-edge path {
-  opacity: 0.25;
+.structural-edge--halo {
+  stroke: rgba(248, 250, 252, 0.18);
+  stroke-width: 5;
+  stroke-dasharray: none;
+  opacity: 0.24;
+  animation: none;
+}
+
+@keyframes structural-flow-out {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+@keyframes structural-flow-in {
+  to {
+    stroke-dashoffset: 13;
+  }
 }
 
 .metadata-panel {
@@ -637,6 +705,11 @@ input {
 .relation-lens li strong {
   color: #99f6e4;
   font-size: 11px;
+}
+
+.relation-lens__more {
+  color: #94a3b8;
+  font-weight: 800;
 }
 
 .relation-lens p {

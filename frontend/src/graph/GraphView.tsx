@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -6,11 +6,13 @@ import {
   MiniMap,
   MarkerType,
   ReactFlow,
+  type NodeChange,
   type NodeMouseHandler,
   type ReactFlowInstance
 } from "@xyflow/react";
 import type { AtlasGraph, AtlasNode } from "../api";
 import type { ClusteringMode } from "./clustering";
+import { edgeTypes } from "./edgeTypes";
 import { layoutStructuralContext, type AtlasFlowEdge, type AtlasFlowNode } from "./layout";
 import { nodeTypes } from "./nodeTypes";
 
@@ -23,10 +25,20 @@ interface GraphViewProps {
 interface StructuralState {
   currentContextId: string | null;
   focusedNodeId: string | null;
+  tracedEdgeId: string | null;
   pageIndex: number;
   breadcrumbPath: string[];
   clusteringMode: ClusteringMode;
 }
+
+interface BudgetedRelationship {
+  edge: AtlasFlowEdge;
+  direction: "incoming" | "outgoing";
+  otherNode: AtlasNode | null;
+  score: number;
+}
+
+type ManualNodePositions = Record<string, { x: number; y: number }>;
 
 function isStructuralNode(node: AtlasFlowNode): node is AtlasFlowNode {
   return node.type === "domain" || node.type === "folder" || node.type === "file";
@@ -52,17 +64,92 @@ function contextOwnsPath(contextId: string | null, path: string): boolean {
   return path === contextId || path.startsWith(`${contextId}/`);
 }
 
+function laneOffsetFor(index: number, total: number): number {
+  const laneGap = 14;
+  return (index - (total - 1) / 2) * laneGap;
+}
+
+function relationshipScore(activeNode: AtlasNode, otherNode: AtlasNode | null): number {
+  if (!otherNode) {
+    return 0;
+  }
+
+  if ((activeNode.parent ?? null) === (otherNode.parent ?? null)) {
+    return 300;
+  }
+
+  return 200;
+}
+
+function budgetRelationships(
+  allEdges: AtlasFlowEdge[],
+  visibleById: Map<string, AtlasNode>,
+  activeNodeId: string,
+  limit: number
+): {
+  visible: BudgetedRelationship[];
+  hiddenIncoming: number;
+  hiddenOutgoing: number;
+  totalIncoming: number;
+  totalOutgoing: number;
+} {
+  const activeNode = visibleById.get(activeNodeId);
+  const related = allEdges
+    .filter((edge) => edge.source === activeNodeId || edge.target === activeNodeId)
+    .map((edge) => {
+      const direction: "incoming" | "outgoing" = edge.source === activeNodeId ? "outgoing" : "incoming";
+      const otherNode = visibleById.get(direction === "outgoing" ? edge.target : edge.source) ?? null;
+      const importCount = Number(edge.data?.importCount ?? 1);
+
+      return {
+        edge,
+        direction,
+        otherNode,
+        score: (activeNode ? relationshipScore(activeNode, otherNode) : 0) + importCount
+      };
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+
+      if (a.direction !== b.direction) {
+        return a.direction === "outgoing" ? -1 : 1;
+      }
+
+      return (a.otherNode?.path ?? a.edge.id).localeCompare(b.otherNode?.path ?? b.edge.id);
+    });
+  const visible = related.slice(0, limit);
+  const hidden = related.slice(limit);
+
+  return {
+    visible,
+    hiddenIncoming: hidden.filter((relation) => relation.direction === "incoming").length,
+    hiddenOutgoing: hidden.filter((relation) => relation.direction === "outgoing").length,
+    totalIncoming: related.filter((relation) => relation.direction === "incoming").length,
+    totalOutgoing: related.filter((relation) => relation.direction === "outgoing").length
+  };
+}
+
 export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps) {
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const [tracedEdgeId, setTracedEdgeId] = useState<string | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
+  const [manualNodePositions, setManualNodePositions] = useState<ManualNodePositions>({});
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance<AtlasFlowNode, AtlasFlowEdge> | null>(null);
   const laidOut = useMemo(
     () => (graph ? layoutStructuralContext(graph, currentContextId, pageIndex) : null),
     [currentContextId, graph, pageIndex]
   );
   const normalizedSearch = searchTerm.trim().toLowerCase();
+  const handleTraceStart = useCallback((edgeId: string) => {
+    setTracedEdgeId(edgeId);
+  }, []);
+  const handleTraceEnd = useCallback(() => {
+    setTracedEdgeId(null);
+  }, []);
 
   const structuralState = useMemo<StructuralState | null>(() => {
     if (!laidOut) {
@@ -72,21 +159,25 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     return {
       currentContextId,
       focusedNodeId,
+      tracedEdgeId,
       pageIndex: laidOut.currentPage,
       breadcrumbPath: laidOut.breadcrumbPath.map((item) => item.id ?? "root"),
       clusteringMode
     };
-  }, [clusteringMode, currentContextId, focusedNodeId, laidOut]);
+  }, [clusteringMode, currentContextId, focusedNodeId, laidOut, tracedEdgeId]);
 
   useEffect(() => {
     setCurrentContextId(null);
     setFocusedNodeId(null);
+    setTracedEdgeId(null);
     setSelectedNode(null);
     setPageIndex(0);
+    setManualNodePositions({});
   }, [graph]);
 
   useEffect(() => {
     setFocusedNodeId(null);
+    setTracedEdgeId(null);
     setSelectedNode(null);
     setPageIndex(0);
   }, [currentContextId]);
@@ -109,27 +200,58 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     });
   }, [laidOut, reactFlowInstance]);
 
+  const visibleById = useMemo(() => {
+    return new Map(laidOut?.nodes.map((node) => [node.id, node.data as AtlasNode]) ?? []);
+  }, [laidOut]);
+  const handleNodesChange = useCallback((changes: NodeChange<AtlasFlowNode>[]) => {
+    setManualNodePositions((currentPositions) => {
+      let nextPositions = currentPositions;
+
+      for (const change of changes) {
+        if (change.type === "position" && change.position) {
+          if (nextPositions === currentPositions) {
+            nextPositions = { ...currentPositions };
+          }
+
+          nextPositions[change.id] = change.position;
+        }
+
+        if (change.type === "remove" && nextPositions[change.id]) {
+          if (nextPositions === currentPositions) {
+            nextPositions = { ...currentPositions };
+          }
+
+          delete nextPositions[change.id];
+        }
+      }
+
+      return nextPositions;
+    });
+  }, []);
   const activeNodeId = focusedNodeId;
+  const activeMode = focusedNodeId ? "focus" : null;
+  const relationshipBudget = useMemo(() => {
+    if (!laidOut || !activeNodeId) {
+      return null;
+    }
+
+    return budgetRelationships(laidOut.edges, visibleById, activeNodeId, 6);
+  }, [activeMode, activeNodeId, laidOut, visibleById]);
   const connectedNodeIds = useMemo(() => {
     const ids = new Set<string>();
 
-    if (!laidOut || !activeNodeId) {
+    if (!relationshipBudget || !activeNodeId) {
       return ids;
     }
 
     ids.add(activeNodeId);
-    for (const edge of laidOut.edges) {
-      if (edge.source === activeNodeId) {
-        ids.add(edge.target);
-      }
-
-      if (edge.target === activeNodeId) {
-        ids.add(edge.source);
-      }
+    for (const relation of relationshipBudget.visible) {
+      ids.add(relation.edge.source);
+      ids.add(relation.edge.target);
     }
 
     return ids;
-  }, [activeNodeId, laidOut]);
+  }, [activeNodeId, relationshipBudget]);
 
   const nodes = useMemo<AtlasFlowNode[]>(() => {
     if (!laidOut) {
@@ -142,70 +264,137 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       const isActive = activeNodeId === node.id;
       const isNeighbor = !isActive && connectedNodeIds.has(node.id);
       const shouldFade = Boolean(activeNodeId) && connectedNodeIds.size > 1 && !connectedNodeIds.has(node.id);
+      const shouldShowStubs = focusedNodeId === node.id;
+      const outgoingCount = shouldShowStubs ? relationshipBudget?.totalOutgoing ?? 0 : 0;
+      const incomingCount = shouldShowStubs ? relationshipBudget?.totalIncoming ?? 0 : 0;
+      const firstOutgoingEdgeId = shouldShowStubs
+        ? relationshipBudget?.visible.find((relation) => relation.direction === "outgoing")?.edge.id
+        : undefined;
+      const firstIncomingEdgeId = shouldShowStubs
+        ? relationshipBudget?.visible.find((relation) => relation.direction === "incoming")?.edge.id
+        : undefined;
       const className = [
         matchesSearch ? "is-search-match" : "",
-        isActive ? "is-focused-node" : "",
+        isActive && activeMode === "focus" ? "is-focused-node" : "",
         isNeighbor ? "is-neighbor-node" : "",
-        shouldFade ? "is-faded-node" : ""
+        shouldFade && activeMode === "focus" ? "is-faded-node" : "",
       ]
         .filter(Boolean)
         .join(" ");
 
       return {
         ...node,
+        position: manualNodePositions[node.id] ?? node.position,
+        draggable: true,
+        selectable: true,
+        data: {
+          ...data,
+          relationStub:
+            shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
+              ? {
+                  incomingCount,
+                  outgoingCount,
+                  firstIncomingEdgeId,
+                  firstOutgoingEdgeId,
+                  onTraceStart: handleTraceStart,
+                  onTraceEnd: handleTraceEnd
+                }
+              : undefined
+        },
         className: className || undefined
       };
     });
-  }, [activeNodeId, connectedNodeIds, laidOut, normalizedSearch]);
+  }, [
+    activeMode,
+    activeNodeId,
+    connectedNodeIds,
+    handleTraceEnd,
+    handleTraceStart,
+    laidOut,
+    manualNodePositions,
+    normalizedSearch,
+    relationshipBudget,
+    focusedNodeId
+  ]);
 
   const edges = useMemo(() => {
-    if (!laidOut) {
+    if (!laidOut || !activeNodeId || !tracedEdgeId) {
       return [];
     }
 
-    if (!activeNodeId) {
+    const tracedEdge = laidOut.edges.find((edge) => edge.id === tracedEdgeId);
+    if (!tracedEdge || (tracedEdge.source !== activeNodeId && tracedEdge.target !== activeNodeId)) {
       return [];
     }
 
-    return laidOut.edges
-      .filter((edge) => edge.source === activeNodeId || edge.target === activeNodeId)
-      .map((edge) => {
-        const isOutgoing = edge.source === activeNodeId;
+    const isOutgoing = tracedEdge.source === activeNodeId;
+    return [
+      {
+        ...tracedEdge,
+        animated: false,
+        className: undefined,
+        data: {
+          ...tracedEdge.data,
+          direction: isOutgoing ? "outgoing" : "incoming",
+          laneOffset: 0,
+          mode: "focus",
+          exactTrace: true
+        },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: isOutgoing ? "#2dd4bf" : "#facc15"
+        }
+      }
+    ];
+  }, [activeMode, activeNodeId, laidOut, tracedEdgeId]);
 
-        return {
-          ...edge,
-          animated: false,
-          className: isOutgoing ? "is-outgoing-edge" : "is-incoming-edge",
-          markerEnd: isOutgoing
-            ? {
-                type: MarkerType.ArrowClosed,
-                color: "#2dd4bf"
-              }
-            : undefined,
-          markerStart: isOutgoing
-            ? undefined
-            : {
-                type: MarkerType.ArrowClosed,
-                color: "#facc15"
-              }
-        };
-      });
-  }, [activeNodeId, focusedNodeId, laidOut]);
+  function renderRelationTrace(edgeId: string): {
+    onMouseEnter: () => void;
+    onMouseLeave: () => void;
+  } {
+    return {
+      onMouseEnter: () => setTracedEdgeId(edgeId),
+      onMouseLeave: () => setTracedEdgeId(null)
+    };
+  }
+
+  function relationDirectionForEdge(edgeId: string, nodeId: string): "incoming" | "outgoing" {
+    const edge = laidOut?.edges.find((candidate) => candidate.id === edgeId);
+    return edge?.source === nodeId ? "outgoing" : "incoming";
+  }
+
+  function edgeMarkerColor(edgeId: string, nodeId: string): string {
+    return relationDirectionForEdge(edgeId, nodeId) === "outgoing" ? "#2dd4bf" : "#facc15";
+  }
 
   const relationLens = useMemo(() => {
     if (!graph || !laidOut || !selectedNode) {
       return null;
     }
 
-    const visibleById = new Map(laidOut.nodes.map((node) => [node.id, node.data as AtlasNode]));
-    const visibleOutgoing = laidOut.edges
+    const budget = budgetRelationships(laidOut.edges, visibleById, selectedNode.id, 6);
+    const visibleOutgoing = budget.visible
+      .filter((relation) => relation.direction === "outgoing")
+      .map((relation) => ({
+        id: relation.edge.id,
+        label: relation.otherNode?.label ?? relation.edge.target,
+        count: Number(relation.edge.data?.importCount ?? 1)
+      }));
+    const visibleIncoming = budget.visible
+      .filter((relation) => relation.direction === "incoming")
+      .map((relation) => ({
+        id: relation.edge.id,
+        label: relation.otherNode?.label ?? relation.edge.source,
+        count: Number(relation.edge.data?.importCount ?? 1)
+      }));
+    const allVisibleOutgoing = laidOut.edges
       .filter((edge) => edge.source === selectedNode.id)
       .map((edge) => ({
         id: edge.id,
         label: visibleById.get(edge.target)?.label ?? edge.target,
         count: Number(edge.data?.importCount ?? 1)
       }));
-    const visibleIncoming = laidOut.edges
+    const allVisibleIncoming = laidOut.edges
       .filter((edge) => edge.target === selectedNode.id)
       .map((edge) => ({
         id: edge.id,
@@ -241,12 +430,16 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     return {
       visibleOutgoing,
       visibleIncoming,
+      allVisibleOutgoing,
+      allVisibleIncoming,
+      hiddenVisibleOutgoing: budget.hiddenOutgoing,
+      hiddenVisibleIncoming: budget.hiddenIncoming,
       internalOutgoing,
       internalIncoming,
       externalOutgoing,
       externalIncoming
     };
-  }, [currentContextId, graph, laidOut, selectedNode]);
+  }, [currentContextId, graph, laidOut, selectedNode, visibleById]);
 
   const importedByCount = useMemo(() => {
     if (!graph || !selectedNode || selectedNode.type !== "file") {
@@ -291,6 +484,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     }
 
     setFocusedNodeId(null);
+    setTracedEdgeId(null);
     setSelectedNode(null);
     setPageIndex(Math.min(Math.max(0, nextPageIndex), laidOut.totalPages - 1));
   }
@@ -324,12 +518,17 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       <ReactFlow<AtlasFlowNode, AtlasFlowEdge>
         nodes={nodes}
         edges={edges}
+        onNodesChange={handleNodesChange}
+        edgeTypes={edgeTypes}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.24, duration: 420 }}
         minZoom={0.35}
         maxZoom={1.45}
-        nodesDraggable
+        nodesDraggable={true}
+        nodesConnectable={false}
+        connectOnClick={false}
+        nodeClickDistance={8}
         panOnDrag
         zoomOnScroll
         zoomOnPinch
@@ -339,6 +538,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         onNodeDoubleClick={handleNodeDoubleClick}
         onPaneClick={() => {
           setFocusedNodeId(null);
+          setTracedEdgeId(null);
           setSelectedNode(null);
         }}
       >
@@ -438,12 +638,15 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                   <div className="relation-lens__subtitle">Visible imports</div>
                   {relationLens.visibleOutgoing.length > 0 ? (
                     <ul>
-                      {relationLens.visibleOutgoing.slice(0, 6).map((relation) => (
-                        <li key={relation.id}>
+                      {relationLens.visibleOutgoing.map((relation) => (
+                        <li key={relation.id} {...renderRelationTrace(relation.id)}>
                           <span>{relation.label}</span>
-                          <strong>{relation.count}</strong>
+                          <strong style={{ color: edgeMarkerColor(relation.id, selectedNode.id) }}>{relation.count}</strong>
                         </li>
                       ))}
+                      {relationLens.hiddenVisibleOutgoing > 0 ? (
+                        <li className="relation-lens__more">+{relationLens.hiddenVisibleOutgoing} more visible imports</li>
+                      ) : null}
                     </ul>
                   ) : (
                     <p>No visible outgoing imports.</p>
@@ -453,12 +656,15 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                   <div className="relation-lens__subtitle">Visible imported by</div>
                   {relationLens.visibleIncoming.length > 0 ? (
                     <ul>
-                      {relationLens.visibleIncoming.slice(0, 6).map((relation) => (
-                        <li key={relation.id}>
+                      {relationLens.visibleIncoming.map((relation) => (
+                        <li key={relation.id} {...renderRelationTrace(relation.id)}>
                           <span>{relation.label}</span>
-                          <strong>{relation.count}</strong>
+                          <strong style={{ color: edgeMarkerColor(relation.id, selectedNode.id) }}>{relation.count}</strong>
                         </li>
                       ))}
+                      {relationLens.hiddenVisibleIncoming > 0 ? (
+                        <li className="relation-lens__more">+{relationLens.hiddenVisibleIncoming} more visible incoming</li>
+                      ) : null}
                     </ul>
                   ) : (
                     <p>No visible incoming imports.</p>

@@ -22,7 +22,7 @@ export interface ContextLayoutResult {
 }
 
 export type AtlasFlowNode = Node<AtlasNode, "domain" | "folder" | "file">;
-export type AtlasFlowEdge = Edge<Record<string, unknown>, "smoothstep">;
+export type AtlasFlowEdge = Edge<Record<string, unknown>, "structural">;
 
 const MAX_VISIBLE_CHILDREN = 30;
 const DOMAIN_NODE_WIDTH = 286;
@@ -252,17 +252,13 @@ function makeImportEdge(source: string, target: string, count: number): AtlasFlo
     id: `context:${source}->${target}`,
     source,
     target,
-    type: "smoothstep",
+    type: "structural",
     animated: false,
     data: {
       kind: "context-import",
       importCount: count
     },
-    style: {
-      stroke: "#60a5fa",
-      strokeWidth: Math.min(2.4, 1.1 + count * 0.18),
-      opacity: 0.64
-    }
+    style: {}
   };
 }
 
