@@ -72,6 +72,10 @@ input {
   font-size: 13px;
 }
 
+.brand__subtitle {
+  font-size: 12px;
+}
+
 .analyze-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
