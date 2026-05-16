@@ -1,17 +1,18 @@
-import { formatCommitDate, type TemporalLandmark } from "./historyUtils";
+import { formatCommitDate } from "../history/historyUtils";
+import type { ArchitecturalLandmark } from "./landmarkExtraction";
 
-interface TimelinePanelProps {
+interface TemporalScrubberProps {
   totalStates: number;
   currentIndex: number;
   activeDate: string;
-  landmarks: TemporalLandmark[];
+  landmarks: ArchitecturalLandmark[];
   focusedLandmarkId: string | null;
   onScrub: (nextIndex: number) => void;
   onLandmarkFocus: (landmarkId: string) => void;
   onReset: () => void;
 }
 
-export function TimelinePanel({
+export function TemporalScrubber({
   totalStates,
   currentIndex,
   activeDate,
@@ -20,23 +21,22 @@ export function TimelinePanel({
   onScrub,
   onLandmarkFocus,
   onReset
-}: TimelinePanelProps) {
+}: TemporalScrubberProps) {
   const canScrub = totalStates > 1;
 
   return (
-    <aside className="timeline-panel" aria-label="Temporal architecture strip">
+    <aside className="timeline-panel" aria-label="Architectural time exploration">
       <div className="timeline-panel__header">
         <div>
-          <div className="timeline-panel__label">Temporal Pressure</div>
+          <div className="timeline-panel__label">Architectural Time</div>
           <div className="timeline-panel__title">{formatCommitDate(activeDate)}</div>
         </div>
         {currentIndex > 0 ? (
-          <button type="button" className="timeline-panel__clear" onClick={onReset} aria-label="Reset temporal state">
+          <button type="button" className="timeline-panel__clear" onClick={onReset}>
             Reset
           </button>
         ) : null}
       </div>
-
       {totalStates > 0 ? (
         <div className="timeline-strip">
           <input
@@ -50,19 +50,19 @@ export function TimelinePanel({
             disabled={!canScrub}
             aria-label="Temporal scrubber"
           />
-          <div className="timeline-strip__landmarks" role="list" aria-label="Temporal landmarks">
+          <div className="timeline-strip__landmarks" role="list" aria-label="Architectural landmarks">
             {landmarks.map((landmark) => {
-              const isFocused = focusedLandmarkId === landmark.id;
               const left = totalStates > 1 ? (landmark.index / (totalStates - 1)) * 100 : 0;
+              const focused = focusedLandmarkId === landmark.id;
 
               return (
                 <button
                   key={landmark.id}
-                  type="button"
                   role="listitem"
-                  className={isFocused ? "timeline-strip__landmark is-focused" : "timeline-strip__landmark"}
+                  type="button"
+                  className={focused ? "timeline-strip__landmark is-focused" : "timeline-strip__landmark"}
                   style={{ left: `${left}%` }}
-                  title={`${landmark.label} • ${landmark.changedFiles} files`}
+                  title={`${landmark.label} · ${landmark.changedFiles} files`}
                   onClick={() => onLandmarkFocus(landmark.id)}
                 >
                   <span />
@@ -73,7 +73,7 @@ export function TimelinePanel({
           <div className="timeline-strip__chips">
             {landmarks.slice(0, 4).map((landmark) => (
               <button
-                key={`chip-${landmark.id}`}
+                key={`chip:${landmark.id}`}
                 type="button"
                 className={focusedLandmarkId === landmark.id ? "timeline-strip__chip is-focused" : "timeline-strip__chip"}
                 onClick={() => onLandmarkFocus(landmark.id)}

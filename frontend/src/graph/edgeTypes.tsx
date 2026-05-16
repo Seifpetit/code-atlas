@@ -1,10 +1,13 @@
-import { BaseEdge, Position, getSmoothStepPath, type EdgeProps, type EdgeTypes } from "@xyflow/react";
+import { BaseEdge, type EdgeProps, type EdgeTypes } from "@xyflow/react";
 
 interface StructuralEdgeData extends Record<string, unknown> {
   direction?: "incoming" | "outgoing";
   kind?: string;
   laneOffset?: number;
-  mode?: "focus";
+}
+
+function straightPath(sourceX: number, sourceY: number, targetX: number, targetY: number): string {
+  return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
 }
 
 export function StructuralEdge(props: EdgeProps) {
@@ -13,18 +16,12 @@ export function StructuralEdge(props: EdgeProps) {
   const isLineage = data?.kind === "lineage-chain" || data?.kind === "lineage-child";
   const direction = data?.direction === "incoming" ? "incoming" : "outgoing";
   const mode = isLineage ? "lineage" : "focus";
-  const sourceY = props.sourceY + laneOffset;
-  const targetY = props.targetY + laneOffset;
-  const [edgePath] = getSmoothStepPath({
-    sourceX: props.sourceX,
-    sourceY,
-    sourcePosition: Position.Right,
-    targetX: props.targetX,
-    targetY,
-    targetPosition: Position.Left,
-    borderRadius: 2,
-    offset: 34
-  });
+  const edgePath = straightPath(
+    props.sourceX,
+    props.sourceY + laneOffset,
+    props.targetX,
+    props.targetY + laneOffset
+  );
   const className = [
     "structural-edge",
     isLineage ? "structural-edge--lineage" : `structural-edge--${direction}`,
@@ -37,17 +34,8 @@ export function StructuralEdge(props: EdgeProps) {
 
   return (
     <>
-      <BaseEdge
-        id={`${props.id}-halo`}
-        path={edgePath}
-        className={`${className} structural-edge--halo`}
-      />
-      <BaseEdge
-        id={props.id}
-        path={edgePath}
-        markerEnd={props.markerEnd}
-        className={className}
-      />
+      <BaseEdge id={`${props.id}-halo`} path={edgePath} className={`${className} structural-edge--halo`} />
+      <BaseEdge id={props.id} path={edgePath} markerEnd={props.markerEnd} className={className} />
     </>
   );
 }

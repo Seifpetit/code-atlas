@@ -56,6 +56,10 @@ function intersects(a: Bounds, b: Bounds): boolean {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
+function horizontalPushDistance(a: Bounds, b: Bounds): number {
+  return a.right + VERY_CLOSE_DISTANCE - b.left;
+}
+
 function verticalPushDistance(a: Bounds, b: Bounds): number {
   return a.bottom + VERY_CLOSE_DISTANCE - b.top;
 }
@@ -85,7 +89,8 @@ export function resolveOverlaps(nodes: AtlasFlowNode[]): { nodes: AtlasFlowNode[
   const contentNodes = resolvedNodes
     .filter((node) => !isLineageNode(node))
     .slice()
-    .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x || a.id.localeCompare(b.id));
+    // Prefer using horizontal space before stacking downward.
+    .sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y || a.id.localeCompare(b.id));
 
   for (let pass = 0; pass < contentNodes.length; pass += 1) {
     let changed = false;
@@ -99,13 +104,18 @@ export function resolveOverlaps(nodes: AtlasFlowNode[]): { nodes: AtlasFlowNode[
           continue;
         }
 
-        const pushDistance = verticalPushDistance(current, candidate);
-        if (pushDistance <= 0) {
+        const pushX = horizontalPushDistance(current, candidate);
+        if (pushX > 0) {
+          contentNodes[j].position.x += pushX;
+          changed = true;
           continue;
         }
 
-        contentNodes[j].position.y += pushDistance;
-        changed = true;
+        const pushY = verticalPushDistance(current, candidate);
+        if (pushY > 0) {
+          contentNodes[j].position.y += pushY;
+          changed = true;
+        }
       }
     }
 

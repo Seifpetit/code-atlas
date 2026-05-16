@@ -37,9 +37,9 @@ const LINEAGE_NODE_HEIGHT = 72;
 const LINEAGE_GAP_X = 34;
 const LINEAGE_Y = 0;
 const CHILDREN_Y_OFFSET = 150;
-const GRID_GAP_X = 46;
 const GRID_GAP_Y = 34;
 const GROUP_GAP_Y = 70;
+const GROUP_GAP_X = 90;
 
 const IMPORT_PARSE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 const EXTENSION_LABELS = new Map<string, string>([
@@ -224,17 +224,6 @@ function buildBreadcrumbPath(graph: AtlasGraph, contextId: string | null): Conte
   ];
 }
 
-function columnsForCount(count: number, level: number): number {
-  if (count <= 1) {
-    return 1;
-  }
-
-  const naturalColumns = Math.ceil(Math.sqrt(count));
-  const maxColumns = level === 0 ? 4 : 5;
-
-  return Math.min(maxColumns, naturalColumns);
-}
-
 function lineageNodeId(id: string): string {
   return `__lineage__:${id}`;
 }
@@ -324,24 +313,22 @@ function buildVisibleNodes(visibleChildren: AtlasNode[], level: number, graph: A
   }
 
   const nodes: AtlasFlowNode[] = [];
-  let yOffset = 0;
+  let xOffset = 0;
 
   for (const [, groupChildren] of [...groupedChildren.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    const columns = columnsForCount(groupChildren.length, level);
-    let maxBottom = yOffset;
+    let groupMaxWidth = 0;
 
     groupChildren.forEach((child, index) => {
       const dimensions = nodeDimensions(child, level);
-      const column = index % columns;
-      const row = Math.floor(index / columns);
-      const y = yOffset + row * (dimensions.height + GRID_GAP_Y);
+      const x = xOffset;
+      const y = index * (dimensions.height + GRID_GAP_Y);
 
-      maxBottom = Math.max(maxBottom, y + dimensions.height);
+      groupMaxWidth = Math.max(groupMaxWidth, dimensions.width);
       nodes.push({
         id: child.id,
         type: flowNodeType(child, level),
         position: {
-          x: column * (dimensions.width + GRID_GAP_X),
+          x,
           y: y + (level > 0 ? CHILDREN_Y_OFFSET : 0)
         },
         width: dimensions.width,
@@ -352,7 +339,9 @@ function buildVisibleNodes(visibleChildren: AtlasNode[], level: number, graph: A
       });
     });
 
-    yOffset = maxBottom + GROUP_GAP_Y;
+    // Horizontal tree branches: each group becomes a "branch column block" in X.
+    // Keep Y stable across groups so the view expands sideways instead of stacking downward.
+    xOffset += Math.max(groupMaxWidth, 1) + GROUP_GAP_X;
   }
 
   return nodes;

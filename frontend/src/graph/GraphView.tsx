@@ -11,8 +11,14 @@ import {
   type ReactFlowInstance
 } from "@xyflow/react";
 import type { AtlasGraph, AtlasNode } from "../api";
-import { TimelinePanel } from "../history/TimelinePanel";
-import { changedFileSet, formatCommitDate, historyBadgeFor, nodeTouchesChangedFiles } from "../history/historyUtils";
+import {
+  formatCommitDate,
+  historyBadgeFor
+} from "../history/historyUtils";
+import { extractArchitecturalLandmarks, snapToLandmark } from "../time/landmarkExtraction";
+import { RawHistoryInspector } from "../time/RawHistoryInspector";
+import { TemporalScrubber } from "../time/TemporalScrubber";
+import { buildTemporalStates, nodeTemporalPressure, temporalPressureLevel } from "../time/temporalPressure";
 import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
 import { layoutStructuralContext, type AtlasFlowEdge, type AtlasFlowNode } from "./layout";
@@ -150,8 +156,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [tracedEdgeId, setTracedEdgeId] = useState<string | null>(null);
-  const [hoveredCommitHash, setHoveredCommitHash] = useState<string | null>(null);
-  const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
+  const [temporalIndex, setTemporalIndex] = useState(0);
+  const [focusedLandmarkId, setFocusedLandmarkId] = useState<string | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [manualNodePositions, setManualNodePositions] = useState<ManualNodePositions>({});
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance<AtlasFlowNode, AtlasFlowEdge> | null>(null);
@@ -186,8 +192,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setCurrentContextId(null);
     setFocusedNodeId(null);
     setTracedEdgeId(null);
-    setHoveredCommitHash(null);
-    setSelectedCommitHash(null);
+    setTemporalIndex(0);
+    setFocusedLandmarkId(null);
     setSelectedNode(null);
     setPageIndex(0);
     setManualNodePositions({});
@@ -199,12 +205,6 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setSelectedNode(null);
     setPageIndex(0);
   }, [currentContextId]);
-
-  useEffect(() => {
-    setFocusedNodeId(null);
-    setTracedEdgeId(null);
-    setSelectedNode(null);
-  }, [selectedCommitHash]);
 
   useEffect(() => {
     if (!laidOut || pageIndex === laidOut.currentPage) {
@@ -222,33 +222,27 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     window.requestAnimationFrame(() => {
       reactFlowInstance.fitView({ padding: 0.24, duration: 420 });
     });
-  }, [laidOut, reactFlowInstance, selectedCommitHash]);
+  }, [laidOut, reactFlowInstance, temporalIndex]);
 
   const commits = graph?.commits ?? [];
-  const selectedCommit = useMemo(() => {
-    return commits.find((commit) => commit.hash === selectedCommitHash) ?? null;
-  }, [commits, selectedCommitHash]);
-  const activeCommit = useMemo(() => {
-    const activeCommitHash = hoveredCommitHash ?? selectedCommitHash;
-    return commits.find((commit) => commit.hash === activeCommitHash) ?? null;
-  }, [commits, hoveredCommitHash, selectedCommitHash]);
-  const selectedChangedFiles = useMemo(() => changedFileSet(selectedCommit), [selectedCommit]);
-  const activeChangedFiles = useMemo(() => changedFileSet(activeCommit), [activeCommit]);
+  const temporalStates = useMemo(() => (graph ? buildTemporalStates(graph, commits) : []), [commits, graph]);
+  const temporalLandmarks = useMemo(
+    () => extractArchitecturalLandmarks(commits, temporalStates),
+    [commits, temporalStates]
+  );
+  const activeTemporalState = useMemo(() => temporalStates[temporalIndex] ?? null, [temporalIndex, temporalStates]);
+  const activeTemporalDate = useMemo(() => {
+    return activeTemporalState?.date ?? commits[0]?.date ?? new Date().toISOString();
+  }, [activeTemporalState, commits]);
+  const focusedLandmark = useMemo(() => {
+    return temporalLandmarks.find((landmark) => landmark.id === focusedLandmarkId) ?? null;
+  }, [focusedLandmarkId, temporalLandmarks]);
   const displayedLayoutNodes = useMemo(() => {
     if (!laidOut) {
       return [];
     }
-
-    if (!selectedCommit) {
-      return laidOut.nodes;
-    }
-
-    return laidOut.nodes.filter((node) => {
-      const data = node.data as AtlasNode;
-
-      return typeof data.lineageKind === "string" || nodeTouchesChangedFiles(data, selectedChangedFiles);
-    });
-  }, [laidOut, selectedChangedFiles, selectedCommit]);
+    return laidOut.nodes;
+  }, [laidOut]);
   const visibleById = useMemo(() => {
     return new Map(displayedLayoutNodes.map((node) => [node.id, node.data as AtlasNode]));
   }, [displayedLayoutNodes]);
@@ -316,10 +310,12 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       const data = node.data as AtlasNode;
       const isLineageAnchor = typeof data.lineageKind === "string";
       const matchesSearch = normalizedSearch.length > 0 && data.path.toLowerCase().includes(normalizedSearch);
-      const touchesActiveCommit = nodeTouchesChangedFiles(data, activeChangedFiles);
+      const temporalPressure = nodeTemporalPressure(data, activeTemporalState);
+      const temporalLevel = temporalPressureLevel(temporalPressure);
       const isActive = activeNodeId === node.id;
       const isNeighbor = !isActive && connectedNodeIds.has(node.id);
       const shouldFade = Boolean(activeNodeId) && connectedNodeIds.size > 1 && !connectedNodeIds.has(node.id);
+      const temporalMuted = Boolean(activeTemporalState) && temporalPressure <= 0.2;
       const shouldShowStubs = focusedNodeId === node.id;
       const outgoingCount = shouldShowStubs ? relationshipBudget?.totalOutgoing ?? 0 : 0;
       const incomingCount = shouldShowStubs ? relationshipBudget?.totalIncoming ?? 0 : 0;
@@ -334,8 +330,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         isActive && activeMode === "focus" ? "is-focused-node" : "",
         isNeighbor ? "is-neighbor-node" : "",
         shouldFade && activeMode === "focus" ? "is-faded-node" : "",
-        touchesActiveCommit ? "is-history-changed-node" : "",
-        activeCommit && !touchesActiveCommit ? "is-history-muted-node" : "",
+        temporalLevel ? `is-temporal-${temporalLevel}-node` : "",
+        temporalMuted ? "is-history-muted-node" : ""
       ]
         .filter(Boolean)
         .join(" ");
@@ -348,6 +344,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         data: {
           ...data,
           historyBadge: historyBadgeFor(data, graph?.fileHistory),
+          temporalPressure,
+          significanceLevel: temporalLevel ?? data.significanceLevel,
           relationStub:
             shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
               ? {
@@ -375,8 +373,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     normalizedSearch,
     relationshipBudget,
     focusedNodeId,
-    activeChangedFiles,
-    activeCommit,
+    activeTemporalState,
     graph?.fileHistory
   ]);
 
@@ -520,9 +517,30 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   const selectedFileHistory = selectedNode?.type === "file" ? graph?.fileHistory?.[selectedNode.path] : undefined;
 
   const handleTimelineReset = useCallback(() => {
-    setSelectedCommitHash(null);
-    setHoveredCommitHash(null);
+    setTemporalIndex(0);
+    setFocusedLandmarkId(null);
   }, []);
+
+  const handleTemporalScrub = useCallback(
+    (nextIndex: number) => {
+      const clamped = Math.min(Math.max(0, nextIndex), Math.max(0, temporalStates.length - 1));
+      const snapped = snapToLandmark(clamped, temporalLandmarks, 1);
+
+      setTemporalIndex(snapped);
+      setFocusedLandmarkId(temporalLandmarks.find((landmark) => landmark.index === snapped)?.id ?? null);
+    },
+    [temporalLandmarks, temporalStates.length]
+  );
+
+  const handleLandmarkFocus = useCallback((landmarkId: string) => {
+    const landmark = temporalLandmarks.find((item) => item.id === landmarkId);
+    if (!landmark) {
+      return;
+    }
+
+    setFocusedLandmarkId(landmark.id);
+    setTemporalIndex(landmark.index);
+  }, [temporalLandmarks]);
 
   const handleNodeClick: NodeMouseHandler<AtlasFlowNode> = (_event, node) => {
     if (isLineageNode(node)) {
@@ -657,14 +675,17 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         />
       </ReactFlow>
 
-      <TimelinePanel
-        commits={commits}
-        selectedCommitHash={selectedCommitHash}
-        hoveredCommitHash={hoveredCommitHash}
-        onCommitHover={setHoveredCommitHash}
-        onCommitSelect={setSelectedCommitHash}
+      <TemporalScrubber
+        totalStates={temporalStates.length}
+        currentIndex={temporalIndex}
+        activeDate={activeTemporalDate}
+        landmarks={temporalLandmarks}
+        focusedLandmarkId={focusedLandmarkId}
+        onScrub={handleTemporalScrub}
+        onLandmarkFocus={handleLandmarkFocus}
         onReset={handleTimelineReset}
       />
+      <RawHistoryInspector visible={Boolean(focusedLandmark)} landmark={focusedLandmark} commits={commits} />
 
       <div className="context-panel">
         <div className="context-panel__label">Structural - Level {laidOut.level + 1}</div>
