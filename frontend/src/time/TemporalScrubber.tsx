@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { formatCommitDate } from "../history/historyUtils";
 import type { ArchitecturalLandmark } from "./landmarkExtraction";
 
@@ -23,6 +24,10 @@ export function TemporalScrubber({
   onReset
 }: TemporalScrubberProps) {
   const canScrub = totalStates > 1;
+  const progress = totalStates > 1 ? (currentIndex / (totalStates - 1)) * 100 : 0;
+  const scrubberStyle = {
+    "--timeline-progress": `${progress}%`
+  } as CSSProperties;
 
   return (
     <aside className="timeline-panel" aria-label="Architectural time exploration">
@@ -41,6 +46,7 @@ export function TemporalScrubber({
         <div className="timeline-strip">
           <input
             className="timeline-strip__range"
+            style={scrubberStyle}
             type="range"
             min={0}
             max={Math.max(0, totalStates - 1)}
@@ -62,7 +68,7 @@ export function TemporalScrubber({
                   type="button"
                   className={focused ? "timeline-strip__landmark is-focused" : "timeline-strip__landmark"}
                   style={{ left: `${left}%` }}
-                  title={`${landmark.label} · ${landmark.changedFiles} files`}
+                  title={`${landmark.label} - ${landmark.changedFiles} files`}
                   onClick={() => onLandmarkFocus(landmark.id)}
                 >
                   <span />

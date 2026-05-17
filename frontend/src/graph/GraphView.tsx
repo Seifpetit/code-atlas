@@ -19,6 +19,8 @@ import { extractArchitecturalLandmarks, snapToLandmark } from "../time/landmarkE
 import { RawHistoryInspector } from "../time/RawHistoryInspector";
 import { TemporalScrubber } from "../time/TemporalScrubber";
 import { buildTemporalStates, nodeTemporalPressure, temporalPressureLevel } from "../time/temporalPressure";
+import { visualStateStyle } from "./attention/applyNodeVisualState";
+import { composeNodeVisualState } from "./attention/composeNodeVisualState";
 import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
 import { layoutStructuralContext, type AtlasFlowEdge, type AtlasFlowNode } from "./layout";
@@ -154,6 +156,7 @@ function budgetRelationships(
 export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps) {
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [tracedEdgeId, setTracedEdgeId] = useState<string | null>(null);
   const [temporalIndex, setTemporalIndex] = useState(0);
@@ -190,6 +193,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
   useEffect(() => {
     setCurrentContextId(null);
+    setHoveredNodeId(null);
     setFocusedNodeId(null);
     setTracedEdgeId(null);
     setTemporalIndex(0);
@@ -201,6 +205,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
   useEffect(() => {
     setFocusedNodeId(null);
+    setHoveredNodeId(null);
     setTracedEdgeId(null);
     setSelectedNode(null);
     setPageIndex(0);
@@ -313,9 +318,23 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       const temporalPressure = nodeTemporalPressure(data, activeTemporalState);
       const temporalLevel = temporalPressureLevel(temporalPressure);
       const isActive = activeNodeId === node.id;
+      const isHovered = hoveredNodeId === node.id;
       const isNeighbor = !isActive && connectedNodeIds.has(node.id);
-      const shouldFade = Boolean(activeNodeId) && connectedNodeIds.size > 1 && !connectedNodeIds.has(node.id);
-      const temporalMuted = Boolean(activeTemporalState) && temporalPressure <= 0.2;
+      const hasFocusContext = Boolean(activeNodeId) && connectedNodeIds.size > 1;
+      const hasCriticalEvent = Boolean(focusedLandmark);
+      const visualState = composeNodeVisualState({
+        isHovered,
+        isFocused: isActive && activeMode === "focus",
+        isSearchMatch: matchesSearch,
+        isRelationshipRelevant: isActive || isNeighbor,
+        hasFocusContext,
+        temporalPressureLevel: temporalLevel,
+        temporalPressureScore: temporalPressure,
+        hasTemporalState: Boolean(activeTemporalState),
+        hasCriticalEvent,
+        isCriticalEventAffected: hasCriticalEvent && temporalPressure > 0.2,
+        hasStructuralGuidance: Boolean(activeTemporalState && data.significanceLevel && !temporalLevel)
+      });
       const shouldShowStubs = focusedNodeId === node.id;
       const outgoingCount = shouldShowStubs ? relationshipBudget?.totalOutgoing ?? 0 : 0;
       const incomingCount = shouldShowStubs ? relationshipBudget?.totalIncoming ?? 0 : 0;
@@ -325,27 +344,18 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       const firstIncomingEdgeId = shouldShowStubs
         ? relationshipBudget?.visible.find((relation) => relation.direction === "incoming")?.edge.id
         : undefined;
-      const className = [
-        matchesSearch ? "is-search-match" : "",
-        isActive && activeMode === "focus" ? "is-focused-node" : "",
-        isNeighbor ? "is-neighbor-node" : "",
-        shouldFade && activeMode === "focus" ? "is-faded-node" : "",
-        temporalLevel ? `is-temporal-${temporalLevel}-node` : "",
-        temporalMuted ? "is-history-muted-node" : ""
-      ]
-        .filter(Boolean)
-        .join(" ");
-
       return {
         ...node,
         position: manualNodePositions[node.id] ?? node.position,
         draggable: !isLineageAnchor,
         selectable: false,
+        zIndex: visualState.zIndex,
+        style: visualStateStyle(visualState),
         data: {
           ...data,
           historyBadge: historyBadgeFor(data, graph?.fileHistory),
           temporalPressure,
-          significanceLevel: temporalLevel ?? data.significanceLevel,
+          visualState,
           relationStub:
             shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
               ? {
@@ -358,7 +368,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                 }
               : undefined
         },
-        className: className || undefined
+        className: visualState.className
       };
     });
   }, [
@@ -373,7 +383,9 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     normalizedSearch,
     relationshipBudget,
     focusedNodeId,
+    hoveredNodeId,
     activeTemporalState,
+    focusedLandmark,
     graph?.fileHistory
   ]);
 
@@ -581,6 +593,14 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setSelectedNode(data);
   };
 
+  const handleNodeMouseEnter: NodeMouseHandler<AtlasFlowNode> = (_event, node) => {
+    setHoveredNodeId(node.id);
+  };
+
+  const handleNodeMouseLeave: NodeMouseHandler<AtlasFlowNode> = () => {
+    setHoveredNodeId(null);
+  };
+
   function navigateToContext(contextId: string | null): void {
     setCurrentContextId(contextId);
   }
@@ -643,7 +663,10 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         onInit={setReactFlowInstance}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
+        onNodeMouseEnter={handleNodeMouseEnter}
+        onNodeMouseLeave={handleNodeMouseLeave}
         onPaneClick={() => {
+          setHoveredNodeId(null);
           setFocusedNodeId(null);
           setTracedEdgeId(null);
           setSelectedNode(null);

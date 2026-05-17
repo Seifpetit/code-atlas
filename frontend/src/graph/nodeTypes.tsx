@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import type { NodeProps, NodeTypes } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { AtlasNode } from "../api";
+import type { NodeVisualState } from "./attention/attentionTypes";
 
 type StructuralKind = "domain" | "folder" | "file";
 
@@ -29,17 +30,20 @@ function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
 function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKind: StructuralKind }) {
   const relationStub = data.relationStub as RelationStubData | undefined;
   const historyBadge = typeof data.historyBadge === "string" ? data.historyBadge : undefined;
-  const significanceLevel = typeof data.significanceLevel === "string" ? data.significanceLevel : undefined;
   const significanceScore = Number(data.significanceScore ?? 0);
+  const visualState = data.visualState as NodeVisualState | undefined;
   const viewVariant = typeof data.viewVariant === "string" ? data.viewVariant : "rect";
   const isDomainCard = structuralKind === "domain";
   const isVeryClose = data.isVeryClose === true;
+  const shouldShowResidue =
+    visualState?.layer === "structural-guidance" ||
+    visualState?.layer === "temporal-pressure" ||
+    visualState?.layer === "critical-event";
   const className = [
     "atlas-node",
     `atlas-node--${structuralKind}`,
     `atlas-node--${viewVariant}`,
     isDomainCard ? "atlas-node--domain-card" : "",
-    significanceLevel ? `atlas-node--significance-${significanceLevel}` : "",
     isVeryClose ? "atlas-node--very-close" : ""
   ]
     .filter(Boolean)
@@ -77,10 +81,10 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
       <div className="atlas-node__label">{data.label}</div>
       <div className="atlas-node__path">{data.path}</div>
       <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
-      {significanceLevel ? (
+      {shouldShowResidue ? (
         <div
           className="significance-residue"
-          title={`${significanceScore} historical touches inside this structural area`}
+          title={`${significanceScore} attention-weighted historical touches inside this structural area`}
         />
       ) : null}
       {historyBadge ? <div className="history-badge">{historyBadge}</div> : null}
