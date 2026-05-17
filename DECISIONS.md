@@ -162,7 +162,10 @@ Implications:
 ## 10. History Is A Lightweight Overlay
 
 Status:
-- Accepted
+- Superseded
+
+Superseded by:
+- 13. Architectural Time Exploration Is Primary
 
 Decision:
 - Repository history is shown as a timeline layer over the structural map.
@@ -223,3 +226,98 @@ Implications:
 - Lineage links are structural containment links, not import/dependency relationships.
 - Path anchors are click targets for jumping back to an ancestor layer, but they do not enter local focus mode.
 - Collision resolution ignores path anchors so they do not push the current content layer.
+
+## 13. Architectural Time Exploration Is Primary
+
+Status:
+- Accepted
+
+Decision:
+- Time is explored primarily through architectural states, temporal pressure, and landmarks.
+- Raw commits are secondary evidence shown only after a temporal landmark is focused.
+- The timeline surface is a temporal scrubber, not a commit list or git-history browser.
+
+Rationale:
+- Code Atlas should help users understand how architecture evolved, not browse git metadata first.
+- Temporal pressure should diffuse into the structure so users can see where architectural activity accumulated.
+- Commit evidence remains useful, but it should support architectural investigation rather than dominate the UI.
+
+Implications:
+- `TemporalScrubber` is the primary history UI.
+- `RawHistoryInspector` is contextual and subordinate.
+- Commit cards, base/target compare controls, and chronological dashboard surfaces should not return without a separate accepted product decision.
+
+## 14. Node Attention Is Centrally Composed
+
+Status:
+- Accepted
+
+Decision:
+- Node highlighting is resolved through a central attention compositor.
+- Features provide signals; they do not directly own final node emphasis.
+- The final visual state determines the node's attention layer, opacity, scale, z-index, glow type, pulse, and label emphasis.
+
+Rationale:
+- Scattered highlight classes made the same object look important for unclear reasons.
+- Highlighting represents interruption priority, so visual priority must be deterministic.
+- Interaction focus, temporal pressure, structural guidance, and critical landmarks need distinct visual languages.
+
+Implications:
+- New attention-affecting features must pass through the attention compositor.
+- Click/search focus has higher priority than temporal pressure.
+- Temporal and structural signals may remain visible only when they do not visually compete with higher-priority states.
+
+## 15. Structural Layout Uses Object-Type Columns
+
+Status:
+- Accepted
+
+Decision:
+- Each object grouping/type gets its own horizontal column.
+- Objects in the same grouping/type are stacked vertically inside that column.
+
+Rationale:
+- The structural view should read as a horizontal tree branching from the current parent.
+- One-column-per-type grouping makes the current layer easier to scan than mixed top-down geometry.
+- It preserves grouping without requiring extra cluster nodes.
+
+Implications:
+- Layout should prioritize horizontal expansion before vertical stacking across groups.
+- Type/group columns are a structural layout rule, not a semantic clustering mode.
+
+## 16. Relationship Trace Geometry Is Currently Straight-Line Baseline
+
+Status:
+- Accepted
+
+Decision:
+- The current relationship/line renderer uses simple straight source-to-target segments.
+- Fancy obstacle detours, orthogonal routers, and lane routers are not active in the current baseline.
+
+Rationale:
+- Router complexity produced confusing visual behavior and still failed to guarantee clarity.
+- Straight lines make the baseline easier to evaluate while layout and attention hierarchy stabilize.
+- Relationship lines remain secondary and should not become the main navigation language.
+
+Implications:
+- Future routing work should be evaluated against the straight-line baseline.
+- If routes become complex again, the product question is whether geometry helps understanding more than layout, stubs, and panels.
+
+## 17. Close Session Is A Separate Ritual From Archive Pass
+
+Status:
+- Accepted
+
+Decision:
+- Archive pass is the product-memory step.
+- Close session is the full end-of-session ritual: verify, archive, update session notes, check git state, commit/push when requested, and hand off open loops.
+
+Rationale:
+- Archive docs preserve durable product intent, but they do not prove the work was verified or make the next session easy to resume.
+- A lightweight close ritual reduces dependence on memory and discipline.
+- `SESSION_NOTES.md` gives the next session a faster handoff than reading the full conversation.
+
+Implications:
+- Use `ai-prompts/close-session.md` for end-of-session closure.
+- Use `scripts/close-session-check.ps1` as a local reminder/check.
+- Keep `SESSION_NOTES.md` short and focused on the latest meaningful session.

@@ -68,6 +68,36 @@ Ask:
 
 If yes to any of these, run an archive pass.
 
+## Close Session
+
+A close session pass is the full end-of-session ritual.
+
+Use this prompt:
+
+```text
+Close the session using ai-prompts/close-session.md.
+```
+
+Close session steps:
+
+1. Verify the work with the relevant build, test, or manual check.
+2. Run an archive pass if durable context changed.
+3. Update `SESSION_NOTES.md`.
+4. Check git status and identify intentional dirty files.
+5. Commit and push when the session should be preserved remotely.
+6. Leave a short handoff report.
+
+Local check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/close-session-check.ps1 -VerificationCommand "npm.cmd run build"
+```
+
+Close session is broader than archive pass:
+
+- Archive pass preserves product memory.
+- Close session verifies work, records handoff context, and checks git state.
+
 ## CI Reminder
 
 The archive check is intentionally a warning, not a blocker.

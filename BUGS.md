@@ -1,5 +1,38 @@
 # Known Bugs
 
+## Highlighting Felt Random Because Signals Competed
+
+Status:
+- Fixed
+
+Severity:
+- Medium
+
+Area:
+- Graph node highlighting, attention states
+
+Observed:
+- The same object could appear highlighted in different ways depending on whether search, focus, temporal pressure, significance, or fade state was active.
+- CSS source order and additive classes could make weaker signals visually override stronger product intent.
+
+Expected:
+- Every glow or emphasis should have a clear reason.
+- Only one dominant attention state should exist per node at a time.
+- Interaction focus should not visually compete with temporal or structural background signals.
+
+Cause:
+- Highlighting was assembled directly in `GraphView` and `nodeTypes` through independent classes such as focus, temporal, muted, search, and significance.
+- There was no central signal arbitration model.
+
+Fix:
+- Added a central attention compositor under `frontend/src/graph/attention/`.
+- `GraphView` now provides attention signals and receives one final `NodeVisualState`.
+- Historical significance no longer independently adds node highlight classes.
+- CSS now styles attention layers instead of scattered feature-owned highlight classes.
+
+Needs watching:
+- New features that affect attention must route through the attention compositor instead of adding direct node classes.
+
 ## Hover preview flicker
 
 The hover preview feature was removed because it flickered when moving across graph nodes.
@@ -69,6 +102,11 @@ Fallback implemented:
 - Relationship stubs appear only on clicked/focused nodes.
 - Exact relationship traces appear only from focused stubs or relation-lens items.
 - Default and hover states do not render relationship edges.
+
+Current state:
+- Lightweight hover attention has been reintroduced through the central attention compositor.
+- Hover previews and hover-driven relationship apparition remain disabled.
+- If flicker returns, first inspect whether hover state is causing node layout, relation stubs, or edge overlays to mount/unmount.
 
 Notes:
 - React Flow node/edge rerendering may still be invalidating hover state during apparition creation.

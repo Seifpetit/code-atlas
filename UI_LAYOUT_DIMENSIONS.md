@@ -12,16 +12,25 @@ This file records important fixed UI dimensions and panel positions so spatial l
 
 **Timeline Panel**
 - Position: under breadcrumb/path panel
-- `top: 62px`
+- `top: 56px`
 - `left: 16px`
 - Width: `min(320px, calc(100vw - 32px))`
-- Max height: `334px`
-- Timeline list max height: `270px`
+- Min height: `216px`
+- Max height: `268px`
+- Contains the `TemporalScrubber` custom range control.
+- Commit-list timeline dimensions are deprecated.
 
 **Structural Context Panel**
 - Position: upper right
-- `top: 366px`
+- `top: 318px`
 - `right: 16px`
+
+**Raw History Inspector**
+- Position: below the temporal scrubber
+- `top: 342px`
+- `left: 16px`
+- Width: `min(320px, calc(100vw - 32px))`
+- Max height: `260px`
 
 **Path Anchor Nodes**
 - Render inside React Flow as non-interactive lineage nodes.
@@ -48,12 +57,13 @@ This file records important fixed UI dimensions and panel positions so spatial l
 
 At `max-width: 900px`:
 - Timeline moves to bottom dock.
-- Timeline max height becomes `190px`.
-- Timeline list becomes horizontal.
+- Timeline min height becomes `140px`.
+- Timeline max height becomes `160px`.
+- Raw history inspector moves above the timeline at `bottom: 184px`.
 
 At `max-width: 760px`:
 - Breadcrumb stretches from `left: 16px` to `right: 16px`.
-- Structural context panel uses `top: 330px`.
+- Structural context panel uses `top: 292px`.
 
 ## Layout Rule
 

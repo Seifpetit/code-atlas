@@ -259,7 +259,7 @@ Purpose:
 - Shows what depends on the focused object.
 
 **History Layer**
-A temporal overlay that shows how the repository changed over time.
+A temporal overlay that shows architectural pressure and evidence over time.
 
 Purpose:
 - Adds repository evolution without replacing the structural map.
@@ -267,11 +267,72 @@ Purpose:
 Rule:
 - History decorates structure; it does not become the primary canvas model.
 
-**Timeline Panel**
-The UI panel listing recent commits.
+**Architectural Time**
+The primary temporal exploration layer.
 
 Purpose:
-- Lets the user preview or select one commit at a time.
+- Lets the user scrub through architecture evolution rather than browse commits first.
+- Shows temporal pressure, landmarks, and affected regions inside the spatial atlas.
+
+Technical components:
+- `TemporalScrubber`
+- `buildTemporalStates`
+- `extractArchitecturalLandmarks`
+
+**Temporal Scrubber**
+The compact timeline control for architectural time exploration.
+
+Purpose:
+- Lets the user move through temporal states.
+- Shows landmark points and a smooth progress track.
+
+Technical name:
+- `TemporalScrubber`
+
+**Temporal Pressure**
+The accumulated historical activity signal for a node or subtree.
+
+Purpose:
+- Shows where change, volatility, or repeated activity accumulated over time.
+- Feels atmospheric rather than like a click or search highlight.
+
+Technical name:
+- `nodeTemporalPressure`
+
+**Architectural Landmark**
+A significant temporal moment derived from repository activity.
+
+Examples:
+- Dependency expansion.
+- Volatility surge.
+- Subsystem emergence.
+- Coupling shift.
+
+Purpose:
+- Helps users focus on meaningful architectural states instead of raw commit-by-commit history.
+
+Technical name:
+- `ArchitecturalLandmark`
+
+**Raw History Inspector**
+The contextual evidence panel shown after focusing an architectural landmark.
+
+Purpose:
+- Shows commit evidence, authors, files changed, and nearby implementation details.
+- Remains secondary to architectural time exploration.
+
+Technical name:
+- `RawHistoryInspector`
+
+**Timeline Panel**
+Older name for the temporal panel area.
+
+Purpose:
+- Use `Temporal Scrubber` for the active component.
+- Use `Raw History Inspector` for the secondary evidence panel.
+
+Status:
+- Deprecated as a commit-list concept.
 
 **Commit Preview**
 A temporary changed-file highlight caused by hovering a commit.
@@ -355,6 +416,15 @@ An edge that uses horizontal/vertical stepped geometry instead of organic curves
 Purpose:
 - Improves traceability and reinforces the structural language of the atlas.
 
+**Straight Relationship Trace**
+The current baseline geometry for relationship and lineage lines.
+
+Purpose:
+- Draws the simplest possible source-to-target line so layout clarity can be evaluated before adding routing complexity.
+
+Rule:
+- Straight traces are the current baseline, not a claim that routing will never return.
+
 ## Interaction Language
 
 **Hover**
@@ -395,6 +465,45 @@ The stable selected neighborhood after clicking an object.
 
 **Local Neighborhood**
 The focused object plus directly connected visible objects and edges.
+
+**Attention Compositor**
+The central system that decides a node's final visual emphasis.
+
+Purpose:
+- Prevents hover, focus, temporal pressure, structural guidance, and landmarks from competing randomly.
+- Makes highlighting represent interruption priority.
+
+Technical name:
+- `composeNodeVisualState`
+
+**Attention Layer**
+The winning attention category for a node.
+
+Current layers:
+- `ambient`
+- `hover`
+- `focus`
+- `structural-guidance`
+- `temporal-pressure`
+- `critical-event`
+
+Rule:
+- Higher-priority layers suppress weaker competing signals.
+
+**Node Visual State**
+The final composed visual state applied to a node.
+
+Includes:
+- opacity
+- scale
+- z-index
+- outline intensity
+- glow type
+- pulse
+- label emphasis
+
+Technical name:
+- `NodeVisualState`
 
 **Details Panel**
 The right-side metadata panel shown after clicking an object.
@@ -444,6 +553,17 @@ The root context view.
 
 UI action:
 - The Overview button returns to `Root`.
+
+**Object-Type Column**
+A horizontal layout column for one structural object grouping/type.
+
+Purpose:
+- Keeps folders, source files, and structural-only file groups visually separated.
+- Makes the current layer read as horizontal branches from the current parent.
+
+Rule:
+- Each object grouping/type gets one X column.
+- Objects within that grouping stack vertically.
 
 ## Spatial Concepts
 
@@ -508,6 +628,35 @@ The complete parsed repository graph from the backend.
 Rule:
 - The renderer should not render the full repo graph directly.
 - The renderer should consume the current context projection.
+
+## Workflow Language
+
+**Archive Pass**
+The memory-preservation step for durable product context.
+
+Purpose:
+- Updates `VOCABULARY.md`, `DECISIONS.md`, and `BUGS.md` when product intent, language, decisions, or known issues changed.
+
+Prompt:
+- `ai-prompts/archive-pass.md`
+
+**Close Session**
+The full end-of-session ritual.
+
+Purpose:
+- Verifies work, runs archive updates when needed, updates the latest handoff, checks git state, and prepares commit/push when requested.
+
+Prompt:
+- `ai-prompts/close-session.md`
+
+**Session Notes**
+The rolling handoff file for the latest meaningful session.
+
+Purpose:
+- Records completed work, verification, archive updates, open issues, next likely task, and git status.
+
+Technical file:
+- `SESSION_NOTES.md`
 
 ## Words To Avoid
 

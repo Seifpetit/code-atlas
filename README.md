@@ -94,6 +94,18 @@ Quick command:
 Run an archive pass using ai-prompts/archive-pass.md.
 ```
 
+Close-session command:
+
+```text
+Close the session using ai-prompts/close-session.md.
+```
+
+Local close-session check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/close-session-check.ps1 -VerificationCommand "npm.cmd run build"
+```
+
 ## API
 
 `POST /analyze`
