@@ -19,6 +19,12 @@ import { extractArchitecturalLandmarks, snapToLandmark } from "../time/landmarkE
 import { RawHistoryInspector } from "../time/RawHistoryInspector";
 import { TemporalScrubber } from "../time/TemporalScrubber";
 import { buildTemporalStates, nodeTemporalPressure, temporalPressureLevel } from "../time/temporalPressure";
+import { buildRuntimeChain } from "../runtime/buildRuntimeChain";
+import { layoutRuntimeCorridor } from "../runtime/runtimeLayout";
+import { RuntimeScrubber } from "../runtime/RuntimeScrubber";
+import { inactiveRuntimeState, type RuntimeState } from "../runtime/runtimeTypes";
+import { runtimeVisualState } from "../runtime/runtimeVisualState";
+import { RuntimeXRayOverlay } from "../runtime/RuntimeXRayOverlay";
 import { visualStateStyle } from "./attention/applyNodeVisualState";
 import { composeNodeVisualState } from "./attention/composeNodeVisualState";
 import type { ClusteringMode } from "./clustering";
@@ -159,11 +165,15 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [tracedEdgeId, setTracedEdgeId] = useState<string | null>(null);
+  const [selectedRuntimeFileId, setSelectedRuntimeFileId] = useState<string | null>(null);
   const [temporalIndex, setTemporalIndex] = useState(0);
   const [focusedLandmarkId, setFocusedLandmarkId] = useState<string | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [manualNodePositions, setManualNodePositions] = useState<ManualNodePositions>({});
+  const [runtimeNodePositions, setRuntimeNodePositions] = useState<ManualNodePositions>({});
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance<AtlasFlowNode, AtlasFlowEdge> | null>(null);
+  const [runtimeState, setRuntimeState] = useState<RuntimeState>(inactiveRuntimeState);
+  const [runtimePlaybackActive, setRuntimePlaybackActive] = useState(false);
   const laidOut = useMemo(
     () => (graph ? layoutStructuralContext(graph, currentContextId, pageIndex) : null),
     [currentContextId, graph, pageIndex]
@@ -196,19 +206,27 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setHoveredNodeId(null);
     setFocusedNodeId(null);
     setTracedEdgeId(null);
+    setSelectedRuntimeFileId(null);
     setTemporalIndex(0);
     setFocusedLandmarkId(null);
     setSelectedNode(null);
     setPageIndex(0);
     setManualNodePositions({});
+    setRuntimeNodePositions({});
+    setRuntimeState(inactiveRuntimeState);
+    setRuntimePlaybackActive(false);
   }, [graph]);
 
   useEffect(() => {
     setFocusedNodeId(null);
     setHoveredNodeId(null);
     setTracedEdgeId(null);
+    setSelectedRuntimeFileId(null);
     setSelectedNode(null);
     setPageIndex(0);
+    setRuntimeNodePositions({});
+    setRuntimeState(inactiveRuntimeState);
+    setRuntimePlaybackActive(false);
   }, [currentContextId]);
 
   useEffect(() => {
@@ -227,7 +245,35 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     window.requestAnimationFrame(() => {
       reactFlowInstance.fitView({ padding: 0.24, duration: 420 });
     });
-  }, [laidOut, reactFlowInstance, temporalIndex]);
+  }, [laidOut, reactFlowInstance, runtimeState.active, runtimeState.currentStep, temporalIndex]);
+
+  useEffect(() => {
+    if (!runtimePlaybackActive || !runtimeState.active || !runtimeState.chain) {
+      return;
+    }
+
+    const maxStep = Math.max(0, runtimeState.chain.nodes.length - 1);
+
+    if (runtimeState.currentStep >= maxStep) {
+      setRuntimePlaybackActive(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setRuntimeState((current) => {
+        if (!current.active || !current.chain) {
+          return current;
+        }
+
+        return {
+          ...current,
+          currentStep: Math.min(current.currentStep + 1, Math.max(0, current.chain.nodes.length - 1))
+        };
+      });
+    }, 720);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [runtimePlaybackActive, runtimeState]);
 
   const commits = graph?.commits ?? [];
   const temporalStates = useMemo(() => (graph ? buildTemporalStates(graph, commits) : []), [commits, graph]);
@@ -251,7 +297,44 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   const visibleById = useMemo(() => {
     return new Map(displayedLayoutNodes.map((node) => [node.id, node.data as AtlasNode]));
   }, [displayedLayoutNodes]);
+  const graphNodeById = useMemo(() => {
+    return new Map((graph?.nodes ?? []).map((node) => [node.id, node]));
+  }, [graph]);
+  const runtimeLayout = useMemo(() => {
+    if (!graph || !runtimeState.active || !runtimeState.chain) {
+      return null;
+    }
+
+    return layoutRuntimeCorridor(graph, displayedLayoutNodes, runtimeState.chain, runtimeState.currentStep);
+  }, [displayedLayoutNodes, graph, runtimeState]);
   const handleNodesChange = useCallback((changes: NodeChange<AtlasFlowNode>[]) => {
+    if (runtimeState.active && runtimeLayout) {
+      setRuntimeNodePositions((currentPositions) => {
+        let nextPositions = currentPositions;
+
+        for (const change of changes) {
+          if (change.type === "position" && change.position && runtimeLayout.revealedNodeIds.has(change.id)) {
+            if (nextPositions === currentPositions) {
+              nextPositions = { ...currentPositions };
+            }
+
+            nextPositions[change.id] = change.position;
+          }
+
+          if (change.type === "remove" && nextPositions[change.id]) {
+            if (nextPositions === currentPositions) {
+              nextPositions = { ...currentPositions };
+            }
+
+            delete nextPositions[change.id];
+          }
+        }
+
+        return nextPositions;
+      });
+      return;
+    }
+
     setManualNodePositions((currentPositions) => {
       let nextPositions = currentPositions;
 
@@ -275,11 +358,11 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
       return nextPositions;
     });
-  }, []);
+  }, [runtimeLayout, runtimeState.active]);
   const activeNodeId = focusedNodeId;
-  const activeMode = focusedNodeId ? "focus" : null;
+  const activeMode = runtimeState.active ? "runtime" : focusedNodeId ? "focus" : null;
   const relationshipBudget = useMemo(() => {
-    if (!laidOut || !activeNodeId) {
+    if (!laidOut || !activeNodeId || runtimeState.active) {
       return null;
     }
 
@@ -289,7 +372,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       activeNodeId,
       6
     );
-  }, [activeMode, activeNodeId, laidOut, visibleById]);
+  }, [activeMode, activeNodeId, laidOut, runtimeState.active, visibleById]);
   const connectedNodeIds = useMemo(() => {
     const ids = new Set<string>();
 
@@ -311,7 +394,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       return [];
     }
 
-    return displayedLayoutNodes.map((node) => {
+    const baseNodes = displayedLayoutNodes.map((node) => {
       const data = node.data as AtlasNode;
       const isLineageAnchor = typeof data.lineageKind === "string";
       const matchesSearch = normalizedSearch.length > 0 && data.path.toLowerCase().includes(normalizedSearch);
@@ -335,7 +418,18 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         isCriticalEventAffected: hasCriticalEvent && temporalPressure > 0.2,
         hasStructuralGuidance: Boolean(activeTemporalState && data.significanceLevel && !temporalLevel)
       });
-      const shouldShowStubs = focusedNodeId === node.id;
+      const runtimePhase =
+        runtimeState.active && runtimeLayout
+          ? runtimeLayout.activeNodeId === node.id
+            ? "current"
+            : runtimeLayout.revealedNodeIds.has(node.id)
+              ? "residue"
+              : runtimeLayout.participatingNodeIds.has(node.id)
+                ? "participating"
+                : "background"
+          : null;
+      const resolvedVisualState = runtimePhase ? runtimeVisualState(runtimePhase) : visualState;
+      const shouldShowStubs = !runtimeState.active && focusedNodeId === node.id;
       const outgoingCount = shouldShowStubs ? relationshipBudget?.totalOutgoing ?? 0 : 0;
       const incomingCount = shouldShowStubs ? relationshipBudget?.totalIncoming ?? 0 : 0;
       const firstOutgoingEdgeId = shouldShowStubs
@@ -344,18 +438,24 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       const firstIncomingEdgeId = shouldShowStubs
         ? relationshipBudget?.visible.find((relation) => relation.direction === "incoming")?.edge.id
         : undefined;
+      const resolvedPosition =
+        runtimeState.active && runtimeLayout?.revealedNodeIds.has(node.id)
+          ? runtimeNodePositions[node.id] ?? runtimeLayout.positions.get(node.id) ?? node.position
+          : manualNodePositions[node.id] ?? node.position;
+
       return {
         ...node,
-        position: manualNodePositions[node.id] ?? node.position,
-        draggable: !isLineageAnchor,
+        position: resolvedPosition,
+        draggable: runtimeState.active ? Boolean(runtimeLayout?.revealedNodeIds.has(node.id)) : !isLineageAnchor,
         selectable: false,
-        zIndex: visualState.zIndex,
-        style: visualStateStyle(visualState),
+        zIndex: resolvedVisualState.zIndex,
+        style: visualStateStyle(resolvedVisualState),
         data: {
           ...data,
           historyBadge: historyBadgeFor(data, graph?.fileHistory),
           temporalPressure,
-          visualState,
+          visualState: resolvedVisualState,
+          runtimeStep: runtimeState.active ? runtimeState.chain?.nodes.find((runtimeNode) => runtimeNode.id === node.id)?.runtimeStep : undefined,
           relationStub:
             shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
               ? {
@@ -368,9 +468,36 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                 }
               : undefined
         },
-        className: visualState.className
+        className: resolvedVisualState.className
       };
     });
+
+    if (!runtimeLayout || !runtimeState.active) {
+      return baseNodes;
+    }
+
+    const runtimeExtraNodes = runtimeLayout.extraNodes.map((node) => {
+      const data = node.data as AtlasNode;
+      const phase = runtimeLayout.activeNodeId === node.id ? "current" : "residue";
+      const visualState = runtimeVisualState(phase);
+      const resolvedPosition = runtimeNodePositions[node.id] ?? node.position;
+
+      return {
+        ...node,
+        position: resolvedPosition,
+        draggable: true,
+        zIndex: visualState.zIndex,
+        style: visualStateStyle(visualState),
+        data: {
+          ...data,
+          historyBadge: historyBadgeFor(data, graph?.fileHistory),
+          visualState
+        },
+        className: `${visualState.className} runtime-node`
+      };
+    });
+
+    return [...baseNodes, ...runtimeExtraNodes];
   }, [
     activeMode,
     activeNodeId,
@@ -386,7 +513,10 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     hoveredNodeId,
     activeTemporalState,
     focusedLandmark,
-    graph?.fileHistory
+    graph?.fileHistory,
+    runtimeLayout,
+    runtimeNodePositions,
+    runtimeState
   ]);
 
   const edges = useMemo(() => {
@@ -395,6 +525,10 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     }
 
     const baseEdges = laidOut.lineageEdges;
+    if (runtimeState.active && runtimeLayout) {
+      return [...baseEdges, ...runtimeLayout.edges];
+    }
+
     if (!activeNodeId || !tracedEdgeId) {
       return baseEdges;
     }
@@ -424,7 +558,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         }
       }
     ];
-  }, [activeNodeId, laidOut, tracedEdgeId]);
+  }, [activeNodeId, laidOut, runtimeLayout, runtimeState.active, tracedEdgeId]);
 
   function renderRelationTrace(edgeId: string): {
     onMouseEnter: () => void;
@@ -527,6 +661,50 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     return graph.edges.filter((edge) => edge.target === selectedNode.id).length;
   }, [graph, selectedNode]);
   const selectedFileHistory = selectedNode?.type === "file" ? graph?.fileHistory?.[selectedNode.path] : undefined;
+  const runtimeOriginNode = runtimeState.originNodeId ? graphNodeById.get(runtimeState.originNodeId) ?? null : null;
+  const runtimeCurrentNode = runtimeLayout?.activeNodeId ? graphNodeById.get(runtimeLayout.activeNodeId) ?? null : null;
+  const runtimePreviousNode = runtimeLayout?.previousNodeId ? graphNodeById.get(runtimeLayout.previousNodeId) ?? null : null;
+  const runtimeNextNode = runtimeLayout?.nextNodeId ? graphNodeById.get(runtimeLayout.nextNodeId) ?? null : null;
+  const runtimeCandidateFiles = useMemo(() => {
+    if (!graph || !selectedNode || selectedNode.type === "file") {
+      return [];
+    }
+
+    const connectedFileIds = new Set<string>();
+
+    for (const edge of graph.edges) {
+      connectedFileIds.add(edge.source);
+      connectedFileIds.add(edge.target);
+    }
+
+    return graph.nodes
+      .filter((node) => node.type === "file" && ownsPath(selectedNode, node.path))
+      .sort((a, b) => {
+        const connectionDifference = Number(connectedFileIds.has(b.id)) - Number(connectedFileIds.has(a.id));
+
+        if (connectionDifference !== 0) {
+          return connectionDifference;
+        }
+
+        return Number(b.metadata?.importCount ?? 0) - Number(a.metadata?.importCount ?? 0) || a.path.localeCompare(b.path);
+      });
+  }, [graph, selectedNode]);
+  const selectedRuntimeFile = selectedRuntimeFileId ? graphNodeById.get(selectedRuntimeFileId) ?? null : null;
+
+  useEffect(() => {
+    if (!selectedNode || selectedNode.type === "file") {
+      setSelectedRuntimeFileId(null);
+      return;
+    }
+
+    setSelectedRuntimeFileId((currentFileId) => {
+      if (currentFileId && runtimeCandidateFiles.some((file) => file.id === currentFileId)) {
+        return currentFileId;
+      }
+
+      return runtimeCandidateFiles[0]?.id ?? null;
+    });
+  }, [runtimeCandidateFiles, selectedNode]);
 
   const handleTimelineReset = useCallback(() => {
     setTemporalIndex(0);
@@ -553,6 +731,89 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setFocusedLandmarkId(landmark.id);
     setTemporalIndex(landmark.index);
   }, [temporalLandmarks]);
+
+  const startRuntimeFromFile = useCallback((fileNodeId: string) => {
+    if (!graph) {
+      return;
+    }
+
+    const fileNode = graphNodeById.get(fileNodeId);
+
+    if (!fileNode || fileNode.type !== "file") {
+      return;
+    }
+
+    const chain = buildRuntimeChain(graph, fileNode.id);
+
+    if (!chain) {
+      return;
+    }
+
+    setFocusedNodeId(fileNode.id);
+    setTracedEdgeId(null);
+    setRuntimeNodePositions({});
+    setRuntimeState({
+      active: true,
+      originNodeId: fileNode.id,
+      currentStep: 0,
+      chain
+    });
+    setRuntimePlaybackActive(chain.nodes.length > 1);
+  }, [graph, graphNodeById]);
+
+  const handleRuntimeStart = useCallback(() => {
+    if (!selectedNode) {
+      return;
+    }
+
+    if (selectedNode.type === "file") {
+      startRuntimeFromFile(selectedNode.id);
+      return;
+    }
+
+    if (selectedRuntimeFileId) {
+      startRuntimeFromFile(selectedRuntimeFileId);
+    }
+  }, [selectedNode, selectedRuntimeFileId, startRuntimeFromFile]);
+
+  const handleRuntimeExit = useCallback(() => {
+    setRuntimeState(inactiveRuntimeState);
+    setRuntimePlaybackActive(false);
+    setRuntimeNodePositions({});
+    setTracedEdgeId(null);
+  }, []);
+
+  const handleRuntimeScrub = useCallback((step: number) => {
+    setRuntimePlaybackActive(false);
+    setRuntimeState((current) => {
+      if (!current.active || !current.chain) {
+        return current;
+      }
+
+      return {
+        ...current,
+        currentStep: Math.min(Math.max(0, step), Math.max(0, current.chain.nodes.length - 1))
+      };
+    });
+  }, []);
+
+  const handleRuntimeReplay = useCallback(() => {
+    setRuntimeState((current) => {
+      if (!current.active || !current.chain) {
+        return current;
+      }
+
+      return {
+        ...current,
+        currentStep: 0
+      };
+    });
+    setRuntimePlaybackActive(true);
+  }, []);
+
+  const handleRuntimeTogglePlay = useCallback(() => {
+    setRuntimePlaybackActive((isPlaying) => !isPlaying);
+  }, []);
 
   const handleNodeClick: NodeMouseHandler<AtlasFlowNode> = (_event, node) => {
     if (isLineageNode(node)) {
@@ -666,6 +927,11 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         onNodeMouseEnter={handleNodeMouseEnter}
         onNodeMouseLeave={handleNodeMouseLeave}
         onPaneClick={() => {
+          if (runtimeState.active) {
+            handleRuntimeExit();
+            return;
+          }
+
           setHoveredNodeId(null);
           setFocusedNodeId(null);
           setTracedEdgeId(null);
@@ -688,7 +954,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
               return "#64748b";
             }
 
-            return node.type === "folder" ? "#38bdf8" : "#8b5cf6";
+            return node.type === "folder" ? "#38bdf8" : "#facc15";
           }}
           nodeStrokeColor="#e5eefb"
           nodeStrokeWidth={2}
@@ -698,17 +964,28 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         />
       </ReactFlow>
 
-      <TemporalScrubber
-        totalStates={temporalStates.length}
-        currentIndex={temporalIndex}
-        activeDate={activeTemporalDate}
-        landmarks={temporalLandmarks}
-        focusedLandmarkId={focusedLandmarkId}
-        onScrub={handleTemporalScrub}
-        onLandmarkFocus={handleLandmarkFocus}
-        onReset={handleTimelineReset}
-      />
-      <RawHistoryInspector visible={Boolean(focusedLandmark)} landmark={focusedLandmark} commits={commits} />
+      {runtimeState.active && runtimeState.chain ? (
+        <RuntimeScrubber
+          chain={runtimeState.chain}
+          currentStep={runtimeState.currentStep}
+          isPlaying={runtimePlaybackActive}
+          onScrub={handleRuntimeScrub}
+          onReplay={handleRuntimeReplay}
+          onTogglePlay={handleRuntimeTogglePlay}
+        />
+      ) : (
+        <TemporalScrubber
+          totalStates={temporalStates.length}
+          currentIndex={temporalIndex}
+          activeDate={activeTemporalDate}
+          landmarks={temporalLandmarks}
+          focusedLandmarkId={focusedLandmarkId}
+          onScrub={handleTemporalScrub}
+          onLandmarkFocus={handleLandmarkFocus}
+          onReset={handleTimelineReset}
+        />
+      )}
+      <RawHistoryInspector visible={!runtimeState.active && Boolean(focusedLandmark)} landmark={focusedLandmark} commits={commits} />
 
       <div className="context-panel">
         <div className="context-panel__label">Structural - Level {laidOut.level + 1}</div>
@@ -739,7 +1016,16 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         </button>
       ) : null}
 
-      {selectedNode ? (
+      {runtimeState.active && runtimeState.chain ? (
+        <RuntimeXRayOverlay
+          chain={runtimeState.chain}
+          originNode={runtimeOriginNode}
+          currentNode={runtimeCurrentNode}
+          previousNode={runtimePreviousNode}
+          nextNode={runtimeNextNode}
+          onExit={handleRuntimeExit}
+        />
+      ) : selectedNode ? (
         <aside className="metadata-panel">
           <div className="metadata-panel__type">{selectedNode.type}</div>
           <div className="metadata-panel__title">{selectedNode.label}</div>
@@ -773,6 +1059,40 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
               Enter
             </button>
           ) : null}
+          {selectedNode.type === "file" ? (
+            <button type="button" className="metadata-panel__action metadata-panel__action--runtime" onClick={handleRuntimeStart}>
+              Runtime X-Ray
+            </button>
+          ) : (
+            <section className="runtime-file-picker" aria-label="Runtime X-Ray file origin">
+              <label htmlFor="runtime-file-origin">Child file</label>
+              {runtimeCandidateFiles.length > 0 ? (
+                <>
+                  <select
+                    id="runtime-file-origin"
+                    value={selectedRuntimeFileId ?? ""}
+                    onChange={(event) => setSelectedRuntimeFileId(event.target.value || null)}
+                  >
+                    {runtimeCandidateFiles.map((file) => (
+                      <option key={file.id} value={file.id}>
+                        {file.path}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="metadata-panel__action metadata-panel__action--runtime"
+                    onClick={handleRuntimeStart}
+                    disabled={!selectedRuntimeFile}
+                  >
+                    Runtime X-Ray
+                  </button>
+                </>
+              ) : (
+                <p>No child files available.</p>
+              )}
+            </section>
+          )}
           {relationLens ? (
             <section className="relation-lens" aria-label="Focused relation lens">
               <div className="relation-lens__title">Relations</div>

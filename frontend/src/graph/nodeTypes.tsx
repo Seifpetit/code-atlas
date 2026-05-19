@@ -15,6 +15,14 @@ interface RelationStubData {
   onTraceEnd?: () => void;
 }
 
+interface NodeChromeProps {
+  data: AtlasNode;
+  structuralKind: StructuralKind;
+  historyBadge?: string;
+  shouldShowResidue: boolean;
+  significanceScore: number;
+}
+
 function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
   if (structuralKind === "file") {
     if (data.isImportParsed === false) {
@@ -25,6 +33,48 @@ function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
   }
 
   return `${data.metadata?.childCount ?? 0} items`;
+}
+
+function NodeContent({
+  data,
+  structuralKind,
+  historyBadge,
+  shouldShowResidue,
+  significanceScore
+}: NodeChromeProps) {
+  return (
+    <>
+      <div className="atlas-node__kind">{structuralKind}</div>
+      <div className="atlas-node__label">{data.label}</div>
+      <div className="atlas-node__path">{data.path}</div>
+      <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
+      {shouldShowResidue ? (
+        <div
+          className="significance-residue"
+          title={`${significanceScore} attention-weighted historical touches inside this structural area`}
+        />
+      ) : null}
+      {historyBadge ? <div className="history-badge">{historyBadge}</div> : null}
+    </>
+  );
+}
+
+function FolderShape(props: NodeChromeProps) {
+  return (
+    <div className="atlas-node__shape atlas-node__shape--folder">
+      <div className="atlas-node__folder-tab" />
+      <NodeContent {...props} />
+    </div>
+  );
+}
+
+function FileShape(props: NodeChromeProps) {
+  return (
+    <div className="atlas-node__shape atlas-node__shape--file">
+      <div className="atlas-node__file-fold" />
+      <NodeContent {...props} />
+    </div>
+  );
 }
 
 function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKind: StructuralKind }) {
@@ -77,17 +127,23 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
           {relationStub.incomingCount}
         </button>
       ) : null}
-      <div className="atlas-node__kind">{structuralKind}</div>
-      <div className="atlas-node__label">{data.label}</div>
-      <div className="atlas-node__path">{data.path}</div>
-      <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
-      {shouldShowResidue ? (
-        <div
-          className="significance-residue"
-          title={`${significanceScore} attention-weighted historical touches inside this structural area`}
+      {structuralKind === "file" ? (
+        <FileShape
+          data={data}
+          structuralKind={structuralKind}
+          historyBadge={historyBadge}
+          shouldShowResidue={shouldShowResidue}
+          significanceScore={significanceScore}
         />
-      ) : null}
-      {historyBadge ? <div className="history-badge">{historyBadge}</div> : null}
+      ) : (
+        <FolderShape
+          data={data}
+          structuralKind={structuralKind}
+          historyBadge={historyBadge}
+          shouldShowResidue={shouldShowResidue}
+          significanceScore={significanceScore}
+        />
+      )}
       {relationStub?.outgoingCount ? (
         <button
           type="button"

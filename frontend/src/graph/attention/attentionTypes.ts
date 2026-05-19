@@ -2,11 +2,14 @@ export type AttentionLayer =
   | "ambient"
   | "hover"
   | "focus"
+  | "runtime-current"
+  | "runtime-residue"
+  | "runtime-preview"
   | "structural-guidance"
   | "temporal-pressure"
   | "critical-event";
 
-export type AttentionGlowType = "none" | "interaction" | "temporal" | "structural" | "critical";
+export type AttentionGlowType = "none" | "interaction" | "runtime" | "temporal" | "structural" | "critical";
 export type AttentionPulse = "none" | "slow" | "medium";
 export type AttentionLabelEmphasis = "normal" | "strong" | "muted";
 

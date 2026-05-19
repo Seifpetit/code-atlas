@@ -14,8 +14,9 @@ export function StructuralEdge(props: EdgeProps) {
   const data = props.data as StructuralEdgeData | undefined;
   const laneOffset = Number(data?.laneOffset ?? 0);
   const isLineage = data?.kind === "lineage-chain" || data?.kind === "lineage-child";
+  const isRuntime = typeof data?.kind === "string" && data.kind.startsWith("runtime-");
   const direction = data?.direction === "incoming" ? "incoming" : "outgoing";
-  const mode = isLineage ? "lineage" : "focus";
+  const mode = isLineage ? "lineage" : isRuntime ? "runtime" : "focus";
   const edgePath = straightPath(
     props.sourceX,
     props.sourceY + laneOffset,
@@ -24,7 +25,7 @@ export function StructuralEdge(props: EdgeProps) {
   );
   const className = [
     "structural-edge",
-    isLineage ? "structural-edge--lineage" : `structural-edge--${direction}`,
+    isLineage ? "structural-edge--lineage" : isRuntime ? `structural-edge--${data?.kind}` : `structural-edge--${direction}`,
     data?.kind === "lineage-child" ? "structural-edge--lineage-child" : "",
     `structural-edge--${mode}`,
     props.selected ? "is-selected" : ""

@@ -22,7 +22,7 @@ Archive Updates:
 - `DECISIONS.md`
 - `VOCABULARY.md`
 - `BUGS.md`
-- `UI_LAYOUT_DIMENSIONS.md`
+- `UI_LAYOUT.md`
 - `WORKFLOW.md`
 - `README.md`
 - `SESSION_NOTES.md`
