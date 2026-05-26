@@ -8,7 +8,7 @@ These files are not autonomous agents. They are operating instructions that a co
 
 When a user asks to use a skill:
 
-1. Open the relevant skill file in `ai-skills/`.
+1. Open the relevant skill file in `docs/ai-skills/`.
 2. Read its purpose, scope, and output standard.
 3. Read the primary files listed by the skill.
 4. Make only the archive updates that the skill allows.
@@ -16,16 +16,16 @@ When a user asks to use a skill:
 
 ## Available Skills
 
-- `VOCABULARY_STEWARD_SKILL.md`: keeps `VOCABULARY.md` aligned with UI and product language.
-- `DECISION_RECORDER_SKILL.md`: keeps `DECISIONS.md` aligned with accepted product, UX, and architecture decisions.
-- `BUG_REPORTER_SKILL.md`: keeps `BUGS.md` aligned with known issues and fixes.
+- `VOCABULARY_STEWARD_SKILL.md`: keeps `docs/VOCABULARY.md` aligned with UI and product language.
+- `DECISION_RECORDER_SKILL.md`: keeps `docs/DECISIONS.md` aligned with accepted product, UX, and architecture decisions.
+- `BUG_REPORTER_SKILL.md`: keeps `docs/BUGS.md` aligned with known issues and fixes.
 
 ## Prompt Command
 
 Use this prompt for a full archive pass:
 
 ```text
-Run an archive pass using ai-prompts/archive-pass.md.
+Run an archive pass using docs/ai-prompts/archive-pass.md.
 ```
 
 That prompt decides which skills are relevant and updates only the necessary archive files.

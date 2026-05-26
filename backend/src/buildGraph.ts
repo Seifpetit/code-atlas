@@ -47,17 +47,28 @@ export function buildGraph(structure: ExtractedStructure): GraphJson {
 
   const fileNodes: GraphNode[] = [...structure.files]
     .sort()
-    .map((filePath) => ({
-      id: filePath,
-      type: "file",
-      label: labelFromPath(filePath),
-      path: filePath,
-      parent: parentFromPath(filePath),
-      metadata: {
-        extension: path.posix.extname(filePath),
-        importCount: importCounts.get(filePath) ?? 0
-      }
-    }));
+    .map((filePath) => {
+      const extractedMetadata = structure.fileMetadata.get(filePath);
+      const compressionReasons = extractedMetadata?.compressionReasons ?? [];
+
+      return {
+        id: filePath,
+        type: "file",
+        label: labelFromPath(filePath),
+        path: filePath,
+        parent: parentFromPath(filePath),
+        metadata: {
+          extension: path.posix.extname(filePath),
+          importCount: importCounts.get(filePath) ?? 0,
+          linesOfCode: extractedMetadata?.linesOfCode ?? 0,
+          ...(typeof extractedMetadata?.functionCount === "number"
+            ? { functionCount: extractedMetadata.functionCount }
+            : {}),
+          compressionLevel: compressionReasons.length > 0 ? "low-signal" : undefined,
+          compressionReasons: compressionReasons.length > 0 ? compressionReasons : undefined
+        }
+      };
+    });
 
   const edges: GraphEdge[] = structure.imports
     .slice()

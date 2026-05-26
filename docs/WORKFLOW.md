@@ -4,6 +4,12 @@ This workflow keeps Code Atlas moving without relying only on memory or discipli
 
 The goal is not to document everything. The goal is to preserve the product intent that future work depends on.
 
+## Context Entry Point
+
+Read root `CONTEXT.md` first when resuming meaningful work. It is a derived summary
+of the existing context records and the latest handoff; the underlying archive
+files remain authoritative.
+
 ## Daily Loop
 
 1. Build or investigate normally.
@@ -14,22 +20,22 @@ The goal is not to document everything. The goal is to preserve the product inte
 Use this prompt:
 
 ```text
-Run an archive pass using ai-prompts/archive-pass.md.
+Run an archive pass using docs/ai-prompts/archive-pass.md.
 ```
 
 ## Archive Pass
 
 An archive pass checks whether recent work should update:
 
-- `VOCABULARY.md`
-- `DECISIONS.md`
-- `BUGS.md`
+- `docs/VOCABULARY.md`
+- `docs/DECISIONS.md`
+- `docs/BUGS.md`
 
 The archive pass uses these skill specs:
 
-- `ai-skills/VOCABULARY_STEWARD_SKILL.md`
-- `ai-skills/DECISION_RECORDER_SKILL.md`
-- `ai-skills/BUG_REPORTER_SKILL.md`
+- `docs/ai-skills/VOCABULARY_STEWARD_SKILL.md`
+- `docs/ai-skills/DECISION_RECORDER_SKILL.md`
+- `docs/ai-skills/BUG_REPORTER_SKILL.md`
 
 ## When To Archive
 
@@ -49,11 +55,12 @@ Do not archive every tiny implementation detail.
 
 Before a major UI or architecture change, read:
 
-- `VOCABULARY.md`
-- `DECISIONS.md`
-- `BUGS.md`
+- `CONTEXT.md`
+- `docs/VOCABULARY.md`
+- `docs/DECISIONS.md`
+- `docs/BUGS.md`
 
-Then use the relevant skill spec from `ai-skills/` if the change touches shared language, decisions, or bugs.
+Then use the relevant skill spec from `docs/ai-skills/` if the change touches shared language, decisions, or bugs.
 
 ## End-Of-Session Checklist
 
@@ -75,17 +82,18 @@ A close session pass is the full end-of-session ritual.
 Use this prompt:
 
 ```text
-Close the session using ai-prompts/close-session.md.
+Close the session using docs/ai-prompts/close-session.md.
 ```
 
 Close session steps:
 
 1. Verify the work with the relevant build, test, or manual check.
 2. Run an archive pass if durable context changed.
-3. Update `SESSION_NOTES.md`.
-4. Check git status and identify intentional dirty files.
-5. Commit and push when the session should be preserved remotely.
-6. Leave a short handoff report.
+3. Update `docs/SESSION_NOTES.md`.
+4. Refresh the `Current Handoff` in `CONTEXT.md` from the session notes and archive state.
+5. Check git status and identify intentional dirty files.
+6. Commit and push when the session should be preserved remotely.
+7. Leave a short handoff report.
 
 Local check:
 
@@ -96,7 +104,8 @@ powershell -ExecutionPolicy Bypass -File scripts/close-session-check.ps1 -Verifi
 Close session is broader than archive pass:
 
 - Archive pass preserves product memory.
-- Close session verifies work, records handoff context, and checks git state.
+- Close session verifies work, records the detailed handoff in `docs/SESSION_NOTES.md`,
+  refreshes the derived resume summary in `CONTEXT.md`, and checks git state.
 
 ## CI Reminder
 
@@ -104,11 +113,11 @@ The archive check is intentionally a warning, not a blocker.
 
 It warns when source files changed without updates to:
 
-- `VOCABULARY.md`
-- `DECISIONS.md`
-- `BUGS.md`
-- `ai-skills/`
-- `WORKFLOW.md`
+- `docs/VOCABULARY.md`
+- `docs/DECISIONS.md`
+- `docs/BUGS.md`
+- `docs/ai-skills/`
+- `docs/WORKFLOW.md`
 
 Run locally:
 

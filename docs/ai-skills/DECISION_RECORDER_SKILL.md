@@ -1,6 +1,6 @@
 # Decision Recorder Skill
 
-This skill keeps `DECISIONS.md` useful as the durable record of product, UX, and architecture decisions.
+This skill keeps `docs/DECISIONS.md` useful as the durable record of product, UX, and architecture decisions.
 
 It is not responsible for making decisions. It records decisions that have already been made.
 
@@ -18,14 +18,14 @@ The goal is to preserve context so future work does not reopen settled questions
 ## Primary Files
 
 Read:
-- `DECISIONS.md`
-- `VOCABULARY.md`
-- `BUGS.md`
+- `docs/DECISIONS.md`
+- `docs/VOCABULARY.md`
+- `docs/BUGS.md`
 - relevant source files when needed
 - relevant conversation notes when provided
 
 Write:
-- `DECISIONS.md`
+- `docs/DECISIONS.md`
 
 Do not write unresolved ideas as decisions. Put unresolved items in an "Open Questions" section only if they are directly tied to a recorded decision.
 
@@ -46,10 +46,10 @@ Do not use it for:
 
 ## Init Case
 
-Use this when `DECISIONS.md` does not exist, is empty, or is clearly stale.
+Use this when `docs/DECISIONS.md` does not exist, is empty, or is clearly stale.
 
 Steps:
-1. Read `VOCABULARY.md` and `BUGS.md` if they exist.
+1. Read `docs/VOCABULARY.md` and `docs/BUGS.md` if they exist.
 2. Inspect the current UI and architecture files only as needed.
 3. Identify decisions already reflected in the product.
 4. Create numbered decision entries.
@@ -65,7 +65,7 @@ Init output should include:
 ## Ongoing Update Flow
 
 Steps:
-1. Read the current `DECISIONS.md`.
+1. Read the current `docs/DECISIONS.md`.
 2. Identify whether the new information is a decision, reversal, clarification, or open question.
 3. Update an existing decision if the concept already exists.
 4. Add a new decision only for a distinct durable choice.

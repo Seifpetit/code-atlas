@@ -154,6 +154,40 @@ Examples:
 Technical representation:
 - React Flow node type: `file`
 
+**File Metrics**
+Deterministic lightweight weight cues shown on every file node.
+
+Current values:
+- Non-blank lines of code, rendered as `L`.
+- Syntax-derived function-like declaration count for parsed source modules, rendered as `F`.
+
+UI format:
+- `421L` followed by a centered separator and `14F`.
+
+**Deterministic Semantic Compression**
+An ambient visual treatment for files with explicit low-signal structural rules.
+
+Purpose:
+- Makes higher-signal implementation regions easier to see without deleting,
+  merging, or semantically interpreting files.
+
+Rules:
+- Uses only filename conventions, non-blank LOC, syntax-derived function
+  counts, and pass-through export structure.
+- Compression is overridden by focus, search, temporal attention, and runtime states.
+
+Technical name:
+- `compressionLevel: "low-signal"`
+
+**Low-Signal File**
+A file that receives deterministic semantic compression.
+
+Current reason values:
+- `very-low-loc`
+- `tiny-wrapper`
+- `conventional-support-file`
+- `pass-through-export`
+
 **Structural File**
 A file that appears in the atlas because it is part of repository topology.
 
@@ -285,6 +319,9 @@ The compact timeline control for architectural time exploration.
 Purpose:
 - Lets the user move through temporal states.
 - Shows landmark points and a smooth progress track.
+- Can collapse to a `40px` timeline-icon trigger at the same spatial origin;
+  collapse hides the temporal controls and secondary raw-history evidence,
+  while preserving the active temporal state on the graph.
 
 Technical name:
 - `TemporalScrubber`
@@ -323,6 +360,18 @@ Purpose:
 
 Technical name:
 - `RawHistoryInspector`
+
+**Runtime Scrubber**
+The Runtime X-Ray instrument for stepping through the derived causal corridor.
+
+Purpose:
+- Exposes runtime progression as discrete architectural waypoints rather than
+  generic percentage progress.
+- Uses a thin energized rail and compact beacon handle while preserving the
+  existing runtime sequence and playback behavior.
+
+Technical name:
+- `RuntimeScrubber`
 
 **Timeline Panel**
 Older name for the temporal panel area.
@@ -425,6 +474,17 @@ Purpose:
 Rule:
 - Straight traces are the current baseline, not a claim that routing will never return.
 
+**Cut-Line Trace**
+A thin moving segmented connection line rendered behind atlas objects.
+
+Purpose:
+- Keeps requested relationships, lineage, and runtime causality legible while
+  objects remain visually dominant.
+
+Rule:
+- Line segments may vary in color and pace by relationship type, but no
+  connection line rises above a node card.
+
 ## Interaction Language
 
 **Hover**
@@ -436,7 +496,7 @@ Current rule:
 - Hover remains CSS-only until the pointer-event flicker bug is solved.
 
 Reason:
-- Hover preview caused flicker and is listed in `BUGS.md`.
+- Hover preview caused flicker and is listed in `docs/BUGS.md`.
 
 **Click**
 Focuses an object locally.
@@ -481,6 +541,7 @@ The winning attention category for a node.
 
 Current layers:
 - `ambient`
+- `compressed`
 - `hover`
 - `focus`
 - `structural-guidance`
@@ -506,17 +567,34 @@ Technical name:
 - `NodeVisualState`
 
 **Details Panel**
-The right-side metadata panel shown after clicking an object.
+The right-side operational interpretation surface shown after clicking an
+object.
 
 Current rule:
 - The details panel is click-driven, not hover-driven.
+- It identifies the focused object, explains deterministic architectural
+  weight or regional density, offers humble operational signals, and exposes
+  only working actions.
+- Files use `Identity`, `Architectural Weight`, `Operational Role`, and
+  `Activation Surface`.
+- Folders and domains use `Identity`, `Regional Density`, `Dominant Gravity`,
+  and `Regional Actions`.
+- Each emitted operational role category receives a stable accent color; the
+  color identifies the rule category and is not a semantic-confidence score.
+- Its native scroll channel uses thin subdued tactical chrome, becoming
+  brighter only during direct panel interaction.
+- Native Runtime origin dropdown scrolling uses the same tactical channel
+  styling where the browser exposes select scrollbar chrome.
 
 **Relation Lens**
-The relationship section inside the details panel for the focused object.
+The compact visible-connection tracing controls inside the focused object's
+action region.
 
 Purpose:
-- Summarizes imports, imported-by counts, outside-context relationships, and visible incoming/outgoing neighbors.
-- Gives meaning to focused edges without relying on canvas geometry alone.
+- Keeps exact trace hover activation available for visible incoming/outgoing
+  connections.
+- Leaves architectural weight and territorial interpretation to their
+  dedicated regions instead of duplicating metrics.
 
 ## Layout Concepts
 
@@ -635,19 +713,19 @@ Rule:
 The memory-preservation step for durable product context.
 
 Purpose:
-- Updates `VOCABULARY.md`, `DECISIONS.md`, and `BUGS.md` when product intent, language, decisions, or known issues changed.
+- Updates `docs/VOCABULARY.md`, `docs/DECISIONS.md`, and `docs/BUGS.md` when product intent, language, decisions, or known issues changed.
 
 Prompt:
-- `ai-prompts/archive-pass.md`
+- `docs/ai-prompts/archive-pass.md`
 
 **Close Session**
 The full end-of-session ritual.
 
 Purpose:
-- Verifies work, runs archive updates when needed, updates the latest handoff, checks git state, and prepares commit/push when requested.
+- Verifies work, runs archive updates when needed, updates detailed notes and the root context handoff, checks git state, and prepares commit/push when requested.
 
 Prompt:
-- `ai-prompts/close-session.md`
+- `docs/ai-prompts/close-session.md`
 
 **Session Notes**
 The rolling handoff file for the latest meaningful session.
@@ -656,7 +734,17 @@ Purpose:
 - Records completed work, verification, archive updates, open issues, next likely task, and git status.
 
 Technical file:
-- `SESSION_NOTES.md`
+- `docs/SESSION_NOTES.md`
+
+**Context Document**
+The root resume summary derived from detailed context records and the latest session notes.
+
+Purpose:
+- Gives each new session one immediate starting point.
+- Holds an explicit `Current Handoff` refreshed at close session.
+
+Technical file:
+- `CONTEXT.md`
 
 ## Words To Avoid
 

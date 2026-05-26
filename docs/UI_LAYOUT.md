@@ -32,6 +32,28 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Runtime causal residue: `rgba(45, 212, 191, 0.72)`
 - Runtime structural residue: `rgba(125, 211, 252, 0.42)`
 
+**Connection Lines**
+- Every contextual, lineage, and runtime connection is rendered beneath node
+  objects in the graph layering order.
+- Visible connections use thin moving cut-line segments; brighter movement
+  indicates active focus or runtime causality without becoming a foreground
+  overlay.
+- Motion is disabled for reduced-motion preferences.
+
+**Operational Role Accents**
+- Rule-classified low-signal: slate.
+- Configuration: amber.
+- Structural support: sky.
+- Index or export gateway: violet.
+- Dependency hub candidate: rose.
+- Runtime-related candidate: teal.
+- Rendering or projection candidate: blue.
+- Leaf dependency candidate: lime.
+- Unconnected implementation: muted slate.
+- Connected implementation: cyan.
+- Accents identify deterministic role categories only; they do not express
+  confidence or severity.
+
 **MiniMap Colors**
 - Domain: teal
 - Folder: sky
@@ -56,6 +78,9 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Min height: `216px`
 - Max height: `268px`
 - Contains the `TemporalScrubber` custom range control.
+- Expanded dimensions remain unchanged when collapse is available.
+- Collapsed state renders a timeline-icon trigger at the same origin.
+- Collapsed trigger width and height: `40px`.
 - Commit-list timeline dimensions are deprecated.
 
 **Structural Context Panel**
@@ -63,12 +88,45 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - `top: 318px`
 - `right: 16px`
 
+**Operational Interpretation Panel**
+- Position: upper right while an object is focused
+- `top: 16px`
+- `right: 16px`
+- Width: `min(320px, calc(100vw - 32px))`
+- Max height: `calc(100% - 32px)`
+- File regions: identity, architectural weight, operational role, activation
+  surface.
+- Folder/domain regions: identity, regional density, dominant gravity,
+  regional actions.
+- Metric cells and action controls remain compact so the graph stays primary.
+- Actions and runtime-origin selection use thin bordered instrument controls,
+  inset activation accents, and restrained focus glow rather than solid
+  dashboard buttons.
+- The Runtime origin selector inherits the thin dark scroll channel and
+  subdued teal interactive thumb when native dropdown scrolling is available.
+- Native scrolling remains intact; the panel scrollbar is visual chrome only.
+- The scrollbar uses a thin dark channel with a low-alpha teal thumb that
+  brightens subtly while the panel or thumb is being used.
+
 **Raw History Inspector**
 - Position: below the temporal scrubber
 - `top: 342px`
 - `left: 16px`
 - Width: `min(320px, calc(100vw - 32px))`
 - Max height: `260px`
+
+**Runtime Scrubber**
+- Position: lower left while Runtime X-Ray is active.
+- `left: 16px`
+- `bottom: 18px`
+- Width: `min(360px, calc(100vw - 32px))`
+- The rail is a one-pixel causal axis with discrete runtime waypoints.
+- Traversed rail segments use restrained teal energy; the current point uses
+  a compact diamond beacon marker rather than a round media-slider thumb.
+- Commands and readouts use precision uppercase typography and static,
+  low-amplitude glow states.
+- Runtime progression commands are labeled `Restart`, `Traverse`, and `Hold`
+  instead of media-player terminology.
 
 **Path Anchor Nodes**
 - Render inside React Flow as non-interactive lineage nodes.
@@ -101,6 +159,10 @@ These values are layout inputs, not decorative CSS-only values. React Flow node 
 - Height: `180px`
 - Files are intentionally vertical rectangles.
 - Visible chrome uses the file shape with a folded corner.
+- The bottom metadata row displays lightweight `LOC` metrics and adds `/F`
+  function count only for JS/TS-family files.
+- Low-signal compression changes ambient opacity/chrome emphasis only; it does
+  not change file-node dimensions or layout bounds.
 
 **Runtime Artifacts**
 - Source: `frontend/src/runtime/runtimeLayout.ts`
@@ -129,6 +191,8 @@ At `max-width: 900px`:
 - Timeline moves to bottom dock.
 - Timeline min height becomes `140px`.
 - Timeline max height becomes `160px`.
+- Collapsed timeline trigger uses the same mobile dock origin at `left: 16px`;
+  `bottom: 16px`.
 - Raw history inspector moves above the timeline at `bottom: 184px`.
 
 At `max-width: 760px`:

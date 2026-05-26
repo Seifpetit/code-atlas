@@ -86,11 +86,21 @@ function scoreNode(node: AtlasNode): number {
     return 1000 + Number(node.metadata?.childCount ?? 0);
   }
 
-  return Number(node.metadata?.importCount ?? 0);
+  const compressionPenalty = isLowSignalCompressed(node) ? -100000 : 0;
+  return (
+    compressionPenalty +
+    Number(node.metadata?.importCount ?? 0) * 1000 +
+    Number(node.metadata?.functionCount ?? 0) * 10 +
+    Math.min(Number(node.metadata?.linesOfCode ?? 0), 500)
+  );
 }
 
 function extensionOf(node: AtlasNode): string {
   return String(node.metadata?.extension ?? "").toLowerCase();
+}
+
+function isLowSignalCompressed(node: AtlasNode): boolean {
+  return node.type === "file" && node.metadata?.compressionLevel === "low-signal";
 }
 
 function fileClusterType(node: AtlasNode): string {
@@ -120,6 +130,11 @@ function prioritizeChildren(children: AtlasNode[]): AtlasNode[] {
     const groupComparison = childSortGroup(a).localeCompare(childSortGroup(b));
     if (groupComparison !== 0) {
       return groupComparison;
+    }
+
+    const compressionComparison = Number(isLowSignalCompressed(a)) - Number(isLowSignalCompressed(b));
+    if (compressionComparison !== 0) {
+      return compressionComparison;
     }
 
     if (a.type === "folder" || b.type === "folder" || childSortGroup(a) === "1:Source") {
@@ -235,6 +250,7 @@ function makeLineageEdge(source: string, target: string, kind: "lineage-chain" |
     target,
     type: "structural",
     animated: false,
+    zIndex: 0,
     data: {
       kind
     }
@@ -385,6 +401,7 @@ function makeImportEdge(source: string, target: string, count: number): AtlasFlo
     target,
     type: "structural",
     animated: false,
+    zIndex: 0,
     data: {
       kind: "context-import",
       importCount: count

@@ -153,6 +153,21 @@ export function composeNodeVisualState(signals: NodeAttentionSignals): NodeVisua
     });
   }
 
+  if (signals.isLowSignalCompressed) {
+    return visualState({
+      layer: "compressed",
+      opacity: 0.62,
+      scale: 0.97,
+      zIndex: 0,
+      outlineIntensity: 0,
+      glowIntensity: 0,
+      glowType: "none",
+      pulse: "none",
+      faded: false,
+      labelEmphasis: "muted"
+    });
+  }
+
   return visualState({
     layer: "ambient",
     opacity: 1,

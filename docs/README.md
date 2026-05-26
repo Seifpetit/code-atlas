@@ -79,26 +79,32 @@ npm --prefix backend start
 
 Use the archive workflow whenever a change affects product intent, UI language, decisions, or known bugs.
 
+Read root `CONTEXT.md` first when resuming meaningful work. It is a derived current
+summary; the existing archive and session-note files remain authoritative.
+
 Archive checklist:
 
-- Update `VOCABULARY.md` when a recurring concept, component, interaction, or technical term is introduced or renamed.
-- Update `DECISIONS.md` when a product, UX, or architecture direction is accepted, reversed, or deprecated.
-- Update `BUGS.md` when a bug is found, fixed, removed, deferred, or causes a feature to be disabled.
-- Use `WORKFLOW.md` for the full production loop.
-- Use `ai-prompts/archive-pass.md` as the prompt command for an end-of-session archive pass.
-- Use the skill specs in `ai-skills/` to keep archive updates consistent.
+- Update `docs/VOCABULARY.md` when a recurring concept, component, interaction, or technical term is introduced or renamed.
+- Update `docs/DECISIONS.md` when a product, UX, or architecture direction is accepted, reversed, or deprecated.
+- Update `docs/BUGS.md` when a bug is found, fixed, removed, deferred, or causes a feature to be disabled.
+- Use `docs/WORKFLOW.md` for the full production loop.
+- Use `docs/ai-prompts/archive-pass.md` as the prompt command for an end-of-session archive pass.
+- Use the skill specs in `docs/ai-skills/` to keep archive updates consistent.
 
 Quick command:
 
 ```text
-Run an archive pass using ai-prompts/archive-pass.md.
+Run an archive pass using docs/ai-prompts/archive-pass.md.
 ```
 
 Close-session command:
 
 ```text
-Close the session using ai-prompts/close-session.md.
+Close the session using docs/ai-prompts/close-session.md.
 ```
+
+Close session updates `docs/SESSION_NOTES.md` and refreshes the explicit current
+handoff in `CONTEXT.md` for the next session.
 
 Local close-session check:
 
@@ -126,7 +132,13 @@ Returns:
       "type": "file",
       "label": "Button.tsx",
       "path": "src/components/Button.tsx",
-      "parent": "src/components"
+      "parent": "src/components",
+      "metadata": {
+        "extension": ".tsx",
+        "importCount": 2,
+        "linesOfCode": 86,
+        "functionCount": 3
+      }
     }
   ],
   "edges": [
@@ -139,6 +151,11 @@ Returns:
   ]
 }
 ```
+
+File metadata is extracted deterministically: all visible files carry
+`linesOfCode`, while JS/TS-family files also carry `functionCount`. Files classified as low-signal
+may additionally return `compressionLevel: "low-signal"` and explicit
+`compressionReasons`; the UI renders them more quietly without removing them.
 
 `POST /diff`
 

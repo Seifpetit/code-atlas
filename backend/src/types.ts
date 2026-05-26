@@ -1,4 +1,10 @@
 export type GraphNodeType = "folder" | "file";
+export type CompressionLevel = "low-signal";
+export type CompressionReason =
+  | "very-low-loc"
+  | "tiny-wrapper"
+  | "conventional-support-file"
+  | "pass-through-export";
 
 export interface GraphNode {
   id: string;
@@ -10,6 +16,10 @@ export interface GraphNode {
     extension?: string;
     importCount?: number;
     childCount?: number;
+    linesOfCode?: number;
+    functionCount?: number;
+    compressionLevel?: CompressionLevel;
+    compressionReasons?: CompressionReason[];
   };
 }
 
@@ -30,10 +40,17 @@ export interface GraphJson {
 export interface ExtractedStructure {
   folders: Set<string>;
   files: Set<string>;
+  fileMetadata: Map<string, ExtractedFileMetadata>;
   imports: Array<{
     source: string;
     target: string;
   }>;
+}
+
+export interface ExtractedFileMetadata {
+  linesOfCode: number;
+  functionCount?: number;
+  compressionReasons: CompressionReason[];
 }
 
 export interface CommitInfo {

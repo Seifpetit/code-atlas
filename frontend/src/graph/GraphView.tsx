@@ -11,10 +11,7 @@ import {
   type ReactFlowInstance
 } from "@xyflow/react";
 import type { AtlasGraph, AtlasNode } from "../api";
-import {
-  formatCommitDate,
-  historyBadgeFor
-} from "../history/historyUtils";
+import { historyBadgeFor } from "../history/historyUtils";
 import { extractArchitecturalLandmarks, snapToLandmark } from "../time/landmarkExtraction";
 import { RawHistoryInspector } from "../time/RawHistoryInspector";
 import { TemporalScrubber } from "../time/TemporalScrubber";
@@ -56,6 +53,224 @@ interface BudgetedRelationship {
 
 type ManualNodePositions = Record<string, { x: number; y: number }>;
 
+const COMPRESSION_REASON_LABELS = new Map<string, string>([
+  ["very-low-loc", "very low LOC"],
+  ["tiny-wrapper", "tiny wrapper"],
+  ["conventional-support-file", "support file convention"],
+  ["pass-through-export", "pass-through exports"]
+]);
+const JAVASCRIPT_ECOSYSTEM_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+type ArchitecturalWeight = "LOW" | "MEDIUM" | "HIGH";
+type OperationalRoleKind =
+  | "low-signal"
+  | "configuration"
+  | "support"
+  | "gateway"
+  | "dependency-hub"
+  | "runtime"
+  | "rendering"
+  | "leaf"
+  | "isolated"
+  | "connected";
+
+interface OperationalRole {
+  kind: OperationalRoleKind;
+  label: string;
+}
+
+interface RegionalSummary {
+  directChildCount: number;
+  fileCount: number;
+  folderCount: number;
+  totalLinesOfCode?: number;
+  totalFunctionCount?: number;
+  lowSignalFileCount: number;
+  configurationFileCount: number;
+  internalImports: number;
+  inboundImports: number;
+  outboundImports: number;
+}
+
+function compressionDescription(node: AtlasNode): string {
+  const reasons = node.metadata?.compressionReasons ?? [];
+  return reasons
+    .map((reason) => COMPRESSION_REASON_LABELS.get(reason) ?? reason)
+    .join(", ");
+}
+
+function isJavaScriptEcosystemFile(node: AtlasNode): boolean {
+  return JAVASCRIPT_ECOSYSTEM_EXTENSIONS.has(String(node.metadata?.extension ?? "").toLowerCase());
+}
+
+function panelObjectType(node: AtlasNode): "FILE" | "FOLDER" | "DOMAIN" {
+  if (node.type === "file") {
+    return "FILE";
+  }
+
+  return node.parent ? "FOLDER" : "DOMAIN";
+}
+
+function panelTitle(node: AtlasNode): string {
+  return node.type === "file" ? node.label : `${node.label}/`;
+}
+
+function orientationPath(node: AtlasNode): string {
+  if (node.type === "file") {
+    return node.parent ? `${node.parent}/` : "repository root/";
+  }
+
+  return node.parent ? `${node.path}/` : "repository root/";
+}
+
+function fileStem(node: AtlasNode): string {
+  const extension = String(node.metadata?.extension ?? "");
+  return extension && node.label.endsWith(extension)
+    ? node.label.slice(0, -extension.length).toLowerCase()
+    : node.label.toLowerCase();
+}
+
+function architecturalWeightFor(node: AtlasNode, importedByCount: number): ArchitecturalWeight {
+  const linesOfCode = Number(node.metadata?.linesOfCode ?? 0);
+  const functionCount = Number(node.metadata?.functionCount ?? 0);
+  const imports = Number(node.metadata?.importCount ?? 0);
+  let score = 0;
+
+  score += linesOfCode >= 300 ? 3 : linesOfCode >= 100 ? 2 : linesOfCode >= 30 ? 1 : 0;
+  score += functionCount >= 12 ? 3 : functionCount >= 5 ? 2 : functionCount >= 2 ? 1 : 0;
+  score += imports >= 8 ? 2 : imports >= 3 ? 1 : 0;
+  score += importedByCount >= 8 ? 3 : importedByCount >= 3 ? 2 : importedByCount > 0 ? 1 : 0;
+
+  if (score >= 7) {
+    return "HIGH";
+  }
+
+  return score >= 3 ? "MEDIUM" : "LOW";
+}
+
+function operationalRolesFor(node: AtlasNode, importedByCount: number): OperationalRole[] {
+  const stem = fileStem(node);
+  const imports = Number(node.metadata?.importCount ?? 0);
+  const normalizedPath = node.path.toLowerCase();
+  const roles: OperationalRole[] = [];
+
+  if (node.metadata?.compressionLevel === "low-signal") {
+    roles.push({ kind: "low-signal", label: "Rule-classified low-signal file" });
+  }
+
+  if (stem === "config") {
+    roles.push({ kind: "configuration", label: "Configuration file" });
+  } else if (stem === "types" || stem === "constants") {
+    roles.push({ kind: "support", label: "Structural support file" });
+  } else if (stem === "index") {
+    roles.push({ kind: "gateway", label: "Index or export gateway" });
+  }
+
+  if (importedByCount >= 5) {
+    roles.push({ kind: "dependency-hub", label: "Dependency hub candidate" });
+  }
+
+  if (/(^|[\/_-])runtime([\/_.-]|$)/.test(normalizedPath)) {
+    roles.push({ kind: "runtime", label: "Runtime-related candidate" });
+  } else if (/(graph|layout|render|projection|component|view)/.test(normalizedPath)) {
+    roles.push({ kind: "rendering", label: "Rendering or projection candidate" });
+  }
+
+  if (roles.length === 0 && imports === 0 && importedByCount > 0) {
+    roles.push({ kind: "leaf", label: "Leaf dependency candidate" });
+  }
+
+  if (roles.length === 0) {
+    roles.push(
+      imports === 0 && importedByCount === 0
+        ? { kind: "isolated", label: "Unconnected implementation file" }
+        : { kind: "connected", label: "Connected implementation file" }
+    );
+  }
+
+  return roles.filter((role, index) => roles.findIndex((candidate) => candidate.kind === role.kind) === index).slice(0, 2);
+}
+
+function regionalSummaryFor(region: AtlasNode, graph: AtlasGraph): RegionalSummary {
+  const files = graph.nodes.filter((node) => node.type === "file" && ownsPath(region, node.path));
+  const folders = graph.nodes.filter((node) => node.type === "folder" && node.id !== region.id && ownsPath(region, node.path));
+  const javascriptFiles = files.filter(isJavaScriptEcosystemFile);
+  const totalLinesOfCode = files.length > 0 && files.every((node) => typeof node.metadata?.linesOfCode === "number")
+    ? files.reduce((total, node) => total + Number(node.metadata?.linesOfCode), 0)
+    : undefined;
+  const totalFunctionCount = javascriptFiles.length > 0 &&
+      javascriptFiles.every((node) => typeof node.metadata?.functionCount === "number")
+    ? javascriptFiles.reduce((total, node) => total + Number(node.metadata?.functionCount), 0)
+    : undefined;
+  let internalImports = 0;
+  let inboundImports = 0;
+  let outboundImports = 0;
+
+  for (const edge of graph.edges) {
+    const sourceOwned = ownsPath(region, edge.source);
+    const targetOwned = ownsPath(region, edge.target);
+
+    if (sourceOwned && targetOwned) {
+      internalImports += 1;
+    } else if (sourceOwned) {
+      outboundImports += 1;
+    } else if (targetOwned) {
+      inboundImports += 1;
+    }
+  }
+
+  return {
+    directChildCount: Number(region.metadata?.childCount ?? 0),
+    fileCount: files.length,
+    folderCount: folders.length,
+    totalLinesOfCode,
+    totalFunctionCount,
+    lowSignalFileCount: files.filter((node) => node.metadata?.compressionLevel === "low-signal").length,
+    configurationFileCount: files.filter((node) => ["config", "constants", "types"].includes(fileStem(node))).length,
+    internalImports,
+    inboundImports,
+    outboundImports
+  };
+}
+
+function dominantGravityFor(summary: RegionalSummary): { label: string; detail?: string } {
+  if (summary.fileCount === 0) {
+    return { label: "Structural container", detail: "No indexed files in this region." };
+  }
+
+  if (summary.lowSignalFileCount >= 2 && summary.lowSignalFileCount / summary.fileCount >= 0.5) {
+    return {
+      label: "Mostly low-signal files",
+      detail: `${summary.lowSignalFileCount} of ${summary.fileCount} files are rule-classified low-signal.`
+    };
+  }
+
+  if (summary.configurationFileCount >= 2 && summary.configurationFileCount / summary.fileCount >= 0.5) {
+    return {
+      label: "Mostly configuration and support",
+      detail: `${summary.configurationFileCount} conventionally named support files detected.`
+    };
+  }
+
+  if (summary.inboundImports + summary.outboundImports >= Math.max(5, summary.fileCount)) {
+    return {
+      label: "Dependency concentration candidate",
+      detail: `${summary.inboundImports} inbound and ${summary.outboundImports} outbound boundary imports.`
+    };
+  }
+
+  if (summary.fileCount >= 10 && summary.fileCount >= (summary.folderCount + 1) * 3) {
+    return {
+      label: "High file density",
+      detail: `${summary.fileCount} files across ${summary.folderCount} nested folders.`
+    };
+  }
+
+  return {
+    label: "Mixed implementation region",
+    detail: summary.internalImports > 0 ? `${summary.internalImports} parsed import connections remain inside this region.` : undefined
+  };
+}
+
 function isLineageNode(node: AtlasFlowNode): boolean {
   const data = node.data as AtlasNode;
 
@@ -82,14 +297,6 @@ function ownsPath(owner: AtlasNode, path: string): boolean {
   }
 
   return path === owner.path || path.startsWith(`${owner.path}/`);
-}
-
-function contextOwnsPath(contextId: string | null, path: string): boolean {
-  if (!contextId) {
-    return true;
-  }
-
-  return path === contextId || path.startsWith(`${contextId}/`);
 }
 
 function laneOffsetFor(index: number, total: number): number {
@@ -168,6 +375,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   const [selectedRuntimeFileId, setSelectedRuntimeFileId] = useState<string | null>(null);
   const [temporalIndex, setTemporalIndex] = useState(0);
   const [focusedLandmarkId, setFocusedLandmarkId] = useState<string | null>(null);
+  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [manualNodePositions, setManualNodePositions] = useState<ManualNodePositions>({});
   const [runtimeNodePositions, setRuntimeNodePositions] = useState<ManualNodePositions>({});
@@ -416,7 +624,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         hasTemporalState: Boolean(activeTemporalState),
         hasCriticalEvent,
         isCriticalEventAffected: hasCriticalEvent && temporalPressure > 0.2,
-        hasStructuralGuidance: Boolean(activeTemporalState && data.significanceLevel && !temporalLevel)
+        hasStructuralGuidance: Boolean(activeTemporalState && data.significanceLevel && !temporalLevel),
+        isLowSignalCompressed: data.type === "file" && data.metadata?.compressionLevel === "low-signal"
       });
       const runtimePhase =
         runtimeState.active && runtimeLayout
@@ -580,7 +789,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   }
 
   const relationLens = useMemo(() => {
-    if (!graph || !laidOut || !selectedNode) {
+    if (!laidOut || !selectedNode) {
       return null;
     }
 
@@ -599,59 +808,13 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         label: relation.otherNode?.label ?? relation.edge.source,
         count: Number(relation.edge.data?.importCount ?? 1)
       }));
-    const allVisibleOutgoing = laidOut.edges
-      .filter((edge) => edge.source === selectedNode.id)
-      .map((edge) => ({
-        id: edge.id,
-        label: visibleById.get(edge.target)?.label ?? edge.target,
-        count: Number(edge.data?.importCount ?? 1)
-      }));
-    const allVisibleIncoming = laidOut.edges
-      .filter((edge) => edge.target === selectedNode.id)
-      .map((edge) => ({
-        id: edge.id,
-        label: visibleById.get(edge.source)?.label ?? edge.source,
-        count: Number(edge.data?.importCount ?? 1)
-      }));
-    let internalOutgoing = 0;
-    let internalIncoming = 0;
-    let externalOutgoing = 0;
-    let externalIncoming = 0;
-
-    for (const edge of graph.edges) {
-      const sourceOwned = ownsPath(selectedNode, edge.source);
-      const targetOwned = ownsPath(selectedNode, edge.target);
-
-      if (sourceOwned && !targetOwned) {
-        if (contextOwnsPath(currentContextId, edge.target)) {
-          internalOutgoing += 1;
-        } else {
-          externalOutgoing += 1;
-        }
-      }
-
-      if (!sourceOwned && targetOwned) {
-        if (contextOwnsPath(currentContextId, edge.source)) {
-          internalIncoming += 1;
-        } else {
-          externalIncoming += 1;
-        }
-      }
-    }
-
     return {
       visibleOutgoing,
       visibleIncoming,
-      allVisibleOutgoing,
-      allVisibleIncoming,
       hiddenVisibleOutgoing: budget.hiddenOutgoing,
-      hiddenVisibleIncoming: budget.hiddenIncoming,
-      internalOutgoing,
-      internalIncoming,
-      externalOutgoing,
-      externalIncoming
+      hiddenVisibleIncoming: budget.hiddenIncoming
     };
-  }, [currentContextId, graph, laidOut, selectedNode, visibleById]);
+  }, [laidOut, selectedNode, visibleById]);
 
   const importedByCount = useMemo(() => {
     if (!graph || !selectedNode || selectedNode.type !== "file") {
@@ -660,7 +823,30 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
     return graph.edges.filter((edge) => edge.target === selectedNode.id).length;
   }, [graph, selectedNode]);
-  const selectedFileHistory = selectedNode?.type === "file" ? graph?.fileHistory?.[selectedNode.path] : undefined;
+  const selectedFileWeight = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "file") {
+      return null;
+    }
+
+    return architecturalWeightFor(selectedNode, importedByCount);
+  }, [importedByCount, selectedNode]);
+  const selectedFileRoles = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "file") {
+      return [];
+    }
+
+    return operationalRolesFor(selectedNode, importedByCount);
+  }, [importedByCount, selectedNode]);
+  const selectedRegionSummary = useMemo(() => {
+    if (!graph || !selectedNode || selectedNode.type === "file") {
+      return null;
+    }
+
+    return regionalSummaryFor(selectedNode, graph);
+  }, [graph, selectedNode]);
+  const selectedRegionGravity = useMemo(() => {
+    return selectedRegionSummary ? dominantGravityFor(selectedRegionSummary) : null;
+  }, [selectedRegionSummary]);
   const runtimeOriginNode = runtimeState.originNodeId ? graphNodeById.get(runtimeState.originNodeId) ?? null : null;
   const runtimeCurrentNode = runtimeLayout?.activeNodeId ? graphNodeById.get(runtimeLayout.activeNodeId) ?? null : null;
   const runtimePreviousNode = runtimeLayout?.previousNodeId ? graphNodeById.get(runtimeLayout.previousNodeId) ?? null : null;
@@ -980,12 +1166,18 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
           activeDate={activeTemporalDate}
           landmarks={temporalLandmarks}
           focusedLandmarkId={focusedLandmarkId}
+          isCollapsed={timelineCollapsed}
           onScrub={handleTemporalScrub}
           onLandmarkFocus={handleLandmarkFocus}
           onReset={handleTimelineReset}
+          onToggleCollapsed={() => setTimelineCollapsed((collapsed) => !collapsed)}
         />
       )}
-      <RawHistoryInspector visible={!runtimeState.active && Boolean(focusedLandmark)} landmark={focusedLandmark} commits={commits} />
+      <RawHistoryInspector
+        visible={!runtimeState.active && !timelineCollapsed && Boolean(focusedLandmark)}
+        landmark={focusedLandmark}
+        commits={commits}
+      />
 
       <div className="context-panel">
         <div className="context-panel__label">Structural - Level {laidOut.level + 1}</div>
@@ -1026,94 +1218,125 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
           onExit={handleRuntimeExit}
         />
       ) : selectedNode ? (
-        <aside className="metadata-panel">
-          <div className="metadata-panel__type">{selectedNode.type}</div>
-          <div className="metadata-panel__title">{selectedNode.label}</div>
-          <dl>
-            <dt>Path</dt>
-            <dd>{selectedNode.path}</dd>
-            <dt>Parent</dt>
-            <dd>{selectedNode.parent ?? "Repository root"}</dd>
+        <aside className="metadata-panel operational-panel">
+          <section className="operational-panel__identity" aria-label="Identity">
+            <div className="metadata-panel__type">{panelObjectType(selectedNode)}</div>
+            <div className="metadata-panel__title">{panelTitle(selectedNode)}</div>
+            <div className="operational-panel__path">{orientationPath(selectedNode)}</div>
+          </section>
+
+          {selectedNode.type === "file" ? (
+            <>
+              <section className="operational-panel__region" aria-label="Architectural weight">
+                <header className="operational-panel__header">
+                  <h3>Architectural Weight</h3>
+                  {selectedFileWeight ? (
+                    <span className={`operational-panel__signal operational-panel__signal--${selectedFileWeight.toLowerCase()}`}>
+                      {selectedFileWeight}
+                    </span>
+                  ) : null}
+                </header>
+                <div className="operational-panel__metrics">
+                  {typeof selectedNode.metadata?.linesOfCode === "number" ? (
+                    <div><strong>{selectedNode.metadata.linesOfCode}</strong><span>LOC</span></div>
+                  ) : null}
+                  {isJavaScriptEcosystemFile(selectedNode) && typeof selectedNode.metadata?.functionCount === "number" ? (
+                    <div><strong>{selectedNode.metadata.functionCount}</strong><span>Functions</span></div>
+                  ) : null}
+                  <div><strong>{selectedNode.metadata?.importCount ?? 0}</strong><span>Imports</span></div>
+                  <div><strong>{importedByCount}</strong><span>Imported by</span></div>
+                </div>
+              </section>
+
+              <section className="operational-panel__region" aria-label="Operational role">
+                <h3>Operational Role</h3>
+                <ul className="operational-panel__roles">
+                  {selectedFileRoles.map((role) => (
+                    <li key={role.kind} className={`operational-panel__role--${role.kind}`}>
+                      {role.label}
+                    </li>
+                  ))}
+                </ul>
+                {selectedNode.metadata?.compressionLevel === "low-signal" ? (
+                  <p className="operational-panel__basis">Rule basis: {compressionDescription(selectedNode)}.</p>
+                ) : null}
+              </section>
+            </>
+          ) : selectedRegionSummary && selectedRegionGravity ? (
+            <>
+              <section className="operational-panel__region" aria-label="Regional density">
+                <h3>Regional Density</h3>
+                <div className="operational-panel__metrics">
+                  <div><strong>{selectedRegionSummary.fileCount}</strong><span>Files</span></div>
+                  <div><strong>{selectedRegionSummary.folderCount}</strong><span>Folders</span></div>
+                  {typeof selectedRegionSummary.totalLinesOfCode === "number" ? (
+                    <div><strong>{selectedRegionSummary.totalLinesOfCode}</strong><span>LOC</span></div>
+                  ) : null}
+                  {typeof selectedRegionSummary.totalFunctionCount === "number" ? (
+                    <div><strong>{selectedRegionSummary.totalFunctionCount}</strong><span>Functions</span></div>
+                  ) : null}
+                </div>
+                <p className="operational-panel__basis">{selectedRegionSummary.directChildCount} direct items in this territory.</p>
+              </section>
+
+              <section className="operational-panel__region" aria-label="Dominant gravity">
+                <h3>Dominant Gravity</h3>
+                <div className="operational-panel__gravity">{selectedRegionGravity.label}</div>
+                {selectedRegionGravity.detail ? (
+                  <p className="operational-panel__basis">{selectedRegionGravity.detail}</p>
+                ) : null}
+              </section>
+            </>
+          ) : null}
+
+          <section
+            className="operational-panel__region operational-panel__actions"
+            aria-label={selectedNode.type === "file" ? "Activation surface" : "Regional actions"}
+          >
+            <h3>{selectedNode.type === "file" ? "Activation Surface" : "Regional Actions"}</h3>
             {selectedNode.type === "file" ? (
-              <>
-                <dt>Imports</dt>
-                <dd>{selectedNode.metadata?.importCount ?? 0}</dd>
-                <dt>Imported by</dt>
-                <dd>{importedByCount}</dd>
-                <dt>Commits</dt>
-                <dd>{selectedFileHistory?.commitCount ?? 0}</dd>
-                <dt>Last modified</dt>
-                <dd>{selectedFileHistory ? formatCommitDate(selectedFileHistory.lastModified) : "Unknown"}</dd>
-                <dt>Authors</dt>
-                <dd>{selectedFileHistory?.authors.slice(0, 3).join(", ") || "Unknown"}</dd>
-              </>
+              <button type="button" className="metadata-panel__action metadata-panel__action--runtime" onClick={handleRuntimeStart}>
+                Runtime X-Ray
+              </button>
             ) : (
               <>
-                <dt>Children</dt>
-                <dd>{selectedNode.metadata?.childCount ?? 0}</dd>
+                {canEnter(selectedNode) ? (
+                  <button type="button" className="metadata-panel__action" onClick={() => navigateToContext(selectedNode.id)}>
+                    Enter Region
+                  </button>
+                ) : null}
+                {runtimeCandidateFiles.length > 0 ? (
+                  <div className="runtime-file-picker" aria-label="Runtime X-Ray file origin">
+                    <label htmlFor="runtime-file-origin">Runtime origin</label>
+                    <select
+                      id="runtime-file-origin"
+                      value={selectedRuntimeFileId ?? ""}
+                      onChange={(event) => setSelectedRuntimeFileId(event.target.value || null)}
+                    >
+                      {runtimeCandidateFiles.map((file) => (
+                        <option key={file.id} value={file.id}>
+                          {file.path}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="metadata-panel__action metadata-panel__action--runtime"
+                      onClick={handleRuntimeStart}
+                      disabled={!selectedRuntimeFile}
+                    >
+                      Runtime X-Ray
+                    </button>
+                  </div>
+                ) : null}
               </>
             )}
-          </dl>
-          {selectedNode && canEnter(selectedNode) ? (
-            <button type="button" className="metadata-panel__action" onClick={() => navigateToContext(selectedNode.id)}>
-              Enter
-            </button>
-          ) : null}
-          {selectedNode.type === "file" ? (
-            <button type="button" className="metadata-panel__action metadata-panel__action--runtime" onClick={handleRuntimeStart}>
-              Runtime X-Ray
-            </button>
-          ) : (
-            <section className="runtime-file-picker" aria-label="Runtime X-Ray file origin">
-              <label htmlFor="runtime-file-origin">Child file</label>
-              {runtimeCandidateFiles.length > 0 ? (
-                <>
-                  <select
-                    id="runtime-file-origin"
-                    value={selectedRuntimeFileId ?? ""}
-                    onChange={(event) => setSelectedRuntimeFileId(event.target.value || null)}
-                  >
-                    {runtimeCandidateFiles.map((file) => (
-                      <option key={file.id} value={file.id}>
-                        {file.path}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="metadata-panel__action metadata-panel__action--runtime"
-                    onClick={handleRuntimeStart}
-                    disabled={!selectedRuntimeFile}
-                  >
-                    Runtime X-Ray
-                  </button>
-                </>
-              ) : (
-                <p>No child files available.</p>
-              )}
-            </section>
-          )}
-          {relationLens ? (
-            <section className="relation-lens" aria-label="Focused relation lens">
-              <div className="relation-lens__title">Relations</div>
-              <div className="relation-lens__stats">
-                <div>
-                  <span>Imports</span>
-                  <strong>{relationLens.internalOutgoing + relationLens.externalOutgoing}</strong>
-                </div>
-                <div>
-                  <span>Imported by</span>
-                  <strong>{relationLens.internalIncoming + relationLens.externalIncoming}</strong>
-                </div>
-                <div>
-                  <span>Outside</span>
-                  <strong>{relationLens.externalOutgoing + relationLens.externalIncoming}</strong>
-                </div>
-              </div>
-              <div className="relation-lens__columns">
-                <div>
-                  <div className="relation-lens__subtitle">Visible imports</div>
-                  {relationLens.visibleOutgoing.length > 0 ? (
+            {relationLens && (relationLens.visibleOutgoing.length > 0 || relationLens.visibleIncoming.length > 0) ? (
+              <div className="operational-panel__traces" aria-label="Trace visible relationships">
+                <div className="operational-panel__trace-title">Trace Visible Connections</div>
+                {relationLens.visibleOutgoing.length > 0 ? (
+                  <div>
+                    <div className="operational-panel__trace-kind">Imports</div>
                     <ul>
                       {relationLens.visibleOutgoing.map((relation) => (
                         <li key={relation.id} {...renderRelationTrace(relation.id)}>
@@ -1122,16 +1345,14 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                         </li>
                       ))}
                       {relationLens.hiddenVisibleOutgoing > 0 ? (
-                        <li className="relation-lens__more">+{relationLens.hiddenVisibleOutgoing} more visible imports</li>
+                        <li className="operational-panel__trace-more">+{relationLens.hiddenVisibleOutgoing} more visible imports</li>
                       ) : null}
                     </ul>
-                  ) : (
-                    <p>No visible outgoing imports.</p>
-                  )}
-                </div>
-                <div>
-                  <div className="relation-lens__subtitle">Visible imported by</div>
-                  {relationLens.visibleIncoming.length > 0 ? (
+                  </div>
+                ) : null}
+                {relationLens.visibleIncoming.length > 0 ? (
+                  <div>
+                    <div className="operational-panel__trace-kind">Imported By</div>
                     <ul>
                       {relationLens.visibleIncoming.map((relation) => (
                         <li key={relation.id} {...renderRelationTrace(relation.id)}>
@@ -1140,29 +1361,14 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                         </li>
                       ))}
                       {relationLens.hiddenVisibleIncoming > 0 ? (
-                        <li className="relation-lens__more">+{relationLens.hiddenVisibleIncoming} more visible incoming</li>
+                        <li className="operational-panel__trace-more">+{relationLens.hiddenVisibleIncoming} more visible incoming</li>
                       ) : null}
                     </ul>
-                  ) : (
-                    <p>No visible incoming imports.</p>
-                  )}
-                </div>
+                  </div>
+                ) : null}
               </div>
-            </section>
-          ) : null}
-          {selectedFileHistory?.recentCommits.length ? (
-            <section className="file-history" aria-label="Selected file history">
-              <div className="file-history__title">Recent history</div>
-              <ul>
-                {selectedFileHistory.recentCommits.map((commit) => (
-                  <li key={commit.hash}>
-                    <span>{commit.message}</span>
-                    <strong>{commit.shortHash}</strong>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
+            ) : null}
+          </section>
         </aside>
       ) : null}
     </div>

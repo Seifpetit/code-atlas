@@ -212,3 +212,30 @@ Fix:
 Needs watching:
 - Any future custom node sizing system must update both the visual node CSS data and the React Flow node dimensions.
 - If MiniMap appears empty while canvas nodes are visible, first check node dimensions on the React Flow node objects.
+
+## File Metrics Displayed False Zero Values For Missing Payload Data
+
+Status:
+- Fixed
+
+Severity:
+- Medium
+
+Area:
+- File node metadata and focused details panel
+
+Observed:
+- File nodes displayed `0L` and `0F` when the current analysis payload did not
+  contain the newly introduced metric fields.
+- Non-JS/TS structural files also displayed a function count even though
+  function analysis does not apply to them.
+
+Expected:
+- Metrics should appear only when supplied by the backend analysis.
+- LOC applies to all displayed files; function count appears only for
+  JS/TS-family files.
+
+Fix:
+- The UI no longer treats missing metric fields as zero.
+- The backend omits `functionCount` for non-JS/TS files.
+- Function metadata rendering is gated to JS/TS-family extensions.

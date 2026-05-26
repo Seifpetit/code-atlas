@@ -12,13 +12,13 @@ Do not rewrite the archive files unnecessarily.
 
 Read:
 
-- `WORKFLOW.md`
-- `VOCABULARY.md`
-- `DECISIONS.md`
-- `BUGS.md`
-- `ai-skills/VOCABULARY_STEWARD_SKILL.md`
-- `ai-skills/DECISION_RECORDER_SKILL.md`
-- `ai-skills/BUG_REPORTER_SKILL.md`
+- `docs/WORKFLOW.md`
+- `docs/VOCABULARY.md`
+- `docs/DECISIONS.md`
+- `docs/BUGS.md`
+- `docs/ai-skills/VOCABULARY_STEWARD_SKILL.md`
+- `docs/ai-skills/DECISION_RECORDER_SKILL.md`
+- `docs/ai-skills/BUG_REPORTER_SKILL.md`
 
 If source changes are relevant, inspect the affected files.
 

@@ -1,6 +1,6 @@
 # Vocabulary Steward Agent
 
-This agent keeps `VOCABULARY.md` aligned with the product as Code Atlas evolves.
+This agent keeps `docs/VOCABULARY.md` aligned with the product as Code Atlas evolves.
 
 It is not responsible for product decisions. It is responsible for naming clarity.
 
@@ -18,15 +18,15 @@ The agent reduces ambiguity between product intent, design language, and impleme
 ## Primary Files
 
 Read:
-- `VOCABULARY.md`
-- `DECISIONS.md`
-- `BUGS.md`
+- `docs/VOCABULARY.md`
+- `docs/DECISIONS.md`
+- `docs/BUGS.md`
 - relevant UI source files when needed
 
 Write:
-- `VOCABULARY.md`
+- `docs/VOCABULARY.md`
 
-Do not write product decisions into `VOCABULARY.md`. If a term depends on an unresolved product choice, mark it as needing decision instead of inventing certainty.
+Do not write product decisions into `docs/VOCABULARY.md`. If a term depends on an unresolved product choice, mark it as needing decision instead of inventing certainty.
 
 ## When To Run
 
@@ -43,10 +43,10 @@ Do not run it for purely internal refactors that do not affect product language.
 
 ## Init Case
 
-Use this when `VOCABULARY.md` does not exist, is empty, or is clearly outdated.
+Use this when `docs/VOCABULARY.md` does not exist, is empty, or is clearly outdated.
 
 Steps:
-1. Read `DECISIONS.md` and `BUGS.md` if they exist.
+1. Read `docs/DECISIONS.md` and `docs/BUGS.md` if they exist.
 2. Inspect the main UI files.
 3. Identify the core product nouns, verbs, and interaction states.
 4. Create a first vocabulary organized around product language first, technical mapping second.
@@ -65,7 +65,7 @@ Init output should produce:
 ## Ongoing Update Flow
 
 Steps:
-1. Read the current `VOCABULARY.md`.
+1. Read the current `docs/VOCABULARY.md`.
 2. Read the newest relevant product notes, decisions, bugs, or source changes.
 3. Extract new or changed terms.
 4. Check whether each term already exists under another name.
@@ -147,12 +147,12 @@ Then stop there.
 ## Bug Awareness
 
 If a bug affects language or interaction expectations:
-- reference the concept in `VOCABULARY.md`
-- keep the bug details in `BUGS.md`
+- reference the concept in `docs/VOCABULARY.md`
+- keep the bug details in `docs/BUGS.md`
 
 Example:
 - `Hover` can mention that hover previews are currently disabled.
-- The flicker debugging details stay in `BUGS.md`.
+- The flicker debugging details stay in `docs/BUGS.md`.
 
 ## Output Standard
 

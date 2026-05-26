@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Project, SourceFile } from "ts-morph";
+import { Project, SourceFile, SyntaxKind } from "ts-morph";
 import { buildGraph } from "./buildGraph.js";
-import type { ExtractedStructure, GraphJson } from "./types.js";
+import type { CompressionReason, ExtractedFileMetadata, ExtractedStructure, GraphJson } from "./types.js";
 
 const IGNORED_DIRECTORIES = new Set([
   "node_modules",
@@ -35,6 +35,76 @@ const STRUCTURAL_FILE_EXTENSIONS = new Set([
 ]);
 const RESOLUTION_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".json"];
 const INDEX_FILES = RESOLUTION_EXTENSIONS.map((extension) => `index${extension}`);
+const CONVENTIONAL_LOW_SIGNAL_NAMES = new Set(["index", "types", "constants", "config"]);
+const TINY_WRAPPER_NAME_PATTERN = /(?:util|utils|helper|helpers|wrapper|adapter)$/i;
+const FUNCTION_LIKE_KINDS = [
+  SyntaxKind.FunctionDeclaration,
+  SyntaxKind.FunctionExpression,
+  SyntaxKind.ArrowFunction,
+  SyntaxKind.MethodDeclaration,
+  SyntaxKind.GetAccessor,
+  SyntaxKind.SetAccessor,
+  SyntaxKind.Constructor
+];
+
+function countLinesOfCode(contents: string): number {
+  return contents.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+}
+
+function countFunctions(sourceFile: SourceFile): number {
+  return FUNCTION_LIKE_KINDS.reduce(
+    (total, kind) => total + sourceFile.getDescendantsOfKind(kind).length,
+    0
+  );
+}
+
+function isPassThroughExportFile(sourceFile: SourceFile): boolean {
+  const statements = sourceFile
+    .getStatements()
+    .filter((statement) => statement.getKind() !== SyntaxKind.EmptyStatement);
+
+  return statements.length > 0 && statements.every((statement) => statement.getKind() === SyntaxKind.ExportDeclaration);
+}
+
+function classifyCompression(
+  filePath: string,
+  metadata: ExtractedFileMetadata,
+  sourceFile?: SourceFile
+): CompressionReason[] {
+  const reasons: CompressionReason[] = [];
+
+  if (metadata.linesOfCode <= 8) {
+    reasons.push("very-low-loc");
+  }
+
+  if (!sourceFile) {
+    return reasons;
+  }
+
+  const fileName = path.posix.parse(filePath).name.toLowerCase();
+  const functionCount = metadata.functionCount ?? 0;
+  if (
+    TINY_WRAPPER_NAME_PATTERN.test(fileName) &&
+    metadata.linesOfCode <= 32 &&
+    functionCount <= 1
+  ) {
+    reasons.push("tiny-wrapper");
+  }
+
+  if (
+    CONVENTIONAL_LOW_SIGNAL_NAMES.has(fileName) &&
+    metadata.linesOfCode <= 160 &&
+    functionCount <= 1
+  ) {
+    reasons.push("conventional-support-file");
+  }
+
+  if (isPassThroughExportFile(sourceFile)) {
+    reasons.push("pass-through-export");
+  }
+
+  return [...new Set(reasons)];
+}
 
 function toPosixRelative(repoRoot: string, absolutePath: string): string {
   const relativePath = path.relative(repoRoot, absolutePath);
@@ -104,7 +174,12 @@ async function walkRepo(directory: string, repoRoot: string, structure: Extracte
     }
 
     if (entry.isFile() && STRUCTURAL_FILE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+      const contents = await fs.readFile(absolutePath, "utf8");
       structure.files.add(relativePath);
+      structure.fileMetadata.set(relativePath, {
+        linesOfCode: countLinesOfCode(contents),
+        compressionReasons: []
+      });
       addParentFolders(structure, relativePath);
     }
   }
@@ -124,6 +199,7 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
   const structure: ExtractedStructure = {
     folders: new Set(),
     files: new Set(),
+    fileMetadata: new Map(),
     imports: []
   };
 
@@ -141,10 +217,16 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
     .filter((filePath) => IMPORT_PARSE_EXTENSIONS.has(path.extname(filePath).toLowerCase()))
     .sort();
   const sourceFiles = filePaths.map((filePath) => project.addSourceFileAtPath(path.join(repoRoot, filePath)));
+  const sourceFilesByPath = new Map<string, SourceFile>();
   const seenEdges = new Set<string>();
 
   for (const sourceFile of sourceFiles) {
     const sourcePath = toPosixRelative(repoRoot, sourceFile.getFilePath());
+    const metadata = structure.fileMetadata.get(sourcePath);
+    sourceFilesByPath.set(sourcePath, sourceFile);
+    if (metadata) {
+      metadata.functionCount = countFunctions(sourceFile);
+    }
     const specifiers = getImportSpecifiers(sourceFile).sort();
 
     for (const specifier of specifiers) {
@@ -158,6 +240,13 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
         seenEdges.add(edgeKey);
         structure.imports.push({ source: sourcePath, target: targetPath });
       }
+    }
+  }
+
+  for (const filePath of structure.files) {
+    const metadata = structure.fileMetadata.get(filePath);
+    if (metadata) {
+      metadata.compressionReasons = classifyCompression(filePath, metadata, sourceFilesByPath.get(filePath));
     }
   }
 

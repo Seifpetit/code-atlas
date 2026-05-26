@@ -1,6 +1,6 @@
 # Bug Reporter Skill
 
-This skill keeps `BUGS.md` useful as the durable record of known bugs, regressions, and UX issues.
+This skill keeps `docs/BUGS.md` useful as the durable record of known bugs, regressions, and UX issues.
 
 It is not responsible for fixing bugs unless explicitly asked. It records and organizes known issues so they can be fixed later.
 
@@ -19,16 +19,16 @@ The goal is to make known problems easy to find, reproduce, prioritize, and even
 ## Primary Files
 
 Read:
-- `BUGS.md`
-- `DECISIONS.md`
-- `VOCABULARY.md`
+- `docs/BUGS.md`
+- `docs/DECISIONS.md`
+- `docs/VOCABULARY.md`
 - relevant source files when needed
 - relevant user reports when provided
 
 Write:
-- `BUGS.md`
+- `docs/BUGS.md`
 
-Do not write product decisions into `BUGS.md`. If a bug reveals a decision gap, mention the gap and point to `DECISIONS.md`.
+Do not write product decisions into `docs/BUGS.md`. If a bug reveals a decision gap, mention the gap and point to `docs/DECISIONS.md`.
 
 ## When To Use
 
@@ -48,10 +48,10 @@ Do not use it for:
 
 ## Init Case
 
-Use this when `BUGS.md` does not exist, is empty, or is clearly stale.
+Use this when `docs/BUGS.md` does not exist, is empty, or is clearly stale.
 
 Steps:
-1. Read `DECISIONS.md` and `VOCABULARY.md` if they exist.
+1. Read `docs/DECISIONS.md` and `docs/VOCABULARY.md` if they exist.
 2. Inspect relevant source files only when needed.
 3. Extract known issues from current notes or user reports.
 4. Create entries with reproduction, expected behavior, actual behavior, and status.
@@ -60,7 +60,7 @@ Steps:
 ## Ongoing Update Flow
 
 Steps:
-1. Read the current `BUGS.md`.
+1. Read the current `docs/BUGS.md`.
 2. Determine whether the report is new, duplicate, fixed, or a regression.
 3. Update an existing bug if it describes the same issue.
 4. Add a new bug only when it is distinct and actionable.

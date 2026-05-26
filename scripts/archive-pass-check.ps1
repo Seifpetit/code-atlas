@@ -65,13 +65,14 @@ $sourcePatterns = @(
 )
 
 $archivePatterns = @(
-  "^VOCABULARY\.md$",
-  "^DECISIONS\.md$",
-  "^BUGS\.md$",
-  "^WORKFLOW\.md$",
-  "^README\.md$",
-  "^ai-skills/",
-  "^ai-prompts/"
+  "^CONTEXT\.md$",
+  "^docs/VOCABULARY\.md$",
+  "^docs/DECISIONS\.md$",
+  "^docs/BUGS\.md$",
+  "^docs/WORKFLOW\.md$",
+  "^docs/README\.md$",
+  "^docs/ai-skills/",
+  "^docs/ai-prompts/"
 )
 
 $sourceChanged = $false
@@ -95,7 +96,7 @@ foreach ($file in $changedFiles) {
 }
 
 if ($sourceChanged -and -not $archiveChanged) {
-  Write-ArchiveWarning "Source changed without archive docs changing. Run: Run an archive pass using ai-prompts/archive-pass.md."
+  Write-ArchiveWarning "Source changed without archive docs changing. Run: Run an archive pass using docs/ai-prompts/archive-pass.md."
   exit 0
 }
 

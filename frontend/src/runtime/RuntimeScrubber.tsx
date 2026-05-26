@@ -19,32 +19,62 @@ export function RuntimeScrubber({
   onTogglePlay
 }: RuntimeScrubberProps) {
   const maxStep = Math.max(0, chain.nodes.length - 1);
-  const progress = maxStep === 0 ? 100 : (currentStep / maxStep) * 100;
+  const progress = maxStep === 0 ? 0 : (currentStep / maxStep) * 100;
+  const instrumentStyle = { "--runtime-progress": `${progress}%` } as CSSProperties;
 
   return (
-    <div className="runtime-scrubber" aria-label="Runtime activation order">
+    <div className="runtime-scrubber" aria-label="Runtime causal progression">
       <div className="runtime-scrubber__header">
         <div>
-          <div className="runtime-scrubber__label">Runtime X-Ray</div>
+          <div className="runtime-scrubber__label">Causality Corridor</div>
           <div className="runtime-scrubber__title">
-            Step {currentStep + 1} / {maxStep + 1}
+            Waypoint {String(currentStep + 1).padStart(2, "0")} / {String(maxStep + 1).padStart(2, "0")}
           </div>
         </div>
         <div className="runtime-scrubber__actions">
-          <button type="button" onClick={onReplay}>Replay</button>
-          <button type="button" onClick={onTogglePlay}>{isPlaying ? "Pause" : "Play"}</button>
+          <button type="button" aria-label="Restart causal traversal" onClick={onReplay}>Restart</button>
+          <button
+            type="button"
+            className={isPlaying ? "is-active" : undefined}
+            aria-pressed={isPlaying}
+            aria-label={isPlaying ? "Hold causal traversal" : "Traverse causal corridor"}
+            onClick={onTogglePlay}
+          >
+            {isPlaying ? "Hold" : "Traverse"}
+          </button>
         </div>
       </div>
-      <input
-        className="runtime-scrubber__range"
-        style={{ "--runtime-progress": `${progress}%` } as CSSProperties}
-        type="range"
-        min={0}
-        max={maxStep}
-        value={currentStep}
-        onChange={(event) => onScrub(Number(event.target.value))}
-        aria-label="Runtime step"
-      />
+      <div className="runtime-scrubber__instrument" style={instrumentStyle}>
+        <div className="runtime-scrubber__rail" aria-hidden="true">
+          <span className="runtime-scrubber__energy" />
+          {chain.nodes.map((node, index) => {
+            const position = maxStep === 0 ? 0 : (index / maxStep) * 100;
+            const state = index === currentStep ? "is-current" : index < currentStep ? "is-reached" : "";
+
+            return (
+              <span
+                key={node.id}
+                className={`runtime-scrubber__waypoint ${state}`.trim()}
+                style={{ "--runtime-waypoint": `${position}%` } as CSSProperties}
+              />
+            );
+          })}
+        </div>
+        <input
+          className="runtime-scrubber__range"
+          type="range"
+          min={0}
+          max={maxStep}
+          value={currentStep}
+          onChange={(event) => onScrub(Number(event.target.value))}
+          aria-label="Runtime causal waypoint"
+        />
+        <div className="runtime-scrubber__readout" aria-hidden="true">
+          <span>Origin</span>
+          <span>{isPlaying ? "Traversing" : "Hold"}</span>
+          <span>Extent</span>
+        </div>
+      </div>
     </div>
   );
 }

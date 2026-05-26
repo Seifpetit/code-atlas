@@ -8,9 +8,22 @@ interface TemporalScrubberProps {
   activeDate: string;
   landmarks: ArchitecturalLandmark[];
   focusedLandmarkId: string | null;
+  isCollapsed: boolean;
   onScrub: (nextIndex: number) => void;
   onLandmarkFocus: (landmarkId: string) => void;
   onReset: () => void;
+  onToggleCollapsed: () => void;
+}
+
+function TimelineIcon() {
+  return (
+    <svg className="timeline-panel__icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 12h16" />
+      <circle cx="7" cy="12" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="17" cy="12" r="2" />
+    </svg>
+  );
 }
 
 export function TemporalScrubber({
@@ -19,15 +32,32 @@ export function TemporalScrubber({
   activeDate,
   landmarks,
   focusedLandmarkId,
+  isCollapsed,
   onScrub,
   onLandmarkFocus,
-  onReset
+  onReset,
+  onToggleCollapsed
 }: TemporalScrubberProps) {
   const canScrub = totalStates > 1;
   const progress = totalStates > 1 ? (currentIndex / (totalStates - 1)) * 100 : 0;
   const scrubberStyle = {
     "--timeline-progress": `${progress}%`
   } as CSSProperties;
+
+  if (isCollapsed) {
+    return (
+      <button
+        type="button"
+        className="timeline-panel-toggle"
+        aria-label="Expand architectural time"
+        aria-expanded="false"
+        title="Open Architectural Time"
+        onClick={onToggleCollapsed}
+      >
+        <TimelineIcon />
+      </button>
+    );
+  }
 
   return (
     <aside className="timeline-panel" aria-label="Architectural time exploration">
@@ -36,11 +66,23 @@ export function TemporalScrubber({
           <div className="timeline-panel__label">Architectural Time</div>
           <div className="timeline-panel__title">{formatCommitDate(activeDate)}</div>
         </div>
-        {currentIndex > 0 ? (
-          <button type="button" className="timeline-panel__clear" onClick={onReset}>
-            Reset
+        <div className="timeline-panel__actions">
+          {currentIndex > 0 ? (
+            <button type="button" className="timeline-panel__clear" onClick={onReset}>
+              Reset
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="timeline-panel__collapse"
+            aria-label="Collapse architectural time"
+            aria-expanded="true"
+            title="Collapse Architectural Time"
+            onClick={onToggleCollapsed}
+          >
+            <TimelineIcon />
           </button>
-        ) : null}
+        </div>
       </div>
       {totalStates > 0 ? (
         <div className="timeline-strip">

@@ -8,6 +8,12 @@ export interface AtlasNode extends Record<string, unknown> {
     extension?: string;
     importCount?: number;
     childCount?: number;
+    linesOfCode?: number;
+    functionCount?: number;
+    compressionLevel?: "low-signal";
+    compressionReasons?: Array<
+      "very-low-loc" | "tiny-wrapper" | "conventional-support-file" | "pass-through-export"
+    >;
   };
 }
 

@@ -1,5 +1,6 @@
 export type AttentionLayer =
   | "ambient"
+  | "compressed"
   | "hover"
   | "focus"
   | "runtime-current"
@@ -39,4 +40,5 @@ export interface NodeAttentionSignals {
   hasCriticalEvent: boolean;
   isCriticalEventAffected: boolean;
   hasStructuralGuidance: boolean;
+  isLowSignalCompressed: boolean;
 }

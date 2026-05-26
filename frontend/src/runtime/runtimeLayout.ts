@@ -202,8 +202,8 @@ function makeRuntimeEdge(edge: RuntimeChain["edges"][number], currentStep: numbe
     source: edge.source,
     target: edge.target,
     type: "structural",
-    animated: isActive,
-    zIndex: isActive ? 90 : 70,
+    animated: false,
+    zIndex: 0,
     data: {
       kind: isActive ? "runtime-active" : relationKind,
       runtimeRelationType: edge.relationType,

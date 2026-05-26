@@ -76,7 +76,7 @@ Implications:
 ## 6. Focused Relations Use A Relation Lens
 
 Status:
-- Accepted
+- Superseded by Decision 20
 
 Decision:
 - Clicking an object should show a relation lens in the details panel.
@@ -126,13 +126,15 @@ Status:
 Decision:
 - The default structural canvas must not render relationship networks.
 - Clicking an object enters local focus mode and shows only a budgeted subset of that object's immediate relationships.
-- Extra relationships are represented through counters and relation-lens text instead of more canvas lines.
+- Extra relationships are represented through node stub counters and compact
+  visible-connection trace controls instead of more canvas lines.
 - Hover remains CSS-only until a stable hover system exists.
 
 Rationale:
 - Structure is permanent; relationships are ephemeral.
 - The canvas should feel like a calm structural space, not wiring infrastructure.
-- Relationship truth belongs in the relation lens when it exceeds what the eye can trace comfortably.
+- Relationship trace activation belongs in the focused object's action region
+  when it exceeds what the eye can trace comfortably.
 
 Implications:
 - `visibleEdges` are derived from `focusedNodeId` and an explicitly traced relationship, not from all current-context imports.
@@ -157,7 +159,8 @@ Rationale:
 Implications:
 - Node activation and relation stubs are the default relationship visualization.
 - Full paths are temporary traces, not focus-mode infrastructure.
-- The relation lens remains the place for fuller relationship truth.
+- The action region retains compact relation trace controls; architectural
+  counts belong in weight or density interpretation.
 
 ## 10. History Is A Lightweight Overlay
 
@@ -315,9 +318,161 @@ Decision:
 Rationale:
 - Archive docs preserve durable product intent, but they do not prove the work was verified or make the next session easy to resume.
 - A lightweight close ritual reduces dependence on memory and discipline.
-- `SESSION_NOTES.md` gives the next session a faster handoff than reading the full conversation.
+- `docs/SESSION_NOTES.md` provides the detailed handoff, while root `CONTEXT.md` provides the fastest resume summary.
 
 Implications:
-- Use `ai-prompts/close-session.md` for end-of-session closure.
+- Use `docs/ai-prompts/close-session.md` for end-of-session closure.
 - Use `scripts/close-session-check.ps1` as a local reminder/check.
-- Keep `SESSION_NOTES.md` short and focused on the latest meaningful session.
+- Keep `docs/SESSION_NOTES.md` short and focused on the latest meaningful session.
+- Refresh root `CONTEXT.md` with an explicit current handoff at close session.
+
+## 18. Documentation Records Live Under Docs With A Root Context Entry Point
+
+Status:
+- Accepted
+
+Decision:
+- Markdown documentation records, prompt specs, and skill specs live under `docs/`.
+- Root `CONTEXT.md` remains outside that folder as the first resume point.
+- Root `README_showcase.md` remains outside that folder as showcase material.
+
+Rationale:
+- Context material is easier to navigate when grouped in one documentation location.
+- A visible root context file lets a new session resume immediately without replacing detailed source records.
+
+Implications:
+- Use `docs/WORKFLOW.md`, `docs/VOCABULARY.md`, `docs/DECISIONS.md`,
+  `docs/BUGS.md`, `docs/UI_LAYOUT.md`, and `docs/SESSION_NOTES.md`.
+- Use `docs/ai-prompts/` and `docs/ai-skills/` for maintenance instructions.
+- Close session updates the detailed notes and then refreshes root `CONTEXT.md`.
+
+## 19. Semantic Compression Is Deterministic And Ambient-Only
+
+Status:
+- Accepted
+
+Decision:
+- Every visible file node exposes non-blank lines of code as lightweight metadata.
+- JS/TS-family file nodes additionally expose a syntax-derived function count.
+- Low-signal files are classified only through deterministic rules: very low LOC, small conventionally named support modules, small named wrappers/helpers/adapters, and pass-through export modules.
+- Low-signal classification produces a calm ambient presentation and lower default ordering weight; it does not remove, merge, or hide files.
+
+Rationale:
+- Structural views become noisy when boilerplate and forwarding files compete visually with implementation-heavy regions.
+- Immediate `LOC` and function-count cues make architectural weight inspectable without adding interpretation or AI.
+- Ambient-only compression preserves the existing navigation and attention hierarchy.
+
+Implications:
+- Compressed files retain normal node bounds, containment, relationship data, and click behavior.
+- Focus, search, temporal attention, and runtime corridor states override the compressed ambient presentation.
+- Classification reasons must be exposed in the data contract and available in the focused details panel.
+
+## 20. The Details Panel Is An Operational Interpretation Surface
+
+Status:
+- Accepted
+
+Decision:
+- The focused-object panel is organized into four compact regions rather than
+  presenting a generic metadata list.
+- Files show identity, deterministic architectural weight, heuristic
+  operational role, and activation surface.
+- Domains and folders show identity, recursive regional density, deterministic
+  dominant gravity, and regional actions.
+- Operational labels use only path/name conventions, extracted metrics,
+  compression reasons, and import graph relationships; they remain candidates
+  or rule-derived signals rather than semantic claims.
+- Each operational role category uses a deterministic accent color keyed by
+  its rule type; colors distinguish roles rather than claiming severity or
+  certainty.
+- Existing visible-connection trace hover controls remain available inside the
+  action region, while low-value repeated parent/path/history and
+  outside-context summary rows are not shown by default.
+
+Rationale:
+- The canvas already communicates hierarchy and spatial placement; repeating
+  those values in a panel does not reduce uncertainty.
+- LOC, function counts, dependency counts, and regional aggregates provide
+  useful local architectural weight without AI interpretation.
+- Actions should expose existing capabilities such as context entry, exact
+  relationship trace, and Runtime X-Ray without implying unavailable tools.
+
+Implications:
+- The panel refactor must not modify runtime corridors, hierarchy unfolding,
+  attention composition, or semantic compression behavior.
+- Region totals are derived from existing graph nodes and edges; no backend
+  semantic analysis is required.
+- Native panel scrolling is preserved while its scrollbar chrome is rendered
+  as a thin, low-noise teal channel with restrained interactive emphasis.
+- The native Runtime origin selector uses matching scroll chrome where the
+  browser exposes dropdown scrollbar styling.
+
+## 21. The Temporal Scrubber Collapses At A Stable Origin
+
+Status:
+- Accepted
+
+Decision:
+- The expanded temporal scrubber retains its established panel dimensions.
+- It can collapse into a `40px` by `40px` timeline-icon button at the same
+  origin as the expanded panel.
+- Collapsing removes the scrubber chrome and subordinate raw-history inspector
+  from view without resetting the current temporal selection or graph
+  attention state.
+
+Rationale:
+- Architectural time should remain immediately accessible without permanently
+  occupying canvas space.
+- A stable-origin trigger preserves spatial predictability when toggling the
+  temporal surface.
+
+Implications:
+- Runtime X-Ray continues to replace the temporal surface normally.
+- Desktop and responsive placements keep the trigger aligned to the
+  corresponding expanded-panel origin.
+
+## 22. Runtime Controls Use Causal Instrument Language
+
+Status:
+- Accepted
+
+Decision:
+- The Runtime X-Ray scrubber is presented as a causal waypoint instrument:
+  thin rail, discrete chain points, restrained energized residue, and a
+  compact beacon-shaped handle.
+- Runtime and operational-panel controls use thin bordered command surfaces,
+  precision typography, and low-amplitude activation/focus glow.
+- Runtime command language uses `Restart`, `Traverse`, and `Hold` rather than
+  media-player labels.
+- This is a visual and interaction-language treatment only; runtime chain
+  selection, playback handlers, corridor placement, and attention behavior
+  remain unchanged.
+
+Rationale:
+- Runtime progression represents movement through architectural causality, not
+  media playback or a generic settings value.
+- Matching the corridor and HUD language prevents controls from visually
+  detaching from the spatial model.
+
+## 23. Connection Lines Stay Behind Objects As Moving Cut-Lines
+
+Status:
+- Accepted
+
+Decision:
+- Contextual relationship traces, lineage links, and Runtime X-Ray corridor
+  lines render in the graph background plane beneath every node object.
+- All visible connection variants use thin moving segmented strokes, with
+  color and speed retaining their existing relationship distinctions.
+- Reduced-motion preferences suppress segment motion.
+
+Rationale:
+- Lines should explain connection and causality without covering the primary
+  architectural objects.
+- Segmented motion communicates live direction while maintaining the calm,
+  secondary role of graph connections.
+
+Implications:
+- Runtime edge emphasis uses stroke treatment rather than raising edge layer
+  priority over nodes.
+- Straight-line geometry remains the current routing baseline.

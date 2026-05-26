@@ -5,6 +5,7 @@ import type { AtlasNode } from "../api";
 import type { NodeVisualState } from "./attention/attentionTypes";
 
 type StructuralKind = "domain" | "folder" | "file";
+const JAVASCRIPT_ECOSYSTEM_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 
 interface RelationStubData {
   incomingCount: number;
@@ -21,6 +22,10 @@ interface NodeChromeProps {
   historyBadge?: string;
   shouldShowResidue: boolean;
   significanceScore: number;
+}
+
+function isJavaScriptEcosystemFile(data: AtlasNode): boolean {
+  return JAVASCRIPT_ECOSYSTEM_EXTENSIONS.has(String(data.metadata?.extension ?? "").toLowerCase());
 }
 
 function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
@@ -42,12 +47,30 @@ function NodeContent({
   shouldShowResidue,
   significanceScore
 }: NodeChromeProps) {
+  const linesOfCode = data.metadata?.linesOfCode;
+  const functionCount = data.metadata?.functionCount;
+  const shouldShowMetrics = structuralKind === "file" && typeof linesOfCode === "number";
+  const shouldShowFunctionCount = isJavaScriptEcosystemFile(data) && typeof functionCount === "number";
+
   return (
     <>
       <div className="atlas-node__kind">{structuralKind}</div>
       <div className="atlas-node__label">{data.label}</div>
       <div className="atlas-node__path">{data.path}</div>
       <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
+      {shouldShowMetrics ? (
+        <div
+          className="atlas-node__metrics"
+          aria-label={`${linesOfCode} lines of code${shouldShowFunctionCount ? `, ${functionCount} functions` : ""}`}
+        >
+          {linesOfCode}L
+          {shouldShowFunctionCount ? (
+            <>
+              {" "}<span aria-hidden="true">&bull;</span>{" "}{functionCount}F
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {shouldShowResidue ? (
         <div
           className="significance-residue"
