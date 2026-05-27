@@ -14,7 +14,7 @@
   width: 100%;
   min-height: var(--atlas-node-height, 92px);
   border: 1px solid #334155;
-  border-radius: 4px;
+  border-radius: 8px;
   background: #0f172a;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
   transition:
@@ -29,65 +29,185 @@
     transform 320ms ease;
 }
 
-.atlas-node--domain .atlas-node__shape {
-  border-color: #14b8a6;
-  background: #0b282d;
-}
-
 .atlas-node--folder .atlas-node__shape {
+  border-width: 2px;
   border-color: #38bdf8;
   background: #0c2230;
 }
 
 .atlas-node--file .atlas-node__shape {
+  --atlas-file-border: #facc15;
+  --atlas-file-fold-border: rgba(250, 204, 21, 0.72);
+  --atlas-file-fold-background: rgba(250, 204, 21, 0.1);
   height: var(--atlas-node-height, 180px);
-  border-color: #facc15;
-  background: #706b06a4;
+  border: 0;
+  background: #333;
+}
+
+.atlas-node--palette-javascript .atlas-node__shape {
+  --atlas-file-border: #facc15;
+  --atlas-file-fold-border: rgba(250, 204, 21, 0.76);
+  --atlas-file-fold-background: rgba(250, 204, 21, 0.14);
+}
+
+.atlas-node--palette-python .atlas-node__shape {
+  --atlas-file-border: #60a5fa;
+  --atlas-file-fold-border: rgba(96, 165, 250, 0.74);
+  --atlas-file-fold-background: rgba(59, 130, 246, 0.14);
+}
+
+.atlas-node--palette-markdown .atlas-node__shape {
+  --atlas-file-border: #a78bfa;
+  --atlas-file-fold-border: rgba(167, 139, 250, 0.7);
+  --atlas-file-fold-background: rgba(139, 92, 246, 0.12);
+}
+
+.atlas-node--palette-mdx .atlas-node__shape {
+  --atlas-file-border: #c084fc;
+  --atlas-file-fold-border: rgba(192, 132, 252, 0.72);
+  --atlas-file-fold-background: rgba(168, 85, 247, 0.13);
+}
+
+.atlas-node--palette-json .atlas-node__shape {
+  --atlas-file-border: #fb923c;
+  --atlas-file-fold-border: rgba(251, 146, 60, 0.72);
+  --atlas-file-fold-background: rgba(249, 115, 22, 0.13);
+}
+
+.atlas-node--palette-yaml .atlas-node__shape {
+  --atlas-file-border: #f472b6;
+  --atlas-file-fold-border: rgba(244, 114, 182, 0.72);
+  --atlas-file-fold-background: rgba(236, 72, 153, 0.12);
+}
+
+.atlas-node--palette-toml .atlas-node__shape {
+  --atlas-file-border: #f59e0b;
+  --atlas-file-fold-border: rgba(245, 158, 11, 0.72);
+  --atlas-file-fold-background: rgba(217, 119, 6, 0.12);
+}
+
+.atlas-node--palette-css .atlas-node__shape {
+  --atlas-file-border: #38bdf8;
+  --atlas-file-fold-border: rgba(56, 189, 248, 0.72);
+  --atlas-file-fold-background: rgba(14, 165, 233, 0.12);
+}
+
+.atlas-node--palette-scss .atlas-node__shape {
+  --atlas-file-border: #ec4899;
+  --atlas-file-fold-border: rgba(236, 72, 153, 0.72);
+  --atlas-file-fold-background: rgba(219, 39, 119, 0.12);
+}
+
+.atlas-node--palette-sass .atlas-node__shape {
+  --atlas-file-border: #f43f5e;
+  --atlas-file-fold-border: rgba(244, 63, 94, 0.72);
+  --atlas-file-fold-background: rgba(225, 29, 72, 0.12);
+}
+
+.atlas-node--palette-less .atlas-node__shape {
+  --atlas-file-border: #818cf8;
+  --atlas-file-fold-border: rgba(129, 140, 248, 0.72);
+  --atlas-file-fold-background: rgba(99, 102, 241, 0.12);
+}
+
+.atlas-node--palette-html .atlas-node__shape {
+  --atlas-file-border: #fb7185;
+  --atlas-file-fold-border: rgba(251, 113, 133, 0.72);
+  --atlas-file-fold-background: rgba(244, 63, 94, 0.12);
+}
+
+.atlas-node--palette-svg .atlas-node__shape {
+  --atlas-file-border: #34d399;
+  --atlas-file-fold-border: rgba(52, 211, 153, 0.72);
+  --atlas-file-fold-background: rgba(16, 185, 129, 0.12);
+}
+
+.atlas-node--palette-xml .atlas-node__shape {
+  --atlas-file-border: #22d3ee;
+  --atlas-file-fold-border: rgba(34, 211, 238, 0.72);
+  --atlas-file-fold-background: rgba(6, 182, 212, 0.12);
+}
+
+.atlas-node--palette-text .atlas-node__shape {
+  --atlas-file-border: #94a3b8;
+  --atlas-file-fold-border: rgba(148, 163, 184, 0.62);
+  --atlas-file-fold-background: rgba(148, 163, 184, 0.08);
+}
+
+.atlas-node--palette-powershell .atlas-node__shape {
+  --atlas-file-border: #3b82f6;
+  --atlas-file-fold-border: rgba(59, 130, 246, 0.72);
+  --atlas-file-fold-background: rgba(37, 99, 235, 0.12);
+}
+
+.atlas-node--palette-shell .atlas-node__shape {
+  --atlas-file-border: #a3e635;
+  --atlas-file-fold-border: rgba(163, 230, 53, 0.7);
+  --atlas-file-fold-background: rgba(132, 204, 22, 0.11);
 }
 
 .atlas-node__shape--folder {
   margin-top: 13px;
+  border-radius: 0 8px 8px 8px;
 }
 
 .atlas-node__folder-tab {
   position: absolute;
   left: -1px;
   top: -14px;
+  z-index: 2;
   width: min(104px, 45%);
   height: 15px;
   border: 1px solid currentColor;
   border-bottom: 0;
-  border-radius: 4px 4px 0 0;
+  border-radius: 8px 8px 0 0;
   background: inherit;
   color: inherit;
-  opacity: 0.78;
+  opacity: 1;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.atlas-node--folder .atlas-node__folder-tab {
+  left: -2px;
+  top: -16px;
+  border-width: 2px;
+  border-color: #38bdf8;
 }
 
 .atlas-node__shape--file {
   overflow: hidden;
-  clip-path: polygon(0 0, calc(100% - 24px) 0, 100% 24px, 100% 100%, 0 100%);
+  clip-path: path("M 10 0 H 101 Q 106 0 110 4 L 126 20 Q 130 24 130 29 V 170 Q 130 180 120 180 H 10 Q 0 180 0 170 V 10 Q 0 0 10 0 Z");
+}
+
+.atlas-node__file-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.atlas-node__file-outline {
+  fill: none;
+  opacity: 0.8;
+  stroke: var(--atlas-file-border);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
 }
 
 .atlas-node__file-fold {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 1;
-  width: 24px;
-  height: 24px;
-  border-left: 1px solid rgba(254, 240, 138, 0.34);
-  border-bottom: 1px solid rgba(254, 240, 138, 0.34);
-  background: rgba(250, 204, 21, 0.1);
-}
-
-.atlas-node--domain-card .atlas-node__shape {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  border-color: rgba(45, 212, 191, 0.78);
-  background:
-    linear-gradient(180deg, rgba(20, 184, 166, 0.18), rgba(15, 23, 42, 0.2)),
-    #0d2027;
+  fill: var(--atlas-file-fold-background);
+  stroke: var(--atlas-file-fold-border);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
 }
 
 .atlas-node--lineage-anchor .atlas-node__shape {
@@ -130,21 +250,6 @@
   font-size: 10px;
 }
 
-.atlas-node--domain-card .atlas-node__kind {
-  color: #3ad1b3;
-  font-size: 11px;
-}
-
-.atlas-node--domain-card .atlas-node__label {
-  padding-top: 5px;
-  font-size: 21px;
-  line-height: 1.15;
-}
-
-.atlas-node--domain-card .atlas-node__path {
-  color: #a7c7c9;
-}
-
 .atlas-node--very-close .atlas-node__shape {
   box-shadow:
     0 0 0 12px rgba(250, 204, 21, 0.13),
@@ -173,6 +278,25 @@
   line-height: 1.2;
 }
 
+.atlas-node__label--file {
+  display: grid;
+  gap: 2px;
+  padding-top: 5px;
+}
+
+.atlas-node__file-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.atlas-node__file-extension {
+  justify-self: end;
+  color: #cbd5e1;
+  font-size: calc(11px * var(--atlas-node-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
 .atlas-node__path {
   padding: 5px 10px 8px;
   overflow: hidden;
@@ -193,25 +317,48 @@
 
 .atlas-node__metrics {
   padding: 0 10px 9px;
-  color: rgba(203, 213, 225, 0.72);
-  font-size: calc(10px * var(--atlas-node-scale, 1));
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  color: rgba(241, 245, 249, 0.9);
+  font-size: calc(11px * var(--atlas-node-scale, 1));
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  letter-spacing: 0.045em;
 }
 
 .atlas-node--file .atlas-node__meta {
-  padding-bottom: 26px;
+  padding-bottom: 34px;
 }
 
 .atlas-node--file .atlas-node__metrics {
   position: absolute;
-  left: 0;
+  left: 10px;
+  right: 10px;
   bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border-top: 1px solid rgba(226, 232, 240, 0.2);
+  padding: 7px 0 9px;
 }
 
-.atlas-node__metrics span {
+.atlas-node--folder .atlas-node__meta {
+  color: #e2e8f0;
+  font-size: calc(12px * var(--atlas-node-scale, 1));
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.atlas-node__metric-separator {
   padding: 0 3px;
   color: rgba(148, 163, 184, 0.68);
+}
+
+.atlas-node__metric-loc {
+  color: #fbbf24;
+}
+
+.atlas-node__metric-functions {
+  color: #c084fc;
 }
 
 .history-badge {
@@ -231,6 +378,12 @@
   text-transform: uppercase;
 }
 
+.history-badge--file {
+  position: static;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 .significance-residue {
   position: absolute;
   top: 10px;
@@ -240,33 +393,6 @@
   border-radius: 50%;
   background: rgba(45, 212, 191, 0.82);
   box-shadow: 0 0 18px rgba(45, 212, 191, 0.34);
-}
-
-.atlas-node--significance-low .atlas-node__shape {
-  box-shadow:
-    0 0 0 1px rgba(45, 212, 191, 0.08),
-    0 16px 40px rgba(0, 0, 0, 0.24);
-}
-
-.atlas-node--significance-medium .atlas-node__shape {
-  border-color: rgba(45, 212, 191, 0.6);
-  box-shadow:
-    0 0 0 4px rgba(45, 212, 191, 0.08),
-    0 16px 42px rgba(0, 0, 0, 0.26);
-}
-
-.atlas-node--significance-high .atlas-node__shape {
-  border-color: rgba(45, 212, 191, 0.86);
-  box-shadow:
-    0 0 0 5px rgba(45, 212, 191, 0.12),
-    0 0 34px rgba(45, 212, 191, 0.13),
-    0 18px 46px rgba(0, 0, 0, 0.3);
-}
-
-.atlas-node--lineage-anchor.atlas-node--significance-low .atlas-node__shape,
-.atlas-node--lineage-anchor.atlas-node--significance-medium .atlas-node__shape,
-.atlas-node--lineage-anchor.atlas-node--significance-high .atlas-node__shape {
-  border-color: rgba(45, 212, 191, 0.28);
 }
 
 .atlas-handle {
@@ -290,6 +416,11 @@
 
 .atlas-handle.is-connected {
   opacity: 0.88;
+}
+
+.atlas-handle.is-connected.is-traceable {
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .atlas-handle.is-connected::after {
@@ -400,8 +531,8 @@
 }
 
 .attention-node--compressed .atlas-node__file-fold {
-  border-color: rgba(148, 163, 184, 0.2);
-  background: rgba(148, 163, 184, 0.04);
+  fill: rgba(148, 163, 184, 0.04);
+  stroke: rgba(148, 163, 184, 0.2);
 }
 
 .attention-node--focus .atlas-node__shape {
@@ -460,6 +591,25 @@
   box-shadow:
     inset 0 0 0 1px rgba(125, 211, 252, 0.08),
     0 16px 40px rgba(0, 0, 0, 0.28);
+}
+
+.atlas-node--folder:hover .atlas-node__shape,
+.attention-node--hover .atlas-node--folder .atlas-node__shape,
+.attention-node--focus .atlas-node--folder .atlas-node__shape,
+.attention-node--structural-guidance .atlas-node--folder .atlas-node__shape,
+.attention-node--temporal-pressure .atlas-node--folder .atlas-node__shape,
+.attention-node--critical-event .atlas-node--folder .atlas-node__shape,
+.attention-node--runtime-current .atlas-node--folder .atlas-node__shape,
+.attention-node--runtime-residue .atlas-node--folder .atlas-node__shape,
+.attention-node--runtime-preview .atlas-node--folder .atlas-node__shape {
+  border-color: #38bdf8;
+  background: #0c2230;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+}
+
+.attention-node--pulse-slow .atlas-node--folder .atlas-node__shape,
+.attention-node--pulse-medium .atlas-node--folder .atlas-node__shape {
+  animation: none;
 }
 
 .attention-node--pulse-slow .atlas-node__shape {

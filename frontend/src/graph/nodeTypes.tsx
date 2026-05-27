@@ -3,16 +3,17 @@ import type { NodeProps, NodeTypes } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { AtlasNode } from "../api";
 import type { NodeVisualState } from "./attention/attentionTypes";
+import { filePaletteForExtension } from "./filePalette";
 
-type StructuralKind = "domain" | "folder" | "file";
+type StructuralKind = "folder" | "file";
 const FUNCTION_METADATA_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
 
 interface RelationStubData {
   incomingCount: number;
   outgoingCount: number;
-  firstIncomingEdgeId?: string;
-  firstOutgoingEdgeId?: string;
-  onTraceStart?: (edgeId: string) => void;
+  incomingEdgeIds: string[];
+  outgoingEdgeIds: string[];
+  onTraceStart?: (edgeIds: string[]) => void;
   onTraceEnd?: () => void;
 }
 
@@ -25,7 +26,7 @@ interface NodeChromeProps {
   data: AtlasNode;
   structuralKind: StructuralKind;
   historyBadge?: string;
-  shouldShowResidue: boolean;
+  showFolderResidue: boolean;
   significanceScore: number;
 }
 
@@ -45,44 +46,92 @@ function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
   return `${data.metadata?.childCount ?? 0} items`;
 }
 
+function fileLabelParts(data: AtlasNode): { name: string; extension: string | null } {
+  const extension = String(data.metadata?.extension ?? "");
+
+  if (
+    extension &&
+    data.label.length > extension.length &&
+    data.label.toLowerCase().endsWith(extension.toLowerCase())
+  ) {
+    return {
+      name: data.label.slice(0, -extension.length),
+      extension
+    };
+  }
+
+  return { name: data.label, extension: null };
+}
+
+function displayedPath(data: AtlasNode, structuralKind: StructuralKind): string {
+  if (structuralKind !== "file") {
+    return data.path;
+  }
+
+  const lastSeparator = Math.max(data.path.lastIndexOf("/"), data.path.lastIndexOf("\\"));
+  return lastSeparator >= 0 ? data.path.slice(0, lastSeparator + 1) : "";
+}
+
 function NodeContent({
   data,
   structuralKind,
   historyBadge,
-  shouldShowResidue,
+  showFolderResidue,
   significanceScore
 }: NodeChromeProps) {
   const linesOfCode = data.metadata?.linesOfCode;
   const functionCount = data.metadata?.functionCount;
   const shouldShowMetrics = structuralKind === "file" && typeof linesOfCode === "number";
+  const shouldShowFileFooter = structuralKind === "file" && (shouldShowMetrics || Boolean(historyBadge));
   const shouldShowFunctionCount = hasFunctionMetadata(data) && typeof functionCount === "number";
+  const path = displayedPath(data, structuralKind);
+  const fileLabel = structuralKind === "file" ? fileLabelParts(data) : null;
 
   return (
     <>
       <div className="atlas-node__kind">{structuralKind}</div>
-      <div className="atlas-node__label">{data.label}</div>
-      <div className="atlas-node__path">{data.path}</div>
-      <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
-      {shouldShowMetrics ? (
-        <div
-          className="atlas-node__metrics"
-          aria-label={`${linesOfCode} lines of code${shouldShowFunctionCount ? `, ${functionCount} functions` : ""}`}
-        >
-          {linesOfCode}L
-          {shouldShowFunctionCount ? (
-            <>
-              {" "}<span aria-hidden="true">&bull;</span>{" "}{functionCount}F
-            </>
+      {fileLabel ? (
+        <div className="atlas-node__label atlas-node__label--file">
+          <span className="atlas-node__file-name">{fileLabel.name}</span>
+          {fileLabel.extension ? (
+            <span className="atlas-node__file-extension">{fileLabel.extension}</span>
           ) : null}
         </div>
+      ) : (
+        <div className="atlas-node__label">{data.label}</div>
+      )}
+      {path ? <div className="atlas-node__path">{path}</div> : null}
+      <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
+      {shouldShowFileFooter ? (
+        <div
+          className="atlas-node__metrics"
+          aria-label={
+            shouldShowMetrics
+              ? `${linesOfCode} lines of code${shouldShowFunctionCount ? `, ${functionCount} functions` : ""}`
+              : "Historical activity"
+          }
+        >
+          {shouldShowMetrics ? (
+            <span className="atlas-node__metric-reading">
+              <span className="atlas-node__metric-loc">{linesOfCode}L</span>
+              {shouldShowFunctionCount ? (
+                <>
+                  {" "}<span className="atlas-node__metric-separator" aria-hidden="true">&bull;</span>{" "}
+                  <span className="atlas-node__metric-functions">{functionCount}F</span>
+                </>
+              ) : null}
+            </span>
+          ) : null}
+          {historyBadge ? <div className="history-badge history-badge--file">{historyBadge}</div> : null}
+        </div>
       ) : null}
-      {shouldShowResidue ? (
+      {showFolderResidue ? (
         <div
           className="significance-residue"
-          title={`${significanceScore} attention-weighted historical touches inside this structural area`}
+          title={`${significanceScore} attention-weighted historical touches inside this folder`}
         />
       ) : null}
-      {historyBadge ? <div className="history-badge">{historyBadge}</div> : null}
+      {historyBadge && structuralKind !== "file" ? <div className="history-badge">{historyBadge}</div> : null}
     </>
   );
 }
@@ -99,7 +148,22 @@ function FolderShape(props: NodeChromeProps) {
 function FileShape(props: NodeChromeProps) {
   return (
     <div className="atlas-node__shape atlas-node__shape--file">
-      <div className="atlas-node__file-fold" />
+      <svg
+        className="atlas-node__file-frame"
+        viewBox="0 0 130 180"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path
+          className="atlas-node__file-fold"
+          d="M 104 2 V 16 Q 104 25 113 25 H 128 Z"
+        />
+        <path
+          className="atlas-node__file-outline"
+          d="M 11 2 H 101 Q 105 2 108 5 L 125 22 Q 128 25 128 29 V 169 Q 128 178 119 178 H 11 Q 2 178 2 169 V 11 Q 2 2 11 2 Z"
+        />
+      </svg>
       <NodeContent {...props} />
     </div>
   );
@@ -112,17 +176,22 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
   const significanceScore = Number(data.significanceScore ?? 0);
   const visualState = data.visualState as NodeVisualState | undefined;
   const viewVariant = typeof data.viewVariant === "string" ? data.viewVariant : "rect";
-  const isDomainCard = structuralKind === "domain";
   const isVeryClose = data.isVeryClose === true;
-  const shouldShowResidue =
-    visualState?.layer === "structural-guidance" ||
-    visualState?.layer === "temporal-pressure" ||
-    visualState?.layer === "critical-event";
+  const filePalette = structuralKind === "file"
+    ? filePaletteForExtension(data.metadata?.extension)
+    : null;
+  const showFolderResidue =
+    structuralKind === "folder" &&
+    (
+      visualState?.layer === "structural-guidance" ||
+      visualState?.layer === "temporal-pressure" ||
+      visualState?.layer === "critical-event"
+    );
   const className = [
     "atlas-node",
     `atlas-node--${structuralKind}`,
     `atlas-node--${viewVariant}`,
-    isDomainCard ? "atlas-node--domain-card" : "",
+    filePalette ? `atlas-node--palette-${filePalette}` : "",
     isVeryClose ? "atlas-node--very-close" : ""
   ]
     .filter(Boolean)
@@ -142,17 +211,27 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
       <Handle
         type="target"
         position={Position.Left}
-        className={`atlas-handle atlas-handle--input ${connectionPorts?.input ? "is-connected" : ""}`.trim()}
+        className={`atlas-handle atlas-handle--input ${connectionPorts?.input ? "is-connected" : ""} ${relationStub?.incomingEdgeIds.length ? "is-traceable" : ""}`.trim()}
         data-port={connectionPorts?.input ? "I" : undefined}
         title={connectionPorts?.input ? "Incoming connection" : undefined}
+        onPointerEnter={() => {
+          if (relationStub?.incomingEdgeIds.length) {
+            relationStub.onTraceStart?.(relationStub.incomingEdgeIds);
+          }
+        }}
+        onPointerLeave={() => {
+          if (relationStub?.incomingEdgeIds.length) {
+            relationStub.onTraceEnd?.();
+          }
+        }}
       />
       {relationStub?.incomingCount ? (
         <button
           type="button"
           className="relation-stub relation-stub--incoming"
           onPointerEnter={() => {
-            if (relationStub.firstIncomingEdgeId) {
-              relationStub.onTraceStart?.(relationStub.firstIncomingEdgeId);
+            if (relationStub.incomingEdgeIds.length) {
+              relationStub.onTraceStart?.(relationStub.incomingEdgeIds);
             }
           }}
           onPointerLeave={() => relationStub.onTraceEnd?.()}
@@ -167,7 +246,7 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
           data={data}
           structuralKind={structuralKind}
           historyBadge={historyBadge}
-          shouldShowResidue={shouldShowResidue}
+          showFolderResidue={showFolderResidue}
           significanceScore={significanceScore}
         />
       ) : (
@@ -175,7 +254,7 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
           data={data}
           structuralKind={structuralKind}
           historyBadge={historyBadge}
-          shouldShowResidue={shouldShowResidue}
+          showFolderResidue={showFolderResidue}
           significanceScore={significanceScore}
         />
       )}
@@ -184,8 +263,8 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
           type="button"
           className="relation-stub relation-stub--outgoing"
           onPointerEnter={() => {
-            if (relationStub.firstOutgoingEdgeId) {
-              relationStub.onTraceStart?.(relationStub.firstOutgoingEdgeId);
+            if (relationStub.outgoingEdgeIds.length) {
+              relationStub.onTraceStart?.(relationStub.outgoingEdgeIds);
             }
           }}
           onPointerLeave={() => relationStub.onTraceEnd?.()}
@@ -198,16 +277,22 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
       <Handle
         type="source"
         position={Position.Right}
-        className={`atlas-handle atlas-handle--export ${connectionPorts?.export ? "is-connected" : ""}`.trim()}
+        className={`atlas-handle atlas-handle--export ${connectionPorts?.export ? "is-connected" : ""} ${relationStub?.outgoingEdgeIds.length ? "is-traceable" : ""}`.trim()}
         data-port={connectionPorts?.export ? "O" : undefined}
         title={connectionPorts?.export ? "Outgoing connection" : undefined}
+        onPointerEnter={() => {
+          if (relationStub?.outgoingEdgeIds.length) {
+            relationStub.onTraceStart?.(relationStub.outgoingEdgeIds);
+          }
+        }}
+        onPointerLeave={() => {
+          if (relationStub?.outgoingEdgeIds.length) {
+            relationStub.onTraceEnd?.();
+          }
+        }}
       />
     </div>
   );
-}
-
-export function DomainNode({ data }: NodeProps) {
-  return <AtlasNodeCard data={data as AtlasNode} structuralKind="domain" />;
 }
 
 export function FolderNode({ data }: NodeProps) {
@@ -219,7 +304,6 @@ export function FileNode({ data }: NodeProps) {
 }
 
 export const nodeTypes: NodeTypes = {
-  domain: DomainNode,
   folder: FolderNode,
   file: FileNode
 };

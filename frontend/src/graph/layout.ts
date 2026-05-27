@@ -22,12 +22,10 @@ export interface ContextLayoutResult {
   totalPages: number;
 }
 
-export type AtlasFlowNode = Node<AtlasNode, "domain" | "folder" | "file">;
+export type AtlasFlowNode = Node<AtlasNode, "folder" | "file">;
 export type AtlasFlowEdge = Edge<Record<string, unknown>, "structural">;
 
 const MAX_VISIBLE_CHILDREN = 30;
-const DOMAIN_NODE_WIDTH = 286;
-const DOMAIN_NODE_HEIGHT = 138;
 const FOLDER_NODE_WIDTH = 246;
 const FOLDER_NODE_HEIGHT = 108;
 const FILE_NODE_WIDTH = 130;
@@ -145,24 +143,12 @@ function prioritizeChildren(children: AtlasNode[]): AtlasNode[] {
   });
 }
 
-function nodeDimensions(node: AtlasNode, level: number): { width: number; height: number; scale: number } {
-  if (level === 0 && node.type === "folder") {
-    return { width: DOMAIN_NODE_WIDTH, height: DOMAIN_NODE_HEIGHT, scale: 1 };
-  }
-
+function nodeDimensions(node: AtlasNode): { width: number; height: number; scale: number } {
   if (node.type === "folder") {
     return { width: FOLDER_NODE_WIDTH, height: FOLDER_NODE_HEIGHT, scale: 1 };
   }
 
   return { width: FILE_NODE_WIDTH, height: FILE_NODE_HEIGHT, scale: 1 };
-}
-
-function flowNodeType(node: AtlasNode, level: number): "domain" | "folder" | "file" {
-  if (level === 0 && node.type === "folder") {
-    return "domain";
-  }
-
-  return node.type;
 }
 
 function significanceForNode(node: AtlasNode, graph: AtlasGraph): number {
@@ -196,7 +182,7 @@ function significanceLevel(score: number): string | undefined {
 }
 
 function withLayoutData(node: AtlasNode, level: number, graph: AtlasGraph): AtlasNode {
-  const dimensions = nodeDimensions(node, level);
+  const dimensions = nodeDimensions(node);
   const significanceScore = significanceForNode(node, graph);
 
   return {
@@ -205,7 +191,7 @@ function withLayoutData(node: AtlasNode, level: number, graph: AtlasGraph): Atla
     layoutScale: dimensions.scale,
     layoutWidth: dimensions.width,
     layoutHeight: dimensions.height,
-    viewVariant: flowNodeType(node, level) === "domain" ? "domain-card" : "rect",
+    viewVariant: "rect",
     fileClusterType: node.type === "file" ? fileClusterType(node) : undefined,
     isImportParsed: node.type === "file" ? IMPORT_PARSE_EXTENSIONS.has(extensionOf(node)) : undefined,
     significanceScore,
@@ -292,7 +278,7 @@ function buildLineageNodes(ancestors: AtlasNode[], graph: AtlasGraph): AtlasFlow
   const lineageAncestors = ancestors.map((ancestor, index) => {
     return {
       id: lineageNodeId(ancestor.id),
-      type: flowNodeType(ancestor, index) as "domain" | "folder" | "file",
+      type: ancestor.type,
       position: {
         x: (index + 1) * (LINEAGE_NODE_WIDTH + LINEAGE_GAP_X),
         y: LINEAGE_Y
@@ -335,14 +321,14 @@ function buildVisibleNodes(visibleChildren: AtlasNode[], level: number, graph: A
     let groupMaxWidth = 0;
 
     groupChildren.forEach((child, index) => {
-      const dimensions = nodeDimensions(child, level);
+      const dimensions = nodeDimensions(child);
       const x = xOffset;
       const y = index * (dimensions.height + GRID_GAP_Y);
 
       groupMaxWidth = Math.max(groupMaxWidth, dimensions.width);
       nodes.push({
         id: child.id,
-        type: flowNodeType(child, level),
+        type: child.type,
         position: {
           x,
           y: y + (level > 0 ? CHILDREN_Y_OFFSET : 0)

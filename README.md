@@ -13,7 +13,7 @@
 
 ## What it does
 
-Paste a public GitHub repository URL.
+Paste a public GitHub repository URL, or connect a GitHub account and select an accessible repository inside Code Atlas.
 
 Code Atlas clones the repository, analyzes its folder and file structure, resolves import relationships, and turns the result into an interactive spatial graph you can explore layer by layer.
 

@@ -31,13 +31,9 @@ function runtimeDimensions(node: AtlasNode): { width: number; height: number; sc
   return { width: RUNTIME_FILE_WIDTH, height: RUNTIME_FILE_HEIGHT, scale: 0.96 };
 }
 
-function flowNodeType(node: AtlasNode, baseNode?: AtlasFlowNode): "domain" | "folder" | "file" {
-  if (baseNode?.type === "domain" || baseNode?.type === "folder" || baseNode?.type === "file") {
+function flowNodeType(node: AtlasNode, baseNode?: AtlasFlowNode): "folder" | "file" {
+  if (baseNode?.type === "folder" || baseNode?.type === "file") {
     return baseNode.type;
-  }
-
-  if (node.type === "folder" && !node.parent) {
-    return "domain";
   }
 
   return node.type;
@@ -185,7 +181,7 @@ function makeRuntimeNode(
       layoutHeight: dimensions.height,
       layoutDepth: node.path.split("/").length - 1,
       layoutScale: dimensions.scale,
-      viewVariant: flowNodeType(node, baseNode) === "domain" ? "domain-card" : "rect",
+      viewVariant: "rect",
       runtimeStep: step,
       runtimeRevealed: true
     }

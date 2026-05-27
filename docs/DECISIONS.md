@@ -53,7 +53,7 @@ Rationale:
 
 Implications:
 - The UI clusters structural-only files through layout, not by adding a new React Flow cluster object.
-- Domain, folder, and file remain the only structural node object types.
+- Folder and file remain the only structural node object types.
 
 ## 5. Edges Are Focus-Revealed, Not Always Visible
 
@@ -138,7 +138,8 @@ Rationale:
   when it exceeds what the eye can trace comfortably.
 
 Implications:
-- `visibleEdges` are derived from `focusedNodeId` and an explicitly traced relationship, not from all current-context imports.
+- `visibleEdges` are derived from `focusedNodeId` and an explicitly traced
+  visible direction or relationship item, not from all current-context imports.
 - Edge overlays must support understanding without becoming the main visual system.
 
 ## 9. Relationship Stubs Precede Exact Traces
@@ -149,12 +150,15 @@ Status:
 Decision:
 - Focusing an object should primarily show compact incoming/outgoing relationship stubs on the object.
 - Relationship stubs show counts, such as incoming and outgoing totals.
-- Exact relationship traces should appear only when hovering a specific stub or relation item.
+- Hovering a directional stub or connected port traces its budgeted visible
+  relationships in that direction; hovering a relation item traces that
+  exact relationship only.
 - Relationship stubs are click/focus UI, not hover UI.
 
 Rationale:
 - Counts and activation communicate relationship presence without turning the canvas into wiring.
-- Exact lines are useful only when the user asks to trace a specific relationship.
+- Directional trace sets make a focused object's visible fan-out legible;
+  exact lines remain available when the user asks for one relationship.
 - The structural canvas should remain calm even in hover/focus states.
 
 Implications:
@@ -213,12 +217,20 @@ Status:
 - Accepted
 
 Decision:
-- Entering a folder/domain should not feel like a hard scene replacement.
+- Entering a folder should not feel like a hard scene replacement.
 - Ancestor contexts persist as non-interactive React Flow path anchor nodes.
 - Path anchors form a linked in-canvas chain from `Root` to the current parent.
 - The most recent parent anchor links to the current visible children.
 - Child objects emerge below the lineage chain with camera recentering and lightweight transitions.
-- Historical significance propagates upward so path anchors and containers can show subtle residue when activity exists deeper in the subtree.
+- Descending into a direct child context preserves the user's current zoom and
+  recenters on the new anchor-to-branch-head corridor; it does not fit the
+  entire replacement projection back into view.
+- Ascending through lineage or breadcrumb navigation follows the same rule:
+  preserve zoom and recenter on the returned local corridor.
+- Historical significance may guide temporal attention when activity exists
+  deeper in the subtree; a standalone residue marker is permitted only on
+  folder nodes, never file nodes. Folder chrome otherwise keeps its stable
+  thicker outline instead of entering highlight states.
 
 Rationale:
 - Users need confidence that descending into a layer leads toward meaningful information.
@@ -377,12 +389,12 @@ Decision:
 - The focused-object panel uses progressive semantic layers rather than
   presenting every region as simultaneously open metadata.
 - The first anchor remains expanded: files show identity and deterministic
-  architectural weight, while domains and folders show identity and recursive
+  architectural weight, while folders show identity and recursive
   regional density.
 - Secondary layers begin collapsed and expose a compact summary until the user
   intentionally unfolds them; only one secondary layer is expanded at a time.
 - Files expose operational role and activation surface as secondary layers.
-- Domains and folders expose file-type counts and regional actions as
+- Folders expose file-type counts and regional actions as
   secondary layers.
 - A focused file exposes a compact square source-inspection control beside its name;
   invoking it opens a screen-fixed read-only content modal outside the graph
@@ -431,7 +443,7 @@ Decision:
 - Existing visible-connection trace hover controls remain available inside the
   action region, while low-value repeated parent/path/history and
   outside-context summary rows are not shown by default.
-- A folder or domain Runtime origin selector lists only its direct file
+- A folder Runtime origin selector lists only its direct file
   children; nested descendants become eligible after entering their region.
 
 Rationale:
@@ -610,8 +622,13 @@ Decision:
 - Variable cards are produced only from parser-derived declarations,
   references, assignments, conditional/render participation, helper argument
   propagation, and runtime-oriented identifier tokens.
-- Selecting a variable preserves viewport position and softly marks its
-  declaration, bounded high-signal usages, and mutation lines.
+- Selecting a variable centers its earliest parser-reported occurrence and
+  exposes compact previous/next traversal through its reported evidence lines.
+- The current occurrence uses subdued cyan line emphasis with a stronger green
+  exact-identifier cue; bounded influence and mutation lines remain softly
+  marked.
+- The implementation-side pressure minimap is withheld for now; function and
+  variable rail navigation remain the deterministic traversal surfaces.
 
 Rationale:
 - Hook state, refs, runtime handles, and propagated projections help explain
@@ -625,3 +642,81 @@ Implications:
   with the primary function waypoint layer.
 - JavaScript/TypeScript symbol references and scope-bounded Python assignment
   evidence share the same deterministic graph metadata contract.
+
+## 27. File Color Encodes Format Deterministically
+
+Status:
+- Accepted
+
+Decision:
+- Each indexed file extension resolves to a stable node palette and matching
+  minimap accent.
+- JavaScript/TypeScript-family extensions share one amber border family so
+  that ecosystem reads as one visual family.
+- Other parsed and structural formats use distinct restrained hues, with an
+  amber fallback for unknown or extensionless files.
+- File bodies use a shared neutral `#333` fill; format distinction appears
+  only on the outline, folded corner accent, and minimap.
+- File chrome uses an `80%` opacity vector outline that follows an actually
+  cut, rounded folded-corner silhouette; the fold surface remains an interior
+  accent and format colors remain restricted to chrome.
+- File cards place the basename first and a right-aligned extension on a
+  second line, omit the basename from their path row, and place file history
+  residue beside bottom metrics so identity is not repeated inside a compact
+  node.
+
+Rationale:
+- File format is known structural evidence and can improve scan speed without
+  claiming operational meaning.
+- Shared ecosystem borders avoid false distinction between adjacent source
+  dialects while retaining contrast from docs, configuration, and styles.
+
+Implications:
+- Runtime, temporal, focus, and compression treatments continue to override
+  format chrome when those higher-priority states are active.
+
+## 28. Structural Group Movement Uses An Explicit Selection Tool
+
+Status:
+- Accepted
+
+Decision:
+- A `Select` tool floats over the upper-right canvas at the breadcrumb panel's
+  vertical origin with `0px` chrome padding.
+- When active in structural view, left-drag on open canvas creates a partial
+  intersection selection zone over currently visible folder and file nodes.
+- A selection zone held at the canvas boundary auto-pans at the existing zoom
+  level and continues testing objects revealed by that movement.
+- Selected objects can be repositioned together by dragging a selected node.
+- Path anchors are excluded from group selection, and Runtime X-Ray disables
+  the structural selection interaction while its corridor is active.
+- Node focus and folder descent do not activate while the selection tool is
+  active.
+
+Rationale:
+- Spatial adjustment is a deliberate editing/navigation action and should not
+  collide with click focus, hierarchy unfolding, or runtime inspection.
+- Explicit mode activation makes multi-object movement predictable while
+  preserving the existing interaction model by default.
+
+## 29. GitHub OAuth Enables Connected Repository Selection
+
+Status:
+- Accepted
+
+Decision:
+- GitHub OAuth is handled by the Express backend through `/auth/github` and
+  `/auth/github/callback`.
+- Access tokens are stored server-side behind an HTTP-only session cookie; the
+  React app only receives connection status, user identity, and repository
+  metadata.
+- Connected repositories are loaded through `/github/repos` and analyzed by
+  passing the selected GitHub URL into the existing `/analyze` contract.
+- Authenticated cloning only decorates the clone URL inside the backend git
+  operation and does not persist repository content after analysis.
+
+Rationale:
+- The existing stateless analysis pipeline remains intact while removing
+  manual context switching for users with connected GitHub accounts.
+- Keeping tokens out of frontend state prevents the repo picker from becoming a
+  browser-side credential surface.

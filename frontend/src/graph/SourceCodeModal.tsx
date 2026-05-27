@@ -5,7 +5,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -54,11 +53,6 @@ interface LineRange {
   endLine: number;
 }
 
-interface ViewportMarker {
-  top: number;
-  height: number;
-}
-
 type SourceStyle = CSSProperties & Record<`--${string}`, string | number>;
 type MarkdownDisplayMode = "rendered" | "raw";
 
@@ -87,6 +81,21 @@ const RUNTIME_PLACEMENT_LIMIT = 2;
 
 function clampSourceRailWidth(width: number): number {
   return Math.max(SOURCE_RAIL_MIN_WIDTH, Math.min(SOURCE_RAIL_MAX_WIDTH, width));
+}
+
+function variableOccurrenceLines(variable: SourceVariableWaypoint): number[] {
+  return [...new Set([
+    variable.declarationLine,
+    ...variable.usageLines,
+    ...variable.mutationLines,
+    ...variable.conditionLines,
+    ...variable.renderingLines,
+    ...variable.helperCallLines
+  ])].sort((left, right) => left - right);
+}
+
+function escapedPattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function compareRuntimePlacementRelations(left: RuntimePlacementRelation, right: RuntimePlacementRelation): number {
@@ -231,19 +240,25 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
   const [foldedFunctionIds, setFoldedFunctionIds] = useState<Set<string>>(() => new Set());
   const [runtimePlacementFunctionId, setRuntimePlacementFunctionId] = useState<string | null>(null);
   const [activeVariableId, setActiveVariableId] = useState<string | null>(null);
+  const [activeVariableOccurrenceLine, setActiveVariableOccurrenceLine] = useState<number | null>(null);
   const [railWidth, setRailWidth] = useState(SOURCE_RAIL_INITIAL_WIDTH);
   const [isResizingRail, setIsResizingRail] = useState(false);
-  const [viewportMarker, setViewportMarker] = useState<ViewportMarker>({ top: 0, height: 1 });
-  const codeViewportRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef(new Map<number, HTMLSpanElement>());
   const railResizeOriginRef = useRef<{ pointerX: number; width: number } | null>(null);
   const languageLabel = sourceLanguageLabel(file.metadata?.extension);
   const totalFunctionCount = file.metadata?.functionCount ?? inspection.functions.length;
   const navigableFunctionCount = inspection.functions.length;
-  const totalLines = Math.max(sourceLines.length, 1);
   const activeFunction = inspection.functions.find((waypoint) => waypoint.id === activeFunctionId) ?? null;
   const activeVariable = [...inspection.operationalVariables, ...inspection.localVariables]
     .find((variable) => variable.id === activeVariableId) ?? null;
+  const activeVariableOccurrences = useMemo(
+    () => activeVariable ? variableOccurrenceLines(activeVariable) : [],
+    [activeVariable]
+  );
+  const activeVariableOccurrenceIndex = activeVariableOccurrenceLine === null
+    ? -1
+    : activeVariableOccurrences.indexOf(activeVariableOccurrenceLine);
+  const focusedVariableOccurrenceIndex = Math.max(0, activeVariableOccurrenceIndex);
   const runtimePlacementFunction =
     inspection.functions.find((waypoint) => waypoint.id === runtimePlacementFunctionId) ?? null;
   const runtimePlacement = useMemo(
@@ -333,10 +348,14 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
           usageLines.add(line);
         }
       }
+
+      if (activeVariableOccurrenceLine !== null && activeVariableOccurrenceLine !== activeVariable.declarationLine) {
+        usageLines.add(activeVariableOccurrenceLine);
+      }
     }
 
     return { declarationLines, usageLines, mutationLines };
-  }, [activeVariable]);
+  }, [activeVariable, activeVariableOccurrenceLine]);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -394,32 +413,9 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     setFoldedFunctionIds(new Set());
     setRuntimePlacementFunctionId(null);
     setActiveVariableId(null);
+    setActiveVariableOccurrenceLine(null);
     lineRefs.current.clear();
   }, [file.id, inspection.groups]);
-
-  const updateViewportMarker = useCallback(() => {
-    const viewport = codeViewportRef.current;
-
-    if (!viewport || viewport.scrollHeight <= 0) {
-      setViewportMarker({ top: 0, height: 1 });
-      return;
-    }
-
-    const height = Math.min(1, viewport.clientHeight / viewport.scrollHeight);
-    const maximumTop = Math.max(0, 1 - height);
-    const top = Math.min(maximumTop, viewport.scrollTop / viewport.scrollHeight);
-    setViewportMarker({ top, height });
-  }, []);
-
-  useEffect(() => {
-    const animationFrame = window.requestAnimationFrame(updateViewportMarker);
-    window.addEventListener("resize", updateViewportMarker);
-
-    return () => {
-      window.cancelAnimationFrame(animationFrame);
-      window.removeEventListener("resize", updateViewportMarker);
-    };
-  }, [foldedFunctionIds, highlightedSource, markdownDisplayMode, sourceLines.length, updateViewportMarker]);
 
   useEffect(() => {
     if (!isResizingRail) {
@@ -519,6 +515,7 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     setAreFunctionWaypointsExpanded(true);
     setRuntimePlacementFunctionId(null);
     setActiveVariableId(null);
+    setActiveVariableOccurrenceLine(null);
     setExpandedFunctionGroups((current) => new Set(current).add(waypoint.group));
     if (waypoint.id !== activeFunctionId) {
       setExpandedCirculationRegion("inputs");
@@ -549,6 +546,7 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     setSelectedRange(null);
     setRuntimePlacementFunctionId(null);
     setActiveVariableId(null);
+    setActiveVariableOccurrenceLine(null);
     if (foldsToReveal.length > 0) {
       setFoldedFunctionIds((current) => {
         const next = new Set(current);
@@ -581,11 +579,47 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     });
   }
 
-  function focusVariable(variable: SourceVariableWaypoint): void {
+  function focusVariableOccurrence(variable: SourceVariableWaypoint, line: number): void {
+    const foldsToReveal = inspection.functions.filter(
+      (candidate) =>
+        foldedFunctionIds.has(candidate.id) &&
+        candidate.startLine < line &&
+        candidate.endLine >= line
+    );
+
     setActiveFunctionId(null);
     setSelectedRange(null);
     setRuntimePlacementFunctionId(null);
-    setActiveVariableId((current) => current === variable.id ? null : variable.id);
+    setActiveVariableId(variable.id);
+    setActiveVariableOccurrenceLine(line);
+    if (foldsToReveal.length > 0) {
+      setFoldedFunctionIds((current) => {
+        const next = new Set(current);
+        foldsToReveal.forEach((candidate) => next.delete(candidate.id));
+        return next;
+      });
+    }
+
+    window.requestAnimationFrame(() => navigateToRange({ startLine: line, endLine: line }));
+  }
+
+  function focusVariable(variable: SourceVariableWaypoint): void {
+    const firstOccurrence = variableOccurrenceLines(variable)[0] ?? variable.declarationLine;
+
+    focusVariableOccurrence(variable, firstOccurrence);
+  }
+
+  function navigateVariableOccurrence(direction: -1 | 1): void {
+    if (!activeVariable || activeVariableOccurrences.length === 0) {
+      return;
+    }
+
+    const nextIndex = focusedVariableOccurrenceIndex + direction;
+    const nextLine = activeVariableOccurrences[nextIndex];
+
+    if (typeof nextLine === "number") {
+      focusVariableOccurrence(activeVariable, nextLine);
+    }
   }
 
   function variableSignal(variable: SourceVariableWaypoint): string {
@@ -620,6 +654,7 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     setActiveFunctionId(null);
     setSelectedRange(null);
     setActiveVariableId(null);
+    setActiveVariableOccurrenceLine(null);
     setRuntimePlacementFunctionId(waypoint.id);
   }
 
@@ -635,22 +670,48 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     }
   }
 
-  function minimapStyle(waypoint: SourceFunctionWaypoint): SourceStyle {
-    return {
-      top: `${((waypoint.startLine - 1) / totalLines) * 100}%`,
-      height: `${Math.max(1.5, (waypoint.lineCount / totalLines) * 100)}%`,
-      "--pressure-density": waypoint.pressure.density.toFixed(2),
-      "--pressure-rendering": waypoint.pressure.rendering.toFixed(2),
-      "--pressure-runtime": waypoint.pressure.runtime.toFixed(2),
-      "--pressure-state": waypoint.pressure.state.toFixed(2),
-      "--pressure-dependency": waypoint.pressure.dependency.toFixed(2)
-    };
-  }
-
   function functionStyle(waypoint: SourceFunctionWaypoint): SourceStyle {
     return {
       "--function-gravity": Math.min(1, 0.16 + waypoint.gravityScore / 115).toFixed(2)
     };
+  }
+
+  function renderVariableAwareText(content: string, lineNumber: number, keyPrefix: string): ReactNode {
+    if (!activeVariable || !activeVariableOccurrences.includes(lineNumber) || !content.includes(activeVariable.name)) {
+      return content;
+    }
+
+    const matcher = new RegExp(`(^|[^A-Za-z0-9_$])(${escapedPattern(activeVariable.name)})(?![A-Za-z0-9_$])`, "g");
+    const parts: ReactNode[] = [];
+    let cursor = 0;
+    let match: RegExpExecArray | null = matcher.exec(content);
+
+    while (match) {
+      const occurrenceStart = match.index + match[1].length;
+      const occurrenceEnd = occurrenceStart + activeVariable.name.length;
+
+      if (occurrenceStart > cursor) {
+        parts.push(content.slice(cursor, occurrenceStart));
+      }
+
+      parts.push(
+        <span className="source-modal__variable-token" key={`${keyPrefix}-${occurrenceStart}`}>
+          {content.slice(occurrenceStart, occurrenceEnd)}
+        </span>
+      );
+      cursor = occurrenceEnd;
+      match = matcher.exec(content);
+    }
+
+    if (parts.length === 0) {
+      return content;
+    }
+
+    if (cursor < content.length) {
+      parts.push(content.slice(cursor));
+    }
+
+    return parts;
   }
 
   function renderCodeLine(line: string, lineIndex: number) {
@@ -685,7 +746,8 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
       traceLines.localTargetLines.has(lineNumber) ? "is-local-target" : "",
       variableTraceLines.declarationLines.has(lineNumber) ? "is-variable-declaration" : "",
       variableTraceLines.usageLines.has(lineNumber) ? "is-variable-use" : "",
-      variableTraceLines.mutationLines.has(lineNumber) ? "is-variable-mutation" : ""
+      variableTraceLines.mutationLines.has(lineNumber) ? "is-variable-mutation" : "",
+      lineNumber === activeVariableOccurrenceLine ? "is-variable-occurrence-focus" : ""
     ].filter(Boolean).join(" ");
 
     return (
@@ -724,9 +786,11 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
           >
             {tokens
               ? tokens.map((token, tokenIndex) => (
-                  <span key={tokenIndex} style={tokenStyle(token)}>{token.content}</span>
+                  <span key={tokenIndex} style={tokenStyle(token)}>
+                    {renderVariableAwareText(token.content, lineNumber, `folded-${tokenIndex}`)}
+                  </span>
                 ))
-              : line || " "}
+              : renderVariableAwareText(line || " ", lineNumber, "folded-raw")}
             <span className="source-modal__fold-summary">
               {"  "}... {foldableFunction.endLine - foldableFunction.startLine} lines folded
             </span>
@@ -735,9 +799,11 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
           <span className="source-modal__line-code">
             {tokens
               ? tokens.map((token, tokenIndex) => (
-                  <span key={tokenIndex} style={tokenStyle(token)}>{token.content}</span>
+                  <span key={tokenIndex} style={tokenStyle(token)}>
+                    {renderVariableAwareText(token.content, lineNumber, `line-${tokenIndex}`)}
+                  </span>
                 ))
-              : line || " "}
+              : renderVariableAwareText(line || " ", lineNumber, "raw")}
           </span>
         )}
       </span>
@@ -764,13 +830,14 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
 
           if (
             target instanceof Element &&
-            !target.closest(".source-modal__function-card, .source-modal__minimap-waypoint, .source-modal__fold-toggle")
+            !target.closest(".source-modal__function-card, .source-modal__fold-toggle")
           ) {
             clearWaypointSelection();
           }
 
-          if (target instanceof Element && !target.closest(".source-modal__variable")) {
+          if (target instanceof Element && !target.closest(".source-modal__variable, .source-modal__variable-navigation")) {
             setActiveVariableId(null);
+            setActiveVariableOccurrenceLine(null);
           }
         }}
       >
@@ -836,6 +903,25 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
                 <button type="button" className="source-modal__placement-return" onClick={exitRuntimePlacement}>
                   Return to Implementation
                 </button>
+              ) : activeVariable && activeVariableOccurrences.length > 0 ? (
+                <div className="source-modal__variable-navigation" role="group" aria-label={`Navigate ${activeVariable.name} occurrences`}>
+                  <code>{activeVariable.name}</code>
+                  <span>{focusedVariableOccurrenceIndex + 1} / {activeVariableOccurrences.length}</span>
+                  <button
+                    type="button"
+                    disabled={focusedVariableOccurrenceIndex === 0}
+                    onClick={() => navigateVariableOccurrence(-1)}
+                  >
+                    Prev
+                  </button>
+                  <button
+                    type="button"
+                    disabled={focusedVariableOccurrenceIndex >= activeVariableOccurrences.length - 1}
+                    onClick={() => navigateVariableOccurrence(1)}
+                  >
+                    Next
+                  </button>
+                </div>
               ) : isMarkdownFile ? (
                 <div className="source-modal__view-switch" role="group" aria-label="Markdown display mode">
                   <button
@@ -918,8 +1004,7 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
                   </section>
                 </div>
               ) : (
-                <>
-                  <div className="source-modal__viewport" ref={codeViewportRef} onScroll={updateViewportMarker}>
+                <div className="source-modal__viewport">
                     {sourceText === null ? (
                       <p className="source-modal__empty">Source text is unavailable. Analyze the repository again.</p>
                     ) : sourceText.length === 0 ? (
@@ -933,35 +1018,7 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
                         <code>{sourceLines.map(renderCodeLine)}</code>
                       </pre>
                     )}
-                  </div>
-                  {inspection.functions.length > 0 ? (
-                    <nav className="source-modal__minimap" aria-label="Source waypoint minimap">
-                      <span
-                        className="source-modal__minimap-viewport"
-                        style={{
-                          top: `${viewportMarker.top * 100}%`,
-                          height: `${viewportMarker.height * 100}%`
-                        }}
-                      />
-                      {inspection.functions.map((waypoint) => (
-                        <button
-                          type="button"
-                          key={waypoint.id}
-                          className={`source-modal__minimap-waypoint ${waypoint.id === activeFunctionId ? "is-active" : ""}`.trim()}
-                          style={minimapStyle(waypoint)}
-                          aria-label={`Navigate to ${waypoint.name}`}
-                          onClick={() => navigateToFunction(waypoint)}
-                        >
-                          <span className="source-modal__pressure-density" />
-                          <span className="source-modal__pressure-channel source-modal__pressure-channel--rendering" />
-                          <span className="source-modal__pressure-channel source-modal__pressure-channel--runtime" />
-                          <span className="source-modal__pressure-channel source-modal__pressure-channel--state" />
-                          <span className="source-modal__pressure-channel source-modal__pressure-channel--dependency" />
-                        </button>
-                      ))}
-                    </nav>
-                  ) : null}
-                </>
+                </div>
               )}
             </div>
           </section>

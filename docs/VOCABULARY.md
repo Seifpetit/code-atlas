@@ -33,7 +33,7 @@ Technical name:
 - `currentContextId`
 
 **Enter**
-The action of moving into a domain or folder.
+The action of moving into a folder.
 
 UI action:
 - Double-click an enterable object.
@@ -42,7 +42,7 @@ UI action:
 The navigation model where the user sees one contextual layer at a time instead of the whole repo at once.
 
 **Structural Descent**
-The act of entering a domain or folder while keeping ancestor context visually present.
+The act of entering a folder while keeping ancestor context visually present.
 
 Purpose:
 - Preserves spatial memory.
@@ -83,16 +83,15 @@ Purpose:
 - Helps users decide where to descend.
 - Prevents important deep changes from being invisible at higher levels.
 
-**Significance Residue**
-The visual signal produced by significance propagation.
-
-Examples:
-- Soft glow.
-- Small residue dot.
-- Subtle container accent.
+**Folder Significance Residue**
+An ambient dot rendered only on folder nodes while propagated historical
+activity is contextually active.
 
 Rule:
-- Residue is ambient. It should guide attention without becoming a dashboard badge wall.
+- Files do not render this marker; their chrome stays reserved for format and
+  direct interaction signals.
+- Folder outlines and tabs remain visually stable rather than changing
+  highlight state with the residue.
 
 **Room**
 Informal UX term for a context. Entering a folder should feel like entering a room.
@@ -107,35 +106,34 @@ Purpose:
 - Shows where the user is.
 - Lets the user return to an ancestor context.
 
+**Structural Selection Tool**
+An explicit toolbar mode for selecting a visible group of folder/file objects
+with a dragged canvas zone and moving the selected group together.
+
+Rule:
+- Available for structural positioning only.
+- An active dragged zone can auto-pan at canvas boundaries to include objects
+  revealed beyond the initial viewport.
+- While active, ordinary object focus and folder entry are suspended.
+- Path anchors and Runtime X-Ray corridor manipulation are outside its scope.
+
 ## UI Objects
 
 **Object**
 A visible thing in the atlas.
 
 Implemented object types:
-- Domain
 - Folder
 - File
 - Path Anchor
 - Edge
 - Breadcrumb
 
-**Domain**
-A top-level structural area.
+**Folder**
+A structural container at any repository depth, including root-level directories.
 
 Examples:
 - `frontend`
-- `backend`
-- `shared`
-- `api`
-
-Technical representation:
-- React Flow node type: `domain`
-
-**Folder**
-A structural container below the domain level.
-
-Examples:
 - `src`
 - `components`
 - `hooks`
@@ -273,10 +271,17 @@ Purpose:
 - Communicates relationship presence without drawing full paths.
 
 **Exact Relationship Trace**
-A single temporary path shown when the user hovers a relationship stub or relation item.
+A single temporary path shown when the user hovers a relation item.
 
 Purpose:
 - Provides traceability for one requested relationship without showing a network.
+
+**Directional Relationship Trace**
+A temporary set of budgeted visible paths shown when the user hovers the
+focused object's incoming or outgoing stub or connected port.
+
+Purpose:
+- Shows visible fan-in or fan-out without exposing the full context network.
 
 **Structural Edge**
 A focus-revealed relationship trace in structural mode.
@@ -518,7 +523,6 @@ Technical name:
 Enters an object if it can contain children.
 
 Applies to:
-- Domain
 - Folder
 
 Does not apply to:
@@ -581,7 +585,7 @@ Current rule:
 - Secondary semantic layers begin collapsed, retain faint summaries, and
   unfold one at a time through explicit user action.
 - Files unfold `Operational Role` and `Activation Surface`.
-- Folders and domains unfold `File Types` and `Regional Actions`.
+- Folders unfold `File Types` and `Regional Actions`.
 - `Interaction Memory` is session-scoped residue indicating previous focus or
   Runtime X-Ray activation for the selected object.
 - A focused file's identity anchor includes a square source-inspection control
@@ -636,8 +640,8 @@ The compact visible-connection tracing controls inside the focused object's
 action region.
 
 Purpose:
-- Keeps exact trace hover activation available for visible incoming/outgoing
-  connections.
+- Keeps directional trace activation on incoming/outgoing ports and exact
+  single-trace activation on individual visible connections.
 - Leaves architectural weight and territorial interpretation to their
   dedicated regions instead of duplicating metrics.
 
@@ -707,6 +711,10 @@ The viewport position and zoom in React Flow.
 
 Rule:
 - Camera movement should recenter the current context.
+- Entering a deeper context retains the active zoom and centers the local
+  lineage-to-children corridor, rather than fitting every visible object.
+- Returning to an ancestor context preserves that zoom continuity and
+  recenters its local corridor by the same rule.
 - Camera movement should not reveal deeper hierarchy.
 
 **Zoom**

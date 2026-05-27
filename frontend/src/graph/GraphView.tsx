@@ -1,4 +1,15 @@
-import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  lazy,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import {
   Background,
   BackgroundVariant,
@@ -6,6 +17,7 @@ import {
   MiniMap,
   MarkerType,
   ReactFlow,
+  SelectionMode,
   type NodeChange,
   type NodeMouseHandler,
   type ReactFlowInstance
@@ -26,6 +38,7 @@ import { visualStateStyle } from "./attention/applyNodeVisualState";
 import { composeNodeVisualState } from "./attention/composeNodeVisualState";
 import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
+import { minimapColorForFile } from "./filePalette";
 import { layoutStructuralContext, type AtlasFlowEdge, type AtlasFlowNode } from "./layout";
 import { nodeTypes } from "./nodeTypes";
 
@@ -37,12 +50,15 @@ interface GraphViewProps {
   graph: AtlasGraph | null;
   searchTerm: string;
   clusteringMode: ClusteringMode;
+  githubConnected?: boolean;
+  githubUserLogin?: string;
+  onConnectGitHub?: () => void;
 }
 
 interface StructuralState {
   currentContextId: string | null;
   focusedNodeId: string | null;
-  tracedEdgeId: string | null;
+  tracedEdgeIds: string[];
   pageIndex: number;
   breadcrumbPath: string[];
   clusteringMode: ClusteringMode;
@@ -56,6 +72,13 @@ interface BudgetedRelationship {
 }
 
 type ManualNodePositions = Record<string, { x: number; y: number }>;
+type ClientPoint = { x: number; y: number };
+
+interface SelectionMarqueeGesture {
+  active: boolean;
+  start: ClientPoint | null;
+  pointer: ClientPoint | null;
+}
 
 const COMPRESSION_REASON_LABELS = new Map<string, string>([
   ["very-low-loc", "very low LOC"],
@@ -64,6 +87,8 @@ const COMPRESSION_REASON_LABELS = new Map<string, string>([
   ["pass-through-export", "pass-through exports"],
   ["package-gateway", "package gateway imports"]
 ]);
+const SELECTION_AUTOPAN_EDGE_DISTANCE = 72;
+const SELECTION_AUTOPAN_MAX_STEP = 16;
 const FUNCTION_METADATA_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
 type ArchitecturalWeight = "LOW" | "MEDIUM" | "HIGH";
 type SecondaryPanelRegion = "role" | "file-types" | "actions" | "memory";
@@ -101,6 +126,11 @@ interface RegionalSummary {
 interface InteractionResidue {
   focusCount: number;
   runtimeActivationCount: number;
+}
+
+interface PendingContextCamera {
+  contextId: string | null;
+  zoom: number;
 }
 
 interface CollapsibleSemanticRegionProps {
@@ -148,12 +178,12 @@ function hasFunctionMetadata(node: AtlasNode): boolean {
   return FUNCTION_METADATA_EXTENSIONS.has(String(node.metadata?.extension ?? "").toLowerCase());
 }
 
-function panelObjectType(node: AtlasNode): "FILE" | "FOLDER" | "DOMAIN" {
+function panelObjectType(node: AtlasNode): "FILE" | "FOLDER" {
   if (node.type === "file") {
     return "FILE";
   }
 
-  return node.parent ? "FOLDER" : "DOMAIN";
+  return "FOLDER";
 }
 
 function panelTitle(node: AtlasNode): string {
@@ -283,7 +313,7 @@ function isStructuralNode(node: AtlasFlowNode): node is AtlasFlowNode {
     return false;
   }
 
-  return node.type === "domain" || node.type === "folder" || node.type === "file";
+  return node.type === "folder" || node.type === "file";
 }
 
 function canEnter(node: AtlasNode): boolean {
@@ -301,6 +331,21 @@ function ownsPath(owner: AtlasNode, path: string): boolean {
 function laneOffsetFor(index: number, total: number): number {
   const laneGap = 14;
   return (index - (total - 1) / 2) * laneGap;
+}
+
+function corridorFocusNodeIds(nodes: AtlasFlowNode[], contextId: string | null): string[] {
+  const currentAnchorId = contextId ? `__lineage__:${contextId}` : null;
+  const visibleChildren = nodes.filter((node) => !isLineageNode(node));
+  const topChildY = visibleChildren.length > 0
+    ? Math.min(...visibleChildren.map((node) => node.position.y))
+    : null;
+  const branchHeads = topChildY === null
+    ? []
+    : visibleChildren.filter((node) => node.position.y <= topChildY + 12);
+
+  return nodes
+    .filter((node) => Boolean(currentAnchorId && node.id === currentAnchorId) || branchHeads.some((head) => head.id === node.id))
+    .map((node) => node.id);
 }
 
 function relationshipScore(activeNode: AtlasNode, otherNode: AtlasNode | null): number {
@@ -365,13 +410,20 @@ function budgetRelationships(
   };
 }
 
-export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps) {
+export function GraphView({
+  graph,
+  searchTerm,
+  clusteringMode,
+  githubConnected = false,
+  githubUserLogin,
+  onConnectGitHub
+}: GraphViewProps) {
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
   const [sourceModalFile, setSourceModalFile] = useState<AtlasNode | null>(null);
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
-  const [tracedEdgeId, setTracedEdgeId] = useState<string | null>(null);
+  const [tracedEdgeIds, setTracedEdgeIds] = useState<string[]>([]);
   const [selectedRuntimeFileId, setSelectedRuntimeFileId] = useState<string | null>(null);
   const [expandedPanelRegion, setExpandedPanelRegion] = useState<{ nodeId: string | null; region: SecondaryPanelRegion | null }>({
     nodeId: null,
@@ -381,22 +433,33 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   const [temporalIndex, setTemporalIndex] = useState(0);
   const [focusedLandmarkId, setFocusedLandmarkId] = useState<string | null>(null);
   const [timelineCollapsed, setTimelineCollapsed] = useState(true);
+  const [selectionToolActive, setSelectionToolActive] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [manualNodePositions, setManualNodePositions] = useState<ManualNodePositions>({});
   const [runtimeNodePositions, setRuntimeNodePositions] = useState<ManualNodePositions>({});
+  const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance<AtlasFlowNode, AtlasFlowEdge> | null>(null);
   const [runtimeState, setRuntimeState] = useState<RuntimeState>(inactiveRuntimeState);
   const [runtimePlaybackActive, setRuntimePlaybackActive] = useState(false);
+  const graphShellRef = useRef<HTMLDivElement | null>(null);
+  const pendingContextCameraRef = useRef<PendingContextCamera | null>(null);
+  const selectionMarqueeRef = useRef<SelectionMarqueeGesture>({
+    active: false,
+    start: null,
+    pointer: null
+  });
+  const selectionAutoPanFrameRef = useRef<number | null>(null);
+  const structuralSelectionActive = selectionToolActive && !runtimeState.active;
   const laidOut = useMemo(
     () => (graph ? layoutStructuralContext(graph, currentContextId, pageIndex) : null),
     [currentContextId, graph, pageIndex]
   );
   const normalizedSearch = searchTerm.trim().toLowerCase();
-  const handleTraceStart = useCallback((edgeId: string) => {
-    setTracedEdgeId(edgeId);
+  const handleTraceStart = useCallback((edgeIds: string[]) => {
+    setTracedEdgeIds([...new Set(edgeIds)]);
   }, []);
   const handleTraceEnd = useCallback(() => {
-    setTracedEdgeId(null);
+    setTracedEdgeIds([]);
   }, []);
   const recordNodeFocus = useCallback((nodeId: string) => {
     setInteractionResidueByNodeId((current) => {
@@ -433,18 +496,18 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     return {
       currentContextId,
       focusedNodeId,
-      tracedEdgeId,
+      tracedEdgeIds,
       pageIndex: laidOut.currentPage,
       breadcrumbPath: laidOut.breadcrumbPath.map((item) => item.id ?? "root"),
       clusteringMode
     };
-  }, [clusteringMode, currentContextId, focusedNodeId, laidOut, tracedEdgeId]);
+  }, [clusteringMode, currentContextId, focusedNodeId, laidOut, tracedEdgeIds]);
 
   useEffect(() => {
     setCurrentContextId(null);
     setHoveredNodeId(null);
     setFocusedNodeId(null);
-    setTracedEdgeId(null);
+    setTracedEdgeIds([]);
     setSelectedRuntimeFileId(null);
     setSourceModalFile(null);
     setExpandedPanelRegion({ nodeId: null, region: null });
@@ -455,23 +518,64 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setPageIndex(0);
     setManualNodePositions({});
     setRuntimeNodePositions({});
+    setSelectedObjectIds([]);
     setRuntimeState(inactiveRuntimeState);
     setRuntimePlaybackActive(false);
+    pendingContextCameraRef.current = null;
   }, [graph]);
 
   useEffect(() => {
     setFocusedNodeId(null);
     setHoveredNodeId(null);
-    setTracedEdgeId(null);
+    setTracedEdgeIds([]);
     setSelectedRuntimeFileId(null);
     setSourceModalFile(null);
     setExpandedPanelRegion({ nodeId: null, region: null });
     setSelectedNode(null);
     setPageIndex(0);
     setRuntimeNodePositions({});
+    setSelectedObjectIds([]);
     setRuntimeState(inactiveRuntimeState);
     setRuntimePlaybackActive(false);
   }, [currentContextId]);
+
+  useEffect(() => {
+    setSelectedObjectIds([]);
+
+    if (!selectionToolActive) {
+      return;
+    }
+
+    setHoveredNodeId(null);
+    setFocusedNodeId(null);
+    setTracedEdgeIds([]);
+    setExpandedPanelRegion({ nodeId: null, region: null });
+    setSelectedNode(null);
+  }, [selectionToolActive]);
+
+  useEffect(() => {
+    if (!structuralSelectionActive) {
+      setSelectedObjectIds([]);
+    }
+  }, [structuralSelectionActive]);
+
+  useEffect(() => {
+    if (structuralSelectionActive) {
+      return;
+    }
+
+    selectionMarqueeRef.current = { active: false, start: null, pointer: null };
+    if (selectionAutoPanFrameRef.current !== null) {
+      window.cancelAnimationFrame(selectionAutoPanFrameRef.current);
+      selectionAutoPanFrameRef.current = null;
+    }
+  }, [structuralSelectionActive]);
+
+  useEffect(() => () => {
+    if (selectionAutoPanFrameRef.current !== null) {
+      window.cancelAnimationFrame(selectionAutoPanFrameRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (!laidOut || pageIndex === laidOut.currentPage) {
@@ -487,9 +591,26 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     }
 
     window.requestAnimationFrame(() => {
+      const pendingCamera = pendingContextCameraRef.current;
+
+      if (pendingCamera && pendingCamera.contextId === currentContextId) {
+        const corridorNodeIds = corridorFocusNodeIds(laidOut.nodes, pendingCamera.contextId);
+        const corridorBounds = reactFlowInstance.getNodesBounds(corridorNodeIds);
+
+        pendingContextCameraRef.current = null;
+        if (corridorNodeIds.length > 0) {
+          reactFlowInstance.setCenter(
+            corridorBounds.x + corridorBounds.width / 2,
+            corridorBounds.y + corridorBounds.height / 2,
+            { zoom: pendingCamera.zoom, duration: 420 }
+          );
+          return;
+        }
+      }
+
       reactFlowInstance.fitView({ padding: 0.24, duration: 420 });
     });
-  }, [laidOut, reactFlowInstance, runtimeState.active, runtimeState.currentStep, temporalIndex]);
+  }, [currentContextId, laidOut, reactFlowInstance, runtimeState.active, runtimeState.currentStep, temporalIndex]);
 
   useEffect(() => {
     if (!runtimePlaybackActive || !runtimeState.active || !runtimeState.chain) {
@@ -551,6 +672,156 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
     return layoutRuntimeCorridor(graph, displayedLayoutNodes, runtimeState.chain, runtimeState.currentStep);
   }, [displayedLayoutNodes, graph, runtimeState]);
+  const selectedObjectIdSet = useMemo(() => new Set(selectedObjectIds), [selectedObjectIds]);
+  const handleSelectionChange = useCallback(({ nodes: selectedNodes }: { nodes: AtlasFlowNode[] }) => {
+    if (!structuralSelectionActive) {
+      return;
+    }
+
+    setSelectedObjectIds(
+      selectedNodes
+        .filter((node) => !isLineageNode(node))
+        .map((node) => node.id)
+    );
+  }, [structuralSelectionActive]);
+  const stopSelectionAutoPan = useCallback(() => {
+    if (selectionAutoPanFrameRef.current !== null) {
+      window.cancelAnimationFrame(selectionAutoPanFrameRef.current);
+      selectionAutoPanFrameRef.current = null;
+    }
+  }, []);
+  const updateMarqueeSelection = useCallback(() => {
+    const gesture = selectionMarqueeRef.current;
+
+    if (!gesture.active || !gesture.start || !gesture.pointer || !reactFlowInstance) {
+      return;
+    }
+
+    const marquee = {
+      left: Math.min(gesture.start.x, gesture.pointer.x),
+      right: Math.max(gesture.start.x, gesture.pointer.x),
+      top: Math.min(gesture.start.y, gesture.pointer.y),
+      bottom: Math.max(gesture.start.y, gesture.pointer.y)
+    };
+    const selectedIds = reactFlowInstance.getNodes()
+      .filter((node) => node.selectable !== false && !isLineageNode(node))
+      .filter((node) => {
+        const bounds = reactFlowInstance.getNodesBounds([node]);
+        const topLeft = reactFlowInstance.flowToScreenPosition({ x: bounds.x, y: bounds.y });
+        const bottomRight = reactFlowInstance.flowToScreenPosition({
+          x: bounds.x + bounds.width,
+          y: bounds.y + bounds.height
+        });
+
+        return (
+          topLeft.x <= marquee.right &&
+          bottomRight.x >= marquee.left &&
+          topLeft.y <= marquee.bottom &&
+          bottomRight.y >= marquee.top
+        );
+      })
+      .map((node) => node.id);
+
+    setSelectedObjectIds((currentIds) => {
+      if (currentIds.length === selectedIds.length && currentIds.every((id) => selectedIds.includes(id))) {
+        return currentIds;
+      }
+
+      return selectedIds;
+    });
+  }, [reactFlowInstance]);
+  const beginSelectionAutoPan = useCallback(() => {
+    if (selectionAutoPanFrameRef.current !== null) {
+      return;
+    }
+
+    const panFrame = () => {
+      selectionAutoPanFrameRef.current = null;
+      const gesture = selectionMarqueeRef.current;
+      const shellBounds = graphShellRef.current?.getBoundingClientRect();
+
+      if (!gesture.active || !gesture.pointer || !shellBounds || !reactFlowInstance) {
+        return;
+      }
+
+      const distanceFromLeft = gesture.pointer.x - shellBounds.left;
+      const distanceFromRight = shellBounds.right - gesture.pointer.x;
+      const distanceFromTop = gesture.pointer.y - shellBounds.top;
+      const distanceFromBottom = shellBounds.bottom - gesture.pointer.y;
+      const panMagnitude = (distance: number): number => {
+        if (distance >= SELECTION_AUTOPAN_EDGE_DISTANCE) {
+          return 0;
+        }
+
+        return Math.min(
+          SELECTION_AUTOPAN_MAX_STEP,
+          ((SELECTION_AUTOPAN_EDGE_DISTANCE - distance) / SELECTION_AUTOPAN_EDGE_DISTANCE) * SELECTION_AUTOPAN_MAX_STEP
+        );
+      };
+      const xDelta = panMagnitude(distanceFromLeft) - panMagnitude(distanceFromRight);
+      const yDelta = panMagnitude(distanceFromTop) - panMagnitude(distanceFromBottom);
+
+      if (xDelta !== 0 || yDelta !== 0) {
+        const viewport = reactFlowInstance.getViewport();
+
+        void reactFlowInstance.setViewport({
+          x: viewport.x + xDelta,
+          y: viewport.y + yDelta,
+          zoom: viewport.zoom
+        }).then(updateMarqueeSelection);
+      }
+
+      selectionAutoPanFrameRef.current = window.requestAnimationFrame(panFrame);
+    };
+
+    selectionAutoPanFrameRef.current = window.requestAnimationFrame(panFrame);
+  }, [reactFlowInstance, updateMarqueeSelection]);
+  const handleSelectionPointerDownCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const target = event.target;
+
+    if (
+      !structuralSelectionActive ||
+      event.button !== 0 ||
+      !event.isPrimary ||
+      !(target instanceof Element) ||
+      !target.classList.contains("react-flow__pane")
+    ) {
+      return;
+    }
+
+    selectionMarqueeRef.current = {
+      active: false,
+      start: { x: event.clientX, y: event.clientY },
+      pointer: { x: event.clientX, y: event.clientY }
+    };
+  }, [structuralSelectionActive]);
+  const handleSelectionPointerMoveCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!structuralSelectionActive || !selectionMarqueeRef.current.start) {
+      return;
+    }
+
+    selectionMarqueeRef.current.pointer = { x: event.clientX, y: event.clientY };
+    if (selectionMarqueeRef.current.active) {
+      updateMarqueeSelection();
+    }
+  }, [structuralSelectionActive, updateMarqueeSelection]);
+  const handleSelectionStart = useCallback((event: ReactMouseEvent) => {
+    if (!structuralSelectionActive) {
+      return;
+    }
+
+    const gesture = selectionMarqueeRef.current;
+    selectionMarqueeRef.current = {
+      active: true,
+      start: gesture.start ?? { x: event.clientX, y: event.clientY },
+      pointer: { x: event.clientX, y: event.clientY }
+    };
+    beginSelectionAutoPan();
+  }, [beginSelectionAutoPan, structuralSelectionActive]);
+  const handleSelectionEnd = useCallback(() => {
+    selectionMarqueeRef.current = { active: false, start: null, pointer: null };
+    stopSelectionAutoPan();
+  }, [stopSelectionAutoPan]);
   const handleNodesChange = useCallback((changes: NodeChange<AtlasFlowNode>[]) => {
     if (runtimeState.active && runtimeLayout) {
       setRuntimeNodePositions((currentPositions) => {
@@ -702,12 +973,16 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       const shouldShowStubs = !runtimeState.active && focusedNodeId === node.id;
       const outgoingCount = shouldShowStubs ? relationshipBudget?.totalOutgoing ?? 0 : 0;
       const incomingCount = shouldShowStubs ? relationshipBudget?.totalIncoming ?? 0 : 0;
-      const firstOutgoingEdgeId = shouldShowStubs
-        ? relationshipBudget?.visible.find((relation) => relation.direction === "outgoing")?.edge.id
-        : undefined;
-      const firstIncomingEdgeId = shouldShowStubs
-        ? relationshipBudget?.visible.find((relation) => relation.direction === "incoming")?.edge.id
-        : undefined;
+      const outgoingEdgeIds = shouldShowStubs
+        ? relationshipBudget?.visible
+            .filter((relation) => relation.direction === "outgoing")
+            .map((relation) => relation.edge.id) ?? []
+        : [];
+      const incomingEdgeIds = shouldShowStubs
+        ? relationshipBudget?.visible
+            .filter((relation) => relation.direction === "incoming")
+            .map((relation) => relation.edge.id) ?? []
+        : [];
       const resolvedPosition =
         runtimeState.active && runtimeLayout?.revealedNodeIds.has(node.id)
           ? runtimeNodePositions[node.id] ?? runtimeLayout.positions.get(node.id) ?? node.position
@@ -717,7 +992,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         ...node,
         position: resolvedPosition,
         draggable: runtimeState.active ? Boolean(runtimeLayout?.revealedNodeIds.has(node.id)) : !isLineageAnchor,
-        selectable: false,
+        selectable: structuralSelectionActive && !isLineageAnchor,
+        selected: structuralSelectionActive && !isLineageAnchor && selectedObjectIdSet.has(node.id),
         zIndex: resolvedVisualState.zIndex,
         style: visualStateStyle(resolvedVisualState),
         data: {
@@ -732,8 +1008,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
               ? {
                   incomingCount,
                   outgoingCount,
-                  firstIncomingEdgeId,
-                  firstOutgoingEdgeId,
+                  incomingEdgeIds,
+                  outgoingEdgeIds,
                   onTraceStart: handleTraceStart,
                   onTraceEnd: handleTraceEnd
                 }
@@ -757,6 +1033,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         ...node,
         position: resolvedPosition,
         draggable: true,
+        selectable: false,
+        selected: false,
         zIndex: visualState.zIndex,
         style: visualStateStyle(visualState),
         data: {
@@ -789,7 +1067,9 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     graph?.fileHistory,
     runtimeLayout,
     runtimeNodePositions,
-    runtimeState
+    runtimeState,
+    selectedObjectIdSet,
+    structuralSelectionActive
   ]);
 
   const edges = useMemo(() => {
@@ -802,19 +1082,18 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       return [...baseEdges, ...runtimeLayout.edges];
     }
 
-    if (!activeNodeId || !tracedEdgeId) {
+    if (!activeNodeId || tracedEdgeIds.length === 0) {
       return baseEdges;
     }
 
-    const tracedEdge = laidOut.edges.find((edge) => edge.id === tracedEdgeId);
-    if (!tracedEdge || (tracedEdge.source !== activeNodeId && tracedEdge.target !== activeNodeId)) {
-      return baseEdges;
-    }
+    const activeTraceEdges = tracedEdgeIds.flatMap((tracedEdgeId) => {
+      const tracedEdge = laidOut.edges.find((edge) => edge.id === tracedEdgeId);
+      if (!tracedEdge || (tracedEdge.source !== activeNodeId && tracedEdge.target !== activeNodeId)) {
+        return [];
+      }
 
-    const isOutgoing = tracedEdge.source === activeNodeId;
-    return [
-      ...baseEdges,
-      {
+      const isOutgoing = tracedEdge.source === activeNodeId;
+      return [{
         ...tracedEdge,
         animated: false,
         className: undefined,
@@ -829,17 +1108,22 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
           type: MarkerType.ArrowClosed,
           color: isOutgoing ? "#2dd4bf" : "#facc15"
         }
-      }
+      }];
+    });
+
+    return [
+      ...baseEdges,
+      ...activeTraceEdges
     ];
-  }, [activeNodeId, laidOut, runtimeLayout, runtimeState.active, tracedEdgeId]);
+  }, [activeNodeId, laidOut, runtimeLayout, runtimeState.active, tracedEdgeIds]);
 
   function renderRelationTrace(edgeId: string): {
     onMouseEnter: () => void;
     onMouseLeave: () => void;
   } {
     return {
-      onMouseEnter: () => setTracedEdgeId(edgeId),
-      onMouseLeave: () => setTracedEdgeId(null)
+      onMouseEnter: () => setTracedEdgeIds([edgeId]),
+      onMouseLeave: () => setTracedEdgeIds([])
     };
   }
 
@@ -1069,7 +1353,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
     recordRuntimeActivation(fileNode.id);
     setFocusedNodeId(fileNode.id);
-    setTracedEdgeId(null);
+    setTracedEdgeIds([]);
     setRuntimeNodePositions({});
     setRuntimeState({
       active: true,
@@ -1099,7 +1383,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setRuntimeState(inactiveRuntimeState);
     setRuntimePlaybackActive(false);
     setRuntimeNodePositions({});
-    setTracedEdgeId(null);
+    setTracedEdgeIds([]);
   }, []);
 
   const handleRuntimeScrub = useCallback((step: number) => {
@@ -1135,6 +1419,10 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   }, []);
 
   const handleNodeClick: NodeMouseHandler<AtlasFlowNode> = (_event, node) => {
+    if (structuralSelectionActive) {
+      return;
+    }
+
     if (isLineageNode(node)) {
       const data = node.data as AtlasNode;
 
@@ -1153,6 +1441,10 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   };
 
   const handleNodeDoubleClick: NodeMouseHandler<AtlasFlowNode> = (_event, node) => {
+    if (structuralSelectionActive) {
+      return;
+    }
+
     if (isLineageNode(node)) {
       const data = node.data as AtlasNode;
 
@@ -1168,7 +1460,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
     if (canEnter(data)) {
       recordNodeFocus(data.id);
-      setCurrentContextId(data.id);
+      navigateToContext(data.id);
       return;
     }
 
@@ -1187,6 +1479,30 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   };
 
   function navigateToContext(contextId: string | null): void {
+    const target = contextId ? graph?.nodes.find((node) => node.id === contextId) : null;
+    const entersChildContext =
+      Boolean(contextId) &&
+      target?.type === "folder" &&
+      (target.parent ?? null) === currentContextId;
+    const exitsToAncestorContext = contextId !== currentContextId && (
+      contextId === null ||
+      Boolean(currentContextId?.startsWith(`${contextId}/`))
+    );
+
+    pendingContextCameraRef.current = (entersChildContext || exitsToAncestorContext) && reactFlowInstance
+      ? {
+          contextId,
+          zoom: reactFlowInstance.getViewport().zoom
+        }
+      : null;
+
+    if (contextId !== currentContextId) {
+      setPageIndex(0);
+      setRuntimeNodePositions({});
+      setRuntimeState(inactiveRuntimeState);
+      setRuntimePlaybackActive(false);
+    }
+
     setCurrentContextId(contextId);
   }
 
@@ -1196,7 +1512,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     }
 
     setFocusedNodeId(null);
-    setTracedEdgeId(null);
+    setTracedEdgeIds([]);
+    setSelectedObjectIds([]);
     setSelectedNode(null);
     setPageIndex(Math.min(Math.max(0, nextPageIndex), laidOut.totalPages - 1));
   }
@@ -1204,14 +1521,37 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   if (!graph || !laidOut || !structuralState) {
     return (
       <div className="empty-state">
+        <div className="empty-state__connect">
+          <span>{githubConnected ? `GitHub connected${githubUserLogin ? ` as @${githubUserLogin}` : ""}` : "Connect GitHub account"}</span>
+          {!githubConnected ? <button type="button" disabled={!onConnectGitHub} onClick={onConnectGitHub}>Connect</button> : null}
+        </div>
+        <div className="empty-state__or">or</div>
         <div className="empty-state__title">Paste a GitHub repo URL to generate the architecture graph.</div>
-        <div className="empty-state__body">The prototype clones the repo, reads folders/files/imports, and renders the result here.</div>
+        <ol className="empty-state__steps" aria-label="How to put code in GitHub">
+          <li>
+            <strong>Make a GitHub repo</strong>
+            <span>Create a new repository on GitHub.</span>
+          </li>
+          <li>
+            <strong>Push your code</strong>
+            <span>Commit your files, then push them to that repo.</span>
+          </li>
+          <li>
+            <strong>Paste the repo link</strong>
+            <span>Copy the GitHub URL and paste it above.</span>
+          </li>
+        </ol>
       </div>
     );
   }
 
   return (
-    <div className="graph-shell">
+    <div
+      ref={graphShellRef}
+      className={structuralSelectionActive ? "graph-shell is-selection-mode" : "graph-shell"}
+      onPointerDownCapture={handleSelectionPointerDownCapture}
+      onPointerMoveCapture={handleSelectionPointerMoveCapture}
+    >
       <div className="breadcrumb-bar" aria-label="Current graph context">
         {laidOut.breadcrumbPath.map((item, index) => (
           <span className="breadcrumb-bar__item" key={item.id ?? "root"}>
@@ -1226,6 +1566,24 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
           </span>
         ))}
       </div>
+      <div className="selection-tool-overlay" aria-label="Graph tools">
+        <button
+          type="button"
+          className={selectionToolActive ? "select-tool-button is-active" : "select-tool-button"}
+          aria-pressed={selectionToolActive}
+          title="Select objects in a dragged zone and move them together"
+          onClick={() => setSelectionToolActive((active) => !active)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 8V4h4" />
+            <path d="M16 4h4v4" />
+            <path d="M20 16v4h-4" />
+            <path d="M8 20H4v-4" />
+            <path d="m11 9 5 8-4-1-2 3z" />
+          </svg>
+          <span>Select</span>
+        </button>
+      </div>
 
       <ReactFlow<AtlasFlowNode, AtlasFlowEdge>
         nodes={nodes}
@@ -1239,9 +1597,15 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         maxZoom={1.45}
         nodesDraggable={true}
         nodesConnectable={false}
+        elementsSelectable={structuralSelectionActive}
+        selectionOnDrag={structuralSelectionActive}
+        selectionMode={SelectionMode.Partial}
+        selectionKeyCode={null}
+        selectNodesOnDrag={structuralSelectionActive}
+        deleteKeyCode={null}
         connectOnClick={false}
         nodeClickDistance={8}
-        panOnDrag
+        panOnDrag={structuralSelectionActive ? [1, 2] : true}
         zoomOnScroll
         zoomOnPinch
         zoomOnDoubleClick={false}
@@ -1250,15 +1614,23 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         onNodeDoubleClick={handleNodeDoubleClick}
         onNodeMouseEnter={handleNodeMouseEnter}
         onNodeMouseLeave={handleNodeMouseLeave}
+        onSelectionChange={handleSelectionChange}
+        onSelectionStart={handleSelectionStart}
+        onSelectionEnd={handleSelectionEnd}
         onPaneClick={() => {
           if (runtimeState.active) {
             handleRuntimeExit();
             return;
           }
 
+          if (structuralSelectionActive) {
+            setSelectedObjectIds([]);
+            return;
+          }
+
           setHoveredNodeId(null);
           setFocusedNodeId(null);
-          setTracedEdgeId(null);
+          setTracedEdgeIds([]);
           setExpandedPanelRegion({ nodeId: null, region: null });
           setSelectedNode(null);
         }}
@@ -1271,15 +1643,13 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
           zoomable
           bgColor="#020617"
           nodeColor={(node) => {
-            if (node.type === "domain") {
-              return "#14b8a6";
-            }
-
             if (typeof (node.data as AtlasNode).lineageKind === "string") {
               return "#64748b";
             }
 
-            return node.type === "folder" ? "#38bdf8" : "#facc15";
+            return node.type === "folder"
+              ? "#38bdf8"
+              : minimapColorForFile((node.data as AtlasNode).metadata?.extension);
           }}
           nodeStrokeColor="#e5eefb"
           nodeStrokeWidth={2}

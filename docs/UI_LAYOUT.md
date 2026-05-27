@@ -13,16 +13,23 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Muted text: `#94a3b8`
 
 **Structural Node Colors**
-- Domain: teal
-  - Border: `#14b8a6`
-  - Body: `#0b282d`
 - Folder: cyan / sky
   - Border: `#38bdf8`
   - Body: `#0c2230`
-- File: amber yellow
-  - Border: `#facc15`
-  - Body: `#2a230d`
-  - Fold accent: amber-tinted
+- File: neutral `#333` body with extension-classified border and fold accent
+  - JS/TS (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`): amber `#facc15`
+  - Python (`.py`): blue `#60a5fa`
+  - Markdown (`.md`) / MDX (`.mdx`): violet / purple
+  - JSON / TOML: orange / amber
+  - YAML (`.yml`, `.yaml`): pink
+  - CSS / SCSS / Sass / Less: sky / pink / rose / indigo
+  - HTML / SVG / XML: rose / emerald / cyan
+  - Text / PowerShell / shell: slate / blue / lime
+  - Unknown or extensionless: amber fallback
+- File border color is a deterministic format cue only; attention, temporal, and
+  runtime states may override chrome emphasis.
+- File format outlines use an `80%` opacity `3px` vector stroke following the
+  rounded body and cut folded edge; the folded surface is an interior accent.
 
 **Interaction Colors**
 - Primary action: `#2dd4bf`
@@ -55,9 +62,8 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
   confidence or severity.
 
 **MiniMap Colors**
-- Domain: teal
 - Folder: sky
-- File: amber yellow
+- File: solid representative accent from its extension palette
 - Lineage anchor: slate
 
 ## Dimensions
@@ -88,6 +94,19 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - `top: 318px`
 - `right: 16px`
 
+**Structural Selection Tool**
+- Position: floats over the upper-right canvas, aligned to the breadcrumb panel's vertical origin.
+- Placement: `top: 14px`, `right: 16px`.
+- Tool chrome padding: `0px`.
+- When active, dragging on the graph surface draws a subdued cyan dashed
+  selection zone using partial node intersection.
+- Dragging a selection zone into a canvas edge pans the structural viewport at
+  the retained zoom level so offscreen objects can enter the active zone.
+- Selected visible folders/files receive a restrained selection outline and
+  can be moved together by dragging one selected object.
+- Selection mode suppresses ordinary node focus/descent while active and does
+  not participate in Runtime X-Ray corridor movement.
+
 **Operational Interpretation Panel**
 - Position: upper right while an object is focused
 - `top: 16px`
@@ -95,7 +114,7 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Width: `min(320px, calc(100vw - 32px))`
 - Max height: `calc(100% - 32px)`
 - The always-expanded anchor contains identity plus architectural weight for a
-  file, or identity plus regional density for a folder/domain.
+  file, or identity plus regional density for a folder.
 - File identity places a compact square source-inspection trigger directly beside the
   file name; territories do not show this trigger.
 - Operational role or territory file-type counts, actions, and interaction memory render
@@ -108,7 +127,7 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Actions and runtime-origin selection use thin bordered instrument controls,
   inset activation accents, and restrained focus glow rather than solid
   dashboard buttons.
-- For a selected folder or domain, the Runtime origin selector exposes only
+- For a selected folder, the Runtime origin selector exposes only
   first-degree file children of that territory; deeper origins require
   entering the nested region.
 - The Runtime origin selector inherits the thin dark scroll channel and
@@ -155,9 +174,13 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
   reference evidence.
 - `Local Variables` begins collapsed beneath it and reports the number of
   suppressed local declarations until explicitly unfolded.
-- Selecting a variable does not navigate the viewport; the implementation
-  field marks its declaration, a bounded set of relevant usages, and detected
-  mutations with subdued teal operational residue.
+- Selecting a variable centers its first parser-reported occurrence; compact
+  `Prev` / `Next` controls traverse later evidence lines.
+- The focused occurrence receives subdued cyan line emphasis while the exact
+  variable token is marked with a strong green signal; other detected
+  influence lines retain restrained teal residue.
+- The implementation-side pressure minimap is currently removed; navigation
+  remains in the function and variable rails.
 - Close affordances: square close control, `Escape`, or backdrop click.
 
 **Raw History Inspector**
@@ -193,16 +216,11 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 
 These values are layout inputs, not decorative CSS-only values. React Flow node bounds, collision checks, runtime placement, and the visible node chrome should stay aligned with them.
 
-**Domain Nodes**
-- Source: `frontend/src/graph/layout.ts`
-- Width: `286px`
-- Height: `138px`
-- Used for root-level folder nodes rendered as domains.
-
 **Folder Nodes**
 - Source: `frontend/src/graph/layout.ts`
 - Width: `246px`
 - Height: `108px`
+- Root-level and nested directories use this same folder presentation.
 - Visible chrome uses the folder shape with a tab.
 
 **File Nodes**
@@ -211,8 +229,13 @@ These values are layout inputs, not decorative CSS-only values. React Flow node 
 - Height: `180px`
 - Files are intentionally vertical rectangles.
 - Visible chrome uses the file shape with a folded corner.
+- File identity places the basename first and the right-aligned extension on a
+  second line, then renders only the parent path to avoid repeated filenames.
 - The bottom metadata row displays lightweight `LOC` metrics and adds `/F`
   function count only for JS/TS-family and Python files.
+- `LOC` and function counts use separate amber/violet cues to keep the
+  two architectural weight readings distinct.
+- File history residue sits at the right end of that bottom metadata row.
 - Low-signal compression changes ambient opacity/chrome emphasis only; it does
   not change file-node dimensions or layout bounds.
 

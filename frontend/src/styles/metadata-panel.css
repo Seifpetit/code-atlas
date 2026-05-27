@@ -2,6 +2,7 @@
   position: absolute;
   top: 16px;
   right: 16px;
+  z-index: 9;
   width: min(320px, calc(100vw - 32px));
   max-height: calc(100% - 32px);
   overflow: auto;

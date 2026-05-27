@@ -4,7 +4,7 @@ Code Atlas is a deterministic prototype for visualizing a GitHub repository as a
 
 It has three stages:
 
-1. Repo Fetch: clone a public GitHub repository into a temporary backend folder.
+1. Repo Fetch: clone a public GitHub repository, or an authenticated connected GitHub repository, into a temporary backend folder.
 2. Structure Extraction: read folders, source files, and relative import/export relationships.
 3. Graph Rendering: render the result in React Flow.
 
@@ -42,6 +42,17 @@ Open the Vite URL and paste a public GitHub repository URL such as:
 https://github.com/vitejs/vite
 ```
 
+For local GitHub OAuth, set these backend environment variables before starting `npm run dev`:
+
+```text
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+GITHUB_OAUTH_CALLBACK_URL=http://localhost:4000/auth/github/callback
+FRONTEND_URL=http://localhost:5173
+```
+
+The callback URL must also be registered on the GitHub OAuth app.
+
 ## Deploy On Railway
 
 The repository is prepared for a single Railway service.
@@ -62,10 +73,20 @@ Railway setup:
 4. Generate a public domain for the service.
 5. Open the generated domain and submit a public GitHub repository URL.
 
+GitHub OAuth setup:
+
+- Register the OAuth app callback as `https://code-atlas.up.railway.app/auth/github/callback`.
+- Add `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` to the Railway service variables.
+- Optional: set `APP_BASE_URL=https://code-atlas.up.railway.app` if Railway host inference is ever wrong.
+- Optional: set `GITHUB_OAUTH_SCOPE=repo read:user`; this is the default and allows private connected repositories.
+
 Useful endpoints:
 
 - `GET /health`
 - `POST /analyze`
+- `GET /auth/github`
+- `GET /auth/github/status`
+- `GET /github/repos`
 
 Local production build:
 

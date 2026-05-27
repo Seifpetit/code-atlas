@@ -49,6 +49,64 @@
   color: #f8fafc;
 }
 
+.selection-tool-overlay {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 8;
+  padding: 0;
+  border: 1px solid #293548;
+  background: rgba(15, 23, 42, 0.92);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28);
+}
+
+.select-tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 32px;
+  min-width: 86px;
+  border: 1px solid #293548;
+  background: #101827;
+  padding: 0;
+  color: #9fb0c8;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.select-tool-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: square;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.select-tool-button:hover {
+  border-color: rgba(56, 189, 248, 0.64);
+  color: #dbeafe;
+}
+
+.select-tool-button.is-active {
+  border-color: rgba(45, 212, 191, 0.72);
+  background: #12353d;
+  color: #99f6e4;
+  box-shadow:
+    inset 0 0 0 1px rgba(45, 212, 191, 0.08),
+    0 0 14px rgba(45, 212, 191, 0.1);
+}
+
 .empty-state {
   display: grid;
   place-content: center;
@@ -57,6 +115,49 @@
   padding: 28px;
   color: #94a3b8;
   text-align: center;
+}
+
+.empty-state__connect {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: 10px;
+  color: #dbeafe;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.empty-state__connect button {
+  height: 32px;
+  border: 1px solid rgba(45, 212, 191, 0.42);
+  background: rgba(13, 148, 136, 0.16);
+  padding: 0 12px;
+  color: #99f6e4;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.empty-state__connect button:hover,
+.empty-state__connect button:focus-visible {
+  outline: none;
+  border-color: rgba(94, 234, 212, 0.78);
+  background: rgba(13, 148, 136, 0.24);
+}
+
+.empty-state__connect button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.empty-state__or {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .empty-state__title {
@@ -70,8 +171,76 @@
   font-size: 14px;
 }
 
+.empty-state__steps {
+  display: grid;
+  gap: 10px;
+  width: min(520px, calc(100vw - 56px));
+  margin: 8px auto 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+  counter-reset: empty-state-step;
+}
+
+.empty-state__steps li {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 11px 13px;
+  border: 1px solid rgba(45, 212, 191, 0.14);
+  background: rgba(15, 23, 42, 0.38);
+  color: #94a3b8;
+  counter-increment: empty-state-step;
+}
+
+.empty-state__steps li::before {
+  display: grid;
+  grid-row: 1 / span 2;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(45, 212, 191, 0.32);
+  background: rgba(13, 148, 136, 0.12);
+  color: #99f6e4;
+  content: counter(empty-state-step);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.empty-state__steps strong {
+  color: #dbeafe;
+  font-size: 14px;
+}
+
+.empty-state__steps span {
+  font-size: 13px;
+}
+
 .react-flow {
   background: #070b12;
+}
+
+.graph-shell.is-selection-mode .react-flow {
+  --xy-selection-background-color: rgba(45, 212, 191, 0.07);
+  --xy-selection-border: 1px dashed rgba(45, 212, 191, 0.72);
+}
+
+.graph-shell.is-selection-mode .react-flow__pane {
+  cursor: crosshair;
+}
+
+.graph-shell.is-selection-mode .react-flow__node.selected .atlas-node__shape {
+  outline: 1px solid rgba(45, 212, 191, 0.76);
+  outline-offset: 4px;
+}
+
+.graph-shell.is-selection-mode .react-flow__node.selected .atlas-node__shape--file {
+  box-shadow:
+    0 0 0 1px rgba(45, 212, 191, 0.2),
+    0 0 18px rgba(45, 212, 191, 0.08),
+    0 16px 40px rgba(0, 0, 0, 0.24);
 }
 
 .react-flow__controls {
@@ -217,4 +386,3 @@
 .overview-button:hover {
   border-color: #60a5fa;
 }
-

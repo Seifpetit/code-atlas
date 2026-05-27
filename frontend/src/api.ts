@@ -118,12 +118,40 @@ export interface AtlasGraph {
   fileHistory?: Record<string, FileHistoryInfo>;
 }
 
+export interface GitHubUser {
+  id: number;
+  login: string;
+  name?: string | null;
+  avatarUrl?: string;
+  htmlUrl?: string;
+}
+
+export interface GitHubAuthStatus {
+  configured: boolean;
+  connected: boolean;
+  user: GitHubUser | null;
+}
+
+export interface GitHubRepository {
+  id: number;
+  name: string;
+  fullName: string;
+  private: boolean;
+  htmlUrl: string;
+  ownerLogin: string;
+  defaultBranch: string;
+  description?: string | null;
+  pushedAt?: string | null;
+  updatedAt?: string | null;
+}
+
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 const API_BASE_URL = configuredApiBaseUrl ?? (import.meta.env.DEV ? "http://localhost:4000" : "");
 
 export async function analyzeRepo(repoUrl: string): Promise<AtlasGraph> {
   const response = await fetch(`${API_BASE_URL}/analyze`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json"
     },
@@ -137,4 +165,53 @@ export async function analyzeRepo(repoUrl: string): Promise<AtlasGraph> {
   }
 
   return payload as AtlasGraph;
+}
+
+export function githubConnectUrl(): string {
+  return `${API_BASE_URL}/auth/github`;
+}
+
+export async function getGitHubAuthStatus(): Promise<GitHubAuthStatus> {
+  const response = await fetch(`${API_BASE_URL}/auth/github/status`, {
+    credentials: "include"
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to read GitHub connection status.");
+  }
+
+  return payload as GitHubAuthStatus;
+}
+
+export async function loadGitHubRepositories(query: string): Promise<GitHubRepository[]> {
+  const params = new URLSearchParams();
+
+  if (query.trim()) {
+    params.set("query", query.trim());
+  }
+
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`${API_BASE_URL}/github/repos${suffix}`, {
+    credentials: "include"
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to load GitHub repositories.");
+  }
+
+  return payload.repositories as GitHubRepository[];
+}
+
+export async function logoutGitHub(): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/auth/github/logout`, {
+    method: "POST",
+    credentials: "include"
+  });
+
+  if (!response.ok) {
+    const payload = await response.json();
+    throw new Error(payload?.error ?? "Failed to disconnect GitHub.");
+  }
 }
