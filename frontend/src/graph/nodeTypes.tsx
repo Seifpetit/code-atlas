@@ -5,7 +5,7 @@ import type { AtlasNode } from "../api";
 import type { NodeVisualState } from "./attention/attentionTypes";
 
 type StructuralKind = "domain" | "folder" | "file";
-const JAVASCRIPT_ECOSYSTEM_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+const FUNCTION_METADATA_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
 
 interface RelationStubData {
   incomingCount: number;
@@ -29,8 +29,8 @@ interface NodeChromeProps {
   significanceScore: number;
 }
 
-function isJavaScriptEcosystemFile(data: AtlasNode): boolean {
-  return JAVASCRIPT_ECOSYSTEM_EXTENSIONS.has(String(data.metadata?.extension ?? "").toLowerCase());
+function hasFunctionMetadata(data: AtlasNode): boolean {
+  return FUNCTION_METADATA_EXTENSIONS.has(String(data.metadata?.extension ?? "").toLowerCase());
 }
 
 function detailFor(data: AtlasNode, structuralKind: StructuralKind): string {
@@ -55,7 +55,7 @@ function NodeContent({
   const linesOfCode = data.metadata?.linesOfCode;
   const functionCount = data.metadata?.functionCount;
   const shouldShowMetrics = structuralKind === "file" && typeof linesOfCode === "number";
-  const shouldShowFunctionCount = isJavaScriptEcosystemFile(data) && typeof functionCount === "number";
+  const shouldShowFunctionCount = hasFunctionMetadata(data) && typeof functionCount === "number";
 
   return (
     <>

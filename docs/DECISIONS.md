@@ -27,7 +27,8 @@ Status:
 
 Decision:
 - Structural mode should show common repository files such as Markdown, JSON, YAML, CSS, scripts, and source files.
-- Import parsing should remain limited to JS/TS source-like files for now.
+- Import parsing remains limited to explicitly supported source ecosystems;
+  the current deterministic parser paths cover JS/TS and Python source files.
 
 Rationale:
 - Structural exploration is about repository topology, not only code imports.
@@ -353,8 +354,8 @@ Status:
 
 Decision:
 - Every visible file node exposes non-blank lines of code as lightweight metadata.
-- JS/TS-family file nodes additionally expose a syntax-derived function count.
-- Low-signal files are classified only through deterministic rules: very low LOC, small conventionally named support modules, small named wrappers/helpers/adapters, and pass-through export modules.
+- JS/TS-family and Python file nodes additionally expose a syntax-derived function count.
+- Low-signal files are classified only through deterministic rules: very low LOC, small conventionally named support modules, small named wrappers/helpers/adapters, pass-through export modules, and import-only Python package gateways.
 - Low-signal classification produces a calm ambient presentation and lower default ordering weight; it does not remove, merge, or hide files.
 
 Rationale:
@@ -381,14 +382,44 @@ Decision:
 - Secondary layers begin collapsed and expose a compact summary until the user
   intentionally unfolds them; only one secondary layer is expanded at a time.
 - Files expose operational role and activation surface as secondary layers.
-- Domains and folders expose dominant gravity and regional actions as
+- Domains and folders expose file-type counts and regional actions as
   secondary layers.
-- A focused file exposes a compact square raw-source control beside its name;
-  invoking it opens a screen-fixed read-only source modal outside the graph
+- A focused file exposes a compact square source-inspection control beside its name;
+  invoking it opens a screen-fixed read-only content modal outside the graph
   interaction surface.
+- The source modal places compact Operational Identity above Navigation in a
+  user-resizable left rail and keeps the implementation/document field
+  dominant across the full working height of the wider right-hand surface.
+- The source modal header keeps its name, truncatable path, compact language,
+  and structural metrics on one row; syntax-color loading/display status is
+  not exposed as an operational signal.
 - The source modal applies deterministic Shiki/TextMate syntax coloring only
-  for explicitly mapped JavaScript-ecosystem formats (`js`, `jsx`, `ts`,
-  `tsx`, `json`, and `css`); other indexed text formats render as raw text.
+  for explicitly mapped indexed formats: JS/TS, Python, JSON, CSS/SCSS/Sass/
+  Less, HTML/XML/SVG, Markdown/MDX, YAML/TOML, shell, and PowerShell.
+- Plain `.txt` files continue to render as raw text because no syntax
+  classification is implied.
+- Markdown `.md` files render as safe GFM documents by default and expose an
+  explicit pill switch to the syntax-colored raw source representation.
+- Source inspection exposes deterministic function folding from extracted
+  waypoint ranges: the declaration remains visible, and navigation reopens
+  folded ranges before centering source.
+- A folded declaration can enter Runtime Placement mode inside the
+  implementation field. This corridor uses only extracted calls resolved to a
+  concrete waypoint identity, caps direct incoming/outgoing neighbors at two
+  in each direction, and leaves structural circulation detail in the
+  navigation rail.
+- Resolved function relationships use deterministic waypoint IDs rather than
+  display names. Calls inside unnamed JavaScript callback wrappers attach to
+  the nearest named waypoint; named nested callbacks remain separate
+  waypoints. Explicit default/aliased exports and class-local method calls are
+  resolved only when a concrete target is structurally available.
+- Capitalized JSX component usage is an explicit `jsx-render` structural link,
+  including statically resolvable `lazy(import(...))` component wrappers.
+  Runtime Placement labels these as resolved/render links rather than observed
+  runtime execution.
+- Resolved module-scope calls or JSX mounts may appear as a `Module Scope`
+  incoming origin in Runtime Placement. They do not create synthetic function
+  waypoints or alter function counts.
 - A subtle interaction-memory layer reports prior focus or runtime activation
   for the selected object during the current analyzed session.
 - Operational labels use only path/name conventions, extracted metrics,
@@ -415,7 +446,7 @@ Rationale:
   the action surface.
 - Summary residue allows semantic depth to remain discoverable without making
   all operational detail compete for attention immediately.
-- Raw source is pulled only through explicit curiosity and does not displace
+- Source content is pulled only through explicit curiosity and does not displace
   the lightweight interpretation panel.
 - Syntax grammar loading is deferred until raw-source inspection and cached per
   requested language so normal graph exploration does not initialize the
@@ -539,3 +570,58 @@ Implications:
 - Existing focused-object progressive disclosure should preserve its compact
   always-visible anchor and apply this rule to any collapsible subsection
   stack it presents.
+
+## 25. Python Uses A Deterministic Language Extraction Path
+
+Status:
+- Accepted
+
+Decision:
+- Python `.py` files are structural and import-parsed source files.
+- Python syntax is parsed through `@lezer/python`, independently of the
+  existing `ts-morph` JavaScript/TypeScript extractor.
+- The Python extractor emits the existing graph contract: LOC, function
+  counts, function/method waypoints, parameters, annotated returns, direct
+  calls, locally resolvable module edges, and traceable input propagation.
+- Python package gateway compression applies only to import-only
+  `__init__.py` files using the explicit `package-gateway` reason.
+
+Rationale:
+- Python cannot be accurately parsed by the TypeScript AST path.
+- A dedicated deterministic grammar keeps Runtime X-Ray and source inspection
+  driven by structural facts without introducing AI inference.
+
+Implications:
+- Module resolution is repository-local and conservative; external
+  dependencies do not create graph edges.
+- Python does not inherit React-specific state or rendering signals.
+- Runtime corridors work for Python wherever local import edges are resolved.
+
+## 26. Source Inspection Exposes Variable Influence In Two Layers
+
+Status:
+- Accepted
+
+Decision:
+- The source inspection rail displays `Operational Variables` directly below
+  `Function Waypoints`, expanded initially as an explicit operational overlay.
+- `Local Variables` follows it collapsed, retaining a suppressed-count hint
+  until the user requests implementation texture.
+- Variable cards are produced only from parser-derived declarations,
+  references, assignments, conditional/render participation, helper argument
+  propagation, and runtime-oriented identifier tokens.
+- Selecting a variable preserves viewport position and softly marks its
+  declaration, bounded high-signal usages, and mutation lines.
+
+Rationale:
+- Hook state, refs, runtime handles, and propagated projections help explain
+  which values move the inspected system without becoming a full symbol
+  browser.
+- Local declarations remain traceable while staying visually subordinate.
+
+Implications:
+- The expanded `Operational Variables` layer is a deliberate exception to the
+  single-initial-subsection rule for this modal because it is paired directly
+  with the primary function waypoint layer.
+- JavaScript/TypeScript symbol references and scope-bounded Python assignment
+  evidence share the same deterministic graph metadata contract.

@@ -61,11 +61,12 @@ const COMPRESSION_REASON_LABELS = new Map<string, string>([
   ["very-low-loc", "very low LOC"],
   ["tiny-wrapper", "tiny wrapper"],
   ["conventional-support-file", "support file convention"],
-  ["pass-through-export", "pass-through exports"]
+  ["pass-through-export", "pass-through exports"],
+  ["package-gateway", "package gateway imports"]
 ]);
-const JAVASCRIPT_ECOSYSTEM_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+const FUNCTION_METADATA_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
 type ArchitecturalWeight = "LOW" | "MEDIUM" | "HIGH";
-type SecondaryPanelRegion = "role" | "gravity" | "actions" | "memory";
+type SecondaryPanelRegion = "role" | "file-types" | "actions" | "memory";
 type OperationalRoleKind =
   | "low-signal"
   | "configuration"
@@ -83,17 +84,18 @@ interface OperationalRole {
   label: string;
 }
 
+interface RegionalFileTypeCount {
+  label: string;
+  count: number;
+}
+
 interface RegionalSummary {
   directChildCount: number;
   fileCount: number;
   folderCount: number;
   totalLinesOfCode?: number;
   totalFunctionCount?: number;
-  lowSignalFileCount: number;
-  configurationFileCount: number;
-  internalImports: number;
-  inboundImports: number;
-  outboundImports: number;
+  fileTypes: RegionalFileTypeCount[];
 }
 
 interface InteractionResidue {
@@ -142,8 +144,8 @@ function compressionDescription(node: AtlasNode): string {
     .join(", ");
 }
 
-function isJavaScriptEcosystemFile(node: AtlasNode): boolean {
-  return JAVASCRIPT_ECOSYSTEM_EXTENSIONS.has(String(node.metadata?.extension ?? "").toLowerCase());
+function hasFunctionMetadata(node: AtlasNode): boolean {
+  return FUNCTION_METADATA_EXTENSIONS.has(String(node.metadata?.extension ?? "").toLowerCase());
 }
 
 function panelObjectType(node: AtlasNode): "FILE" | "FOLDER" | "DOMAIN" {
@@ -207,6 +209,8 @@ function operationalRolesFor(node: AtlasNode, importedByCount: number): Operatio
     roles.push({ kind: "support", label: "Structural support file" });
   } else if (stem === "index") {
     roles.push({ kind: "gateway", label: "Index or export gateway" });
+  } else if (stem === "__init__") {
+    roles.push({ kind: "gateway", label: "Python package gateway" });
   }
 
   if (importedByCount >= 5) {
@@ -237,30 +241,22 @@ function operationalRolesFor(node: AtlasNode, importedByCount: number): Operatio
 function regionalSummaryFor(region: AtlasNode, graph: AtlasGraph): RegionalSummary {
   const files = graph.nodes.filter((node) => node.type === "file" && ownsPath(region, node.path));
   const folders = graph.nodes.filter((node) => node.type === "folder" && node.id !== region.id && ownsPath(region, node.path));
-  const javascriptFiles = files.filter(isJavaScriptEcosystemFile);
+  const parsedFunctionFiles = files.filter(hasFunctionMetadata);
+  const fileTypeCounts = new Map<string, number>();
+
+  for (const file of files) {
+    const extension = String(file.metadata?.extension ?? "").toLowerCase();
+    const label = extension || "[no extension]";
+    fileTypeCounts.set(label, (fileTypeCounts.get(label) ?? 0) + 1);
+  }
+
   const totalLinesOfCode = files.length > 0 && files.every((node) => typeof node.metadata?.linesOfCode === "number")
     ? files.reduce((total, node) => total + Number(node.metadata?.linesOfCode), 0)
     : undefined;
-  const totalFunctionCount = javascriptFiles.length > 0 &&
-      javascriptFiles.every((node) => typeof node.metadata?.functionCount === "number")
-    ? javascriptFiles.reduce((total, node) => total + Number(node.metadata?.functionCount), 0)
+  const totalFunctionCount = parsedFunctionFiles.length > 0 &&
+      parsedFunctionFiles.every((node) => typeof node.metadata?.functionCount === "number")
+    ? parsedFunctionFiles.reduce((total, node) => total + Number(node.metadata?.functionCount), 0)
     : undefined;
-  let internalImports = 0;
-  let inboundImports = 0;
-  let outboundImports = 0;
-
-  for (const edge of graph.edges) {
-    const sourceOwned = ownsPath(region, edge.source);
-    const targetOwned = ownsPath(region, edge.target);
-
-    if (sourceOwned && targetOwned) {
-      internalImports += 1;
-    } else if (sourceOwned) {
-      outboundImports += 1;
-    } else if (targetOwned) {
-      inboundImports += 1;
-    }
-  }
 
   return {
     directChildCount: Number(region.metadata?.childCount ?? 0),
@@ -268,50 +264,9 @@ function regionalSummaryFor(region: AtlasNode, graph: AtlasGraph): RegionalSumma
     folderCount: folders.length,
     totalLinesOfCode,
     totalFunctionCount,
-    lowSignalFileCount: files.filter((node) => node.metadata?.compressionLevel === "low-signal").length,
-    configurationFileCount: files.filter((node) => ["config", "constants", "types"].includes(fileStem(node))).length,
-    internalImports,
-    inboundImports,
-    outboundImports
-  };
-}
-
-function dominantGravityFor(summary: RegionalSummary): { label: string; detail?: string } {
-  if (summary.fileCount === 0) {
-    return { label: "Structural container", detail: "No indexed files in this region." };
-  }
-
-  if (summary.lowSignalFileCount >= 2 && summary.lowSignalFileCount / summary.fileCount >= 0.5) {
-    return {
-      label: "Mostly low-signal files",
-      detail: `${summary.lowSignalFileCount} of ${summary.fileCount} files are rule-classified low-signal.`
-    };
-  }
-
-  if (summary.configurationFileCount >= 2 && summary.configurationFileCount / summary.fileCount >= 0.5) {
-    return {
-      label: "Mostly configuration and support",
-      detail: `${summary.configurationFileCount} conventionally named support files detected.`
-    };
-  }
-
-  if (summary.inboundImports + summary.outboundImports >= Math.max(5, summary.fileCount)) {
-    return {
-      label: "Dependency concentration candidate",
-      detail: `${summary.inboundImports} inbound and ${summary.outboundImports} outbound boundary imports.`
-    };
-  }
-
-  if (summary.fileCount >= 10 && summary.fileCount >= (summary.folderCount + 1) * 3) {
-    return {
-      label: "High file density",
-      detail: `${summary.fileCount} files across ${summary.folderCount} nested folders.`
-    };
-  }
-
-  return {
-    label: "Mixed implementation region",
-    detail: summary.internalImports > 0 ? `${summary.internalImports} parsed import connections remain inside this region.` : undefined
+    fileTypes: [...fileTypeCounts.entries()]
+      .map(([label, count]) => ({ label, count }))
+      .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
   };
 }
 
@@ -425,7 +380,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   const [interactionResidueByNodeId, setInteractionResidueByNodeId] = useState<Record<string, InteractionResidue>>({});
   const [temporalIndex, setTemporalIndex] = useState(0);
   const [focusedLandmarkId, setFocusedLandmarkId] = useState<string | null>(null);
-  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
+  const [timelineCollapsed, setTimelineCollapsed] = useState(true);
   const [pageIndex, setPageIndex] = useState(0);
   const [manualNodePositions, setManualNodePositions] = useState<ManualNodePositions>({});
   const [runtimeNodePositions, setRuntimeNodePositions] = useState<ManualNodePositions>({});
@@ -953,9 +908,6 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
     return regionalSummaryFor(selectedNode, graph);
   }, [graph, selectedNode]);
-  const selectedRegionGravity = useMemo(() => {
-    return selectedRegionSummary ? dominantGravityFor(selectedRegionSummary) : null;
-  }, [selectedRegionSummary]);
   const runtimeOriginNode = runtimeState.originNodeId ? graphNodeById.get(runtimeState.originNodeId) ?? null : null;
   const runtimeCurrentNode = runtimeLayout?.activeNodeId ? graphNodeById.get(runtimeLayout.activeNodeId) ?? null : null;
   const runtimePreviousNode = runtimeLayout?.previousNodeId ? graphNodeById.get(runtimeLayout.previousNodeId) ?? null : null;
@@ -986,6 +938,20 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   }, [graph, selectedNode]);
   const selectedRuntimeFile = selectedRuntimeFileId ? graphNodeById.get(selectedRuntimeFileId) ?? null : null;
   const selectedInteractionResidue = selectedNode ? interactionResidueByNodeId[selectedNode.id] : undefined;
+  const sourceModalImportedByCount =
+    sourceModalFile && graph
+      ? graph.edges.filter((edge) => edge.target === sourceModalFile.id).length
+      : 0;
+  const sourceModalHistory = sourceModalFile ? graph?.fileHistory?.[sourceModalFile.path] : undefined;
+  const sourceModalFileContext = sourceModalFile
+    ? {
+        importCount: Number(sourceModalFile.metadata?.importCount ?? 0),
+        importedByCount: sourceModalImportedByCount,
+        weight: architecturalWeightFor(sourceModalFile, sourceModalImportedByCount),
+        commitCount: sourceModalHistory?.commitCount,
+        lastModified: sourceModalHistory?.lastModified
+      }
+    : undefined;
   const sourceModalRuntimeNode =
     sourceModalFile && runtimeState.active
       ? runtimeState.chain?.nodes.find((node) => node.id === sourceModalFile.id)
@@ -1400,8 +1366,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                 <button
                   type="button"
                   className="source-open-button"
-                  aria-label={`Open raw source for ${selectedNode.label}`}
-                  title="Open raw source"
+                  aria-label={`Inspect source for ${selectedNode.label}`}
+                  title="Inspect source"
                   onClick={() => setSourceModalFile(selectedNode)}
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1427,7 +1393,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                   {typeof selectedNode.metadata?.linesOfCode === "number" ? (
                     <div><strong>{selectedNode.metadata.linesOfCode}</strong><span>LOC</span></div>
                   ) : null}
-                  {isJavaScriptEcosystemFile(selectedNode) && typeof selectedNode.metadata?.functionCount === "number" ? (
+                  {hasFunctionMetadata(selectedNode) && typeof selectedNode.metadata?.functionCount === "number" ? (
                     <div><strong>{selectedNode.metadata.functionCount}</strong><span>Functions</span></div>
                   ) : null}
                   <div><strong>{selectedNode.metadata?.importCount ?? 0}</strong><span>Imports</span></div>
@@ -1472,17 +1438,27 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                 <p className="operational-panel__basis">Rule basis: {compressionDescription(selectedNode)}.</p>
               ) : null}
             </CollapsibleSemanticRegion>
-          ) : selectedRegionGravity ? (
+          ) : selectedRegionSummary ? (
             <CollapsibleSemanticRegion
-              title="Dominant Gravity"
-              summary={selectedRegionGravity.label}
-              isExpanded={activeSecondaryRegion === "gravity"}
-              onToggle={() => toggleSecondaryRegion("gravity")}
+              title="File Types"
+              summary={selectedRegionSummary.fileTypes.length > 0
+                ? `${selectedRegionSummary.fileTypes.length} type${selectedRegionSummary.fileTypes.length === 1 ? "" : "s"} / ${selectedRegionSummary.fileCount} files`
+                : "No indexed files"}
+              isExpanded={activeSecondaryRegion === "file-types"}
+              onToggle={() => toggleSecondaryRegion("file-types")}
             >
-              <div className="operational-panel__gravity">{selectedRegionGravity.label}</div>
-              {selectedRegionGravity.detail ? (
-                <p className="operational-panel__basis">{selectedRegionGravity.detail}</p>
-              ) : null}
+              {selectedRegionSummary.fileTypes.length > 0 ? (
+                <ul className="operational-panel__file-types" aria-label="File counts by type">
+                  {selectedRegionSummary.fileTypes.map((fileType) => (
+                    <li key={fileType.label}>
+                      <code>{fileType.label}</code>
+                      <strong>{fileType.count}</strong>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="operational-panel__basis">No indexed files in this territory.</p>
+              )}
             </CollapsibleSemanticRegion>
           ) : null}
 
@@ -1597,7 +1573,9 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         <Suspense fallback={<div className="source-modal__backdrop"><div className="source-modal__loading">Loading Raw Source</div></div>}>
           <SourceCodeModal
             file={sourceModalFile}
+            sourceFiles={graph?.nodes.filter((node) => node.type === "file")}
             runtimeContext={sourceModalRuntimeContext}
+            fileContext={sourceModalFileContext}
             onClose={() => setSourceModalFile(null)}
           />
         </Suspense>

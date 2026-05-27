@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Node, Project, SourceFile, SyntaxKind, type Node as MorphNode } from "ts-morph";
 import { buildGraph } from "./buildGraph.js";
+import { extractPython, type PythonExtraction } from "./extractPython.js";
 import type {
   CompressionReason,
   ExtractedFileMetadata,
@@ -12,7 +13,9 @@ import type {
   FunctionStateUpdate,
   FunctionWaypoint,
   FunctionWaypointKind,
-  GraphJson
+  GraphJson,
+  VariableDeclarationKind,
+  VariableWaypoint
 } from "./types.js";
 
 const IGNORED_DIRECTORIES = new Set([
@@ -21,12 +24,21 @@ const IGNORED_DIRECTORIES = new Set([
   "build",
   ".next",
   "coverage",
-  ".git"
+  ".git",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".tox"
 ]);
 
 const IMPORT_PARSE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+const PYTHON_PARSE_EXTENSIONS = new Set([".py"]);
 const STRUCTURAL_FILE_EXTENSIONS = new Set([
   ...IMPORT_PARSE_EXTENSIONS,
+  ...PYTHON_PARSE_EXTENSIONS,
   ".css",
   ".scss",
   ".sass",
@@ -48,6 +60,25 @@ const RESOLUTION_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".m
 const INDEX_FILES = RESOLUTION_EXTENSIONS.map((extension) => `index${extension}`);
 const CONVENTIONAL_LOW_SIGNAL_NAMES = new Set(["index", "types", "constants", "config"]);
 const TINY_WRAPPER_NAME_PATTERN = /(?:util|utils|helper|helpers|wrapper|adapter)$/i;
+const OPERATIONAL_VARIABLE_NAME_PATTERN = /(?:runtime|graph|node|focus|selected|context|corridor|xray|x-ray|position)/i;
+const ASSIGNMENT_OPERATORS = new Set([
+  "=",
+  "+=",
+  "-=",
+  "*=",
+  "/=",
+  "%=",
+  "**=",
+  "&&=",
+  "||=",
+  "??=",
+  "<<=",
+  ">>=",
+  ">>>=",
+  "&=",
+  "|=",
+  "^="
+]);
 const FUNCTION_LIKE_KINDS = [
   SyntaxKind.FunctionDeclaration,
   SyntaxKind.FunctionExpression,
@@ -61,6 +92,8 @@ const FUNCTION_LIKE_KINDS = [
 interface CallTarget {
   definitionPath: string;
   definitionName: string;
+  definitionWaypointId?: string;
+  throughLazyComponent?: boolean;
 }
 
 interface ImportedCallTargets {
@@ -70,6 +103,7 @@ interface ImportedCallTargets {
 
 interface WaypointNode {
   node: MorphNode;
+  waypointId: string;
   identity: {
     name: string;
     kind: FunctionWaypointKind;
@@ -154,6 +188,55 @@ function isExportedWaypoint(node: MorphNode): boolean {
 
   const statement = node.getFirstAncestorByKind(SyntaxKind.VariableStatement);
   return statement?.isExported() ?? false;
+}
+
+function waypointIdFor(identity: { name: string; kind: FunctionWaypointKind }, node: MorphNode): string {
+  return `${identity.kind}:${node.getStartLineNumber()}:${node.getEndLineNumber()}:${identity.name}`;
+}
+
+function exportNamesForWaypoint(
+  sourceFile: SourceFile,
+  node: MorphNode,
+  identity: { name: string; kind: FunctionWaypointKind }
+): string[] {
+  const exportNames = new Set<string>();
+
+  if (Node.isFunctionDeclaration(node)) {
+    if (node.isDefaultExport()) {
+      exportNames.add("default");
+    } else if (node.isExported()) {
+      exportNames.add(identity.name);
+    }
+  }
+
+  if (Node.isExportAssignment(node.getParent())) {
+    exportNames.add("default");
+  }
+
+  const statement = node.getFirstAncestorByKind(SyntaxKind.VariableStatement);
+  if (statement?.isExported()) {
+    exportNames.add(identity.name);
+  }
+
+  for (const assignment of sourceFile.getExportAssignments()) {
+    if (!assignment.isExportEquals() && assignment.getExpression()?.getText() === identity.name) {
+      exportNames.add("default");
+    }
+  }
+
+  for (const declaration of sourceFile.getExportDeclarations()) {
+    if (declaration.getModuleSpecifierValue()) {
+      continue;
+    }
+
+    for (const exported of declaration.getNamedExports()) {
+      if (exported.getName() === identity.name) {
+        exportNames.add(exported.getAliasNode()?.getText() ?? identity.name);
+      }
+    }
+  }
+
+  return [...exportNames].sort();
 }
 
 function observableType(text: string | undefined): string | undefined {
@@ -275,6 +358,18 @@ function definitionMatchesWaypoint(definition: MorphNode, waypoint: WaypointNode
   );
 }
 
+function belongsToVisibleWaypoint(
+  descendant: MorphNode,
+  waypoint: WaypointNode,
+  localWaypoints: WaypointNode[]
+): boolean {
+  const owner = descendant.getFirstAncestor((ancestor) =>
+    localWaypoints.some((candidate) => candidate.node === ancestor)
+  );
+
+  return owner === waypoint.node;
+}
+
 function targetForCall(
   call: MorphNode,
   sourcePath: string,
@@ -307,11 +402,32 @@ function targetForCall(
     );
 
     return localTargets.length === 1
-      ? { definitionPath: sourcePath, definitionName: localTargets[0].identity.name }
+      ? {
+          definitionPath: sourcePath,
+          definitionName: localTargets[0].identity.name,
+          definitionWaypointId: localTargets[0].waypointId
+        }
       : undefined;
   }
 
   if (Node.isPropertyAccessExpression(expression)) {
+    const localTargets = localWaypoints.filter(
+      (waypoint) =>
+        waypoint.identity.name === expression.getName() &&
+        expression
+          .getNameNode()
+          .getDefinitionNodes()
+          .some((definition) => definitionMatchesWaypoint(definition, waypoint))
+    );
+
+    if (localTargets.length === 1) {
+      return {
+        definitionPath: sourcePath,
+        definitionName: localTargets[0].identity.name,
+        definitionWaypointId: localTargets[0].waypointId
+      };
+    }
+
     const owner = expression.getExpression();
     if (!Node.isIdentifier(owner)) {
       return undefined;
@@ -332,28 +448,124 @@ function targetForCall(
   return undefined;
 }
 
+function targetForJsxElement(
+  element: MorphNode,
+  sourcePath: string,
+  imports: ImportedCallTargets,
+  localWaypoints: WaypointNode[]
+): CallTarget | undefined {
+  if (!Node.isJsxOpeningElement(element) && !Node.isJsxSelfClosingElement(element)) {
+    return undefined;
+  }
+
+  const expression = element.getTagNameNode();
+
+  if (Node.isIdentifier(expression)) {
+    const importedTarget = imports.bindings.get(expression.getText());
+    if (
+      importedTarget &&
+      (
+        importedTarget.throughLazyComponent ||
+        expression
+          .getDefinitionNodes()
+          .some((definition) => definitionMatchesImportTarget(definition, element, importedTarget))
+      )
+    ) {
+      return importedTarget;
+    }
+
+    const localTargets = localWaypoints.filter(
+      (waypoint) =>
+        waypoint.identity.name === expression.getText() &&
+        expression
+          .getDefinitionNodes()
+          .some((definition) => definitionMatchesWaypoint(definition, waypoint))
+    );
+
+    return localTargets.length === 1
+      ? {
+          definitionPath: sourcePath,
+          definitionName: localTargets[0].identity.name,
+          definitionWaypointId: localTargets[0].waypointId
+        }
+      : undefined;
+  }
+
+  if (Node.isPropertyAccessExpression(expression)) {
+    const owner = expression.getExpression();
+    if (!Node.isIdentifier(owner)) {
+      return undefined;
+    }
+
+    const definitionPath = imports.namespaces.get(owner.getText());
+    return definitionPath
+      ? { definitionPath, definitionName: expression.getName() }
+      : undefined;
+  }
+
+  return undefined;
+}
+
 function callsFor(
-  node: MorphNode,
+  waypoint: WaypointNode,
   sourcePath: string,
   imports: ImportedCallTargets,
   localWaypoints: WaypointNode[]
 ): FunctionCall[] {
+  const node = waypoint.node;
   if (!Node.isFunctionLikeDeclaration(node)) {
     return [];
   }
 
   return node
     .getDescendantsOfKind(SyntaxKind.CallExpression)
-    .filter((call) => belongsToWaypoint(call, node))
+    .filter((call) => belongsToVisibleWaypoint(call, waypoint, localWaypoints))
     .map((call) => {
       const target = targetForCall(call, sourcePath, imports, localWaypoints);
 
       return {
+        connectionKind: "call" as const,
         name: call.getExpression().getText(),
         line: call.getStartLineNumber(),
         arguments: call.getArguments().map((argument) => argument.getText()),
         ...(target ?? {})
       };
+    });
+}
+
+function renderedComponentsFor(
+  waypoint: WaypointNode,
+  sourcePath: string,
+  imports: ImportedCallTargets,
+  localWaypoints: WaypointNode[]
+): FunctionCall[] {
+  const node = waypoint.node;
+  if (!Node.isFunctionLikeDeclaration(node)) {
+    return [];
+  }
+
+  const elements = [
+    ...node.getDescendantsOfKind(SyntaxKind.JsxOpeningElement),
+    ...node.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement)
+  ];
+
+  return elements
+    .filter((element) => belongsToVisibleWaypoint(element, waypoint, localWaypoints))
+    .flatMap((element) => {
+      const name = element.getTagNameNode().getText();
+      if (!/^[A-Z]/.test(name)) {
+        return [];
+      }
+
+      const target = targetForJsxElement(element, sourcePath, imports, localWaypoints);
+
+      return [{
+        connectionKind: "jsx-render",
+        name,
+        line: element.getStartLineNumber(),
+        arguments: [],
+        ...(target ?? {})
+      }];
     });
 }
 
@@ -425,8 +637,162 @@ function stateUpdatesFor(node: MorphNode): FunctionStateUpdate[] {
     });
 }
 
-function functionWaypoints(sourceFile: SourceFile, sourcePath: string, imports: ImportedCallTargets): FunctionWaypoint[] {
-  const waypointNodes: WaypointNode[] = FUNCTION_LIKE_KINDS.flatMap((kind) => sourceFile.getDescendantsOfKind(kind))
+function sortedLines(lines: Iterable<number>): number[] {
+  return [...new Set(lines)].sort((left, right) => left - right);
+}
+
+function containsNode(container: MorphNode, candidate: MorphNode): boolean {
+  return candidate.getStart() >= container.getStart() && candidate.getEnd() <= container.getEnd();
+}
+
+function isConditionReference(reference: MorphNode): boolean {
+  for (let ancestor = reference.getParent(); ancestor; ancestor = ancestor.getParent()) {
+    const condition = Node.isIfStatement(ancestor) || Node.isWhileStatement(ancestor)
+      ? ancestor.getExpression()
+      : Node.isForStatement(ancestor)
+        ? ancestor.getCondition()
+        : Node.isConditionalExpression(ancestor)
+          ? ancestor.getCondition()
+          : undefined;
+
+    if (condition && containsNode(condition, reference)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isRenderingReference(reference: MorphNode): boolean {
+  return Boolean(reference.getFirstAncestor((ancestor) => Node.isJsxExpression(ancestor)));
+}
+
+function isHelperArgumentReference(reference: MorphNode): boolean {
+  const call = reference.getFirstAncestorByKind(SyntaxKind.CallExpression);
+  return Boolean(call?.getArguments().some((argument) => containsNode(argument, reference)));
+}
+
+function isMutationReference(reference: MorphNode): boolean {
+  const binary = reference.getFirstAncestorByKind(SyntaxKind.BinaryExpression);
+  if (
+    binary &&
+    containsNode(binary.getLeft(), reference) &&
+    ASSIGNMENT_OPERATORS.has(binary.getOperatorToken().getText())
+  ) {
+    return true;
+  }
+
+  const unary = reference.getParent();
+  return Boolean(
+    unary &&
+    (unary.getKind() === SyntaxKind.PrefixUnaryExpression || unary.getKind() === SyntaxKind.PostfixUnaryExpression) &&
+    /(?:\+\+|--)/.test(unary.getText())
+  );
+}
+
+function declarationKindFor(
+  declaration: ReturnType<SourceFile["getDescendantsOfKind"]>[number],
+  initializer: MorphNode | undefined
+): VariableDeclarationKind {
+  if (initializer && Node.isCallExpression(initializer)) {
+    const expression = initializer.getExpression().getText();
+    if (/^(?:React\.)?useState$/.test(expression)) {
+      return "state";
+    }
+
+    if (/^(?:React\.)?useRef$/.test(expression)) {
+      return "ref";
+    }
+  }
+
+  const declarationText = declaration
+    .getFirstAncestorByKind(SyntaxKind.VariableDeclarationList)
+    ?.getText() ?? "";
+  const kind = declarationText.match(/^\s*(const|let|var)\b/)?.[1];
+  return kind === "let" || kind === "var" ? kind : "const";
+}
+
+function variableWaypointsFor(sourceFile: SourceFile): VariableWaypoint[] {
+  const stateMutationLines = new Map<string, number[]>();
+
+  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const update = stateUpdateForCall(call);
+    if (update) {
+      const lines = stateMutationLines.get(update.state) ?? [];
+      lines.push(update.line);
+      stateMutationLines.set(update.state, lines);
+    }
+  }
+
+  return sourceFile
+    .getDescendantsOfKind(SyntaxKind.VariableDeclaration)
+    .flatMap((declaration): VariableWaypoint[] => {
+      const initializer = declaration.getInitializer();
+      const kind = declarationKindFor(declaration, initializer);
+      const nameNode = declaration.getNameNode();
+      const bindings: Array<{ name: string; references: MorphNode[] }> = [];
+
+      if (kind === "state" && Node.isArrayBindingPattern(nameNode)) {
+        const stateBinding = nameNode.getElements()[0];
+        if (!stateBinding || !Node.isBindingElement(stateBinding)) {
+          return [];
+        }
+
+        bindings.push({
+          name: stateBinding.getName(),
+          references: stateBinding.findReferencesAsNodes()
+        });
+      } else if (Node.isIdentifier(nameNode)) {
+        bindings.push({
+          name: nameNode.getText(),
+          references: declaration.findReferencesAsNodes()
+        });
+      } else if (Node.isArrayBindingPattern(nameNode) || Node.isObjectBindingPattern(nameNode)) {
+        for (const binding of nameNode.getElements()) {
+          if (Node.isBindingElement(binding) && Node.isIdentifier(binding.getNameNode())) {
+            bindings.push({
+              name: binding.getName(),
+              references: binding.findReferencesAsNodes()
+            });
+          }
+        }
+      } else {
+        return [];
+      }
+
+      const declarationLine = declaration.getStartLineNumber();
+      return bindings.map(({ name, references }) => {
+        const localReferences = references.filter((reference) => reference.getSourceFile() === sourceFile);
+        const mutationLines = sortedLines([
+          ...localReferences.filter(isMutationReference).map((reference) => reference.getStartLineNumber()),
+          ...(kind === "state" ? stateMutationLines.get(name) ?? [] : [])
+        ]);
+
+        return {
+          variableId: `${kind}:${declarationLine}:${name}`,
+          name,
+          declarationLine,
+          declarationKind: kind,
+          usageLines: sortedLines(localReferences.map((reference) => reference.getStartLineNumber())),
+          mutationLines,
+          conditionLines: sortedLines(
+            localReferences.filter(isConditionReference).map((reference) => reference.getStartLineNumber())
+          ),
+          renderingLines: sortedLines(
+            localReferences.filter(isRenderingReference).map((reference) => reference.getStartLineNumber())
+          ),
+          helperCallLines: sortedLines(
+            localReferences.filter(isHelperArgumentReference).map((reference) => reference.getStartLineNumber())
+          ),
+          runtimeRelated: OPERATIONAL_VARIABLE_NAME_PATTERN.test(name)
+        };
+      });
+    })
+    .sort((left, right) => left.declarationLine - right.declarationLine || left.name.localeCompare(right.name));
+}
+
+function visibleWaypointNodesFor(sourceFile: SourceFile): WaypointNode[] {
+  return FUNCTION_LIKE_KINDS.flatMap((kind) => sourceFile.getDescendantsOfKind(kind))
     .flatMap((node): WaypointNode[] => {
       const identity = waypointIdentity(node);
 
@@ -434,21 +800,117 @@ function functionWaypoints(sourceFile: SourceFile, sourcePath: string, imports: 
         return [];
       }
 
-      return [{ node, identity }];
+      return [{ node, identity, waypointId: waypointIdFor(identity, node) }];
+    });
+}
+
+function functionWaypoints(
+  sourceFile: SourceFile,
+  sourcePath: string,
+  imports: ImportedCallTargets,
+  waypointNodes: WaypointNode[]
+): FunctionWaypoint[] {
+  return waypointNodes
+    .map((waypoint) => {
+      const exportNames = exportNamesForWaypoint(sourceFile, waypoint.node, waypoint.identity);
+
+      return {
+        waypointId: waypoint.waypointId,
+        name: waypoint.identity.name,
+        kind: waypoint.identity.kind,
+        startLine: waypoint.node.getStartLineNumber(),
+        endLine: waypoint.node.getEndLineNumber(),
+        exported: isExportedWaypoint(waypoint.node) || exportNames.length > 0,
+        exportNames,
+        inputs: inputsFor(waypoint.node),
+        outputs: outputsFor(waypoint.node),
+        calls: [...callsFor(waypoint, sourcePath, imports, waypointNodes), ...renderedComponentsFor(waypoint, sourcePath, imports, waypointNodes)]
+          .sort((left, right) => left.line - right.line || left.name.localeCompare(right.name)),
+        stateUpdates: stateUpdatesFor(waypoint.node)
+      };
+    })
+    .sort((a, b) => a.startLine - b.startLine || a.name.localeCompare(b.name));
+}
+
+function moduleLinksFor(
+  sourceFile: SourceFile,
+  sourcePath: string,
+  imports: ImportedCallTargets,
+  localWaypoints: WaypointNode[]
+): FunctionCall[] {
+  const hasVisibleOwner = (node: MorphNode) => Boolean(
+    node.getFirstAncestor((ancestor) => localWaypoints.some((waypoint) => waypoint.node === ancestor))
+  );
+  const calls = sourceFile
+    .getDescendantsOfKind(SyntaxKind.CallExpression)
+    .filter((call) => !hasVisibleOwner(call))
+    .flatMap((call): FunctionCall[] => {
+      const target = targetForCall(call, sourcePath, imports, localWaypoints);
+      return target ? [{
+        connectionKind: "call",
+        name: call.getExpression().getText(),
+        line: call.getStartLineNumber(),
+        arguments: call.getArguments().map((argument) => argument.getText()),
+        ...target
+      }] : [];
+    });
+  const renderedComponents = [
+    ...sourceFile.getDescendantsOfKind(SyntaxKind.JsxOpeningElement),
+    ...sourceFile.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement)
+  ]
+    .filter((element) => !hasVisibleOwner(element))
+    .flatMap((element): FunctionCall[] => {
+      const name = element.getTagNameNode().getText();
+      const target = /^[A-Z]/.test(name)
+        ? targetForJsxElement(element, sourcePath, imports, localWaypoints)
+        : undefined;
+
+      return target ? [{
+        connectionKind: "jsx-render",
+        name,
+        line: element.getStartLineNumber(),
+        arguments: [],
+        ...target
+      }] : [];
     });
 
-  return waypointNodes
-    .map(({ node, identity }) => ({
-        ...identity,
-        startLine: node.getStartLineNumber(),
-        endLine: node.getEndLineNumber(),
-        exported: isExportedWaypoint(node),
-        inputs: inputsFor(node),
-        outputs: outputsFor(node),
-        calls: callsFor(node, sourcePath, imports, waypointNodes),
-        stateUpdates: stateUpdatesFor(node)
-      }))
-    .sort((a, b) => a.startLine - b.startLine || a.name.localeCompare(b.name));
+  return [...calls, ...renderedComponents]
+    .sort((left, right) => left.line - right.line || left.name.localeCompare(right.name));
+}
+
+function resolveCallWaypointReferences(structure: ExtractedStructure): void {
+  const exportedTargets = new Map<string, FunctionWaypoint[]>();
+
+  for (const [filePath, metadata] of structure.fileMetadata) {
+    for (const waypoint of metadata.functionWaypoints ?? []) {
+      for (const exportName of waypoint.exportNames ?? []) {
+        const key = `${filePath}:${exportName}`;
+        const entries = exportedTargets.get(key) ?? [];
+        entries.push(waypoint);
+        exportedTargets.set(key, entries);
+      }
+    }
+  }
+
+  for (const metadata of structure.fileMetadata.values()) {
+    const linkSets = [
+      ...(metadata.functionWaypoints ?? []).map((caller) => caller.calls),
+      metadata.moduleLinks ?? []
+    ];
+
+    for (const links of linkSets) {
+      for (const call of links) {
+        if (call.definitionWaypointId || !call.definitionPath || !call.definitionName) {
+          continue;
+        }
+
+        const candidates = exportedTargets.get(`${call.definitionPath}:${call.definitionName}`) ?? [];
+        if (candidates.length === 1) {
+          call.definitionWaypointId = candidates[0].waypointId;
+        }
+      }
+    }
+  }
 }
 
 function isPassThroughExportFile(sourceFile: SourceFile): boolean {
@@ -462,7 +924,8 @@ function isPassThroughExportFile(sourceFile: SourceFile): boolean {
 function classifyCompression(
   filePath: string,
   metadata: ExtractedFileMetadata,
-  sourceFile?: SourceFile
+  sourceFile?: SourceFile,
+  pythonExtraction?: PythonExtraction
 ): CompressionReason[] {
   const reasons: CompressionReason[] = [];
 
@@ -470,7 +933,7 @@ function classifyCompression(
     reasons.push("very-low-loc");
   }
 
-  if (!sourceFile) {
+  if (!sourceFile && !pythonExtraction) {
     return reasons;
   }
 
@@ -492,8 +955,12 @@ function classifyCompression(
     reasons.push("conventional-support-file");
   }
 
-  if (isPassThroughExportFile(sourceFile)) {
+  if (sourceFile && isPassThroughExportFile(sourceFile)) {
     reasons.push("pass-through-export");
+  }
+
+  if (pythonExtraction?.isPackageGateway) {
+    reasons.push("package-gateway");
   }
 
   return [...new Set(reasons)];
@@ -566,7 +1033,7 @@ async function importedCallTargets(repoRoot: string, sourceFile: SourceFile): Pr
 
     const defaultImport = declaration.getDefaultImport();
     if (defaultImport) {
-      bindings.set(defaultImport.getText(), { definitionPath, definitionName: "default export" });
+      bindings.set(defaultImport.getText(), { definitionPath, definitionName: "default" });
     }
 
     for (const namedImport of declaration.getNamedImports()) {
@@ -577,6 +1044,35 @@ async function importedCallTargets(repoRoot: string, sourceFile: SourceFile): Pr
     const namespaceImport = declaration.getNamespaceImport();
     if (namespaceImport) {
       namespaces.set(namespaceImport.getText(), definitionPath);
+    }
+  }
+
+  for (const statement of sourceFile.getVariableStatements()) {
+    for (const declaration of statement.getDeclarations()) {
+      const localName = declaration.getName();
+      const initializerText = declaration.getInitializer()?.getText() ?? "";
+      if (!/^[A-Za-z_$][\w$]*$/.test(localName) || !/\b(?:React\.)?lazy\s*\(/.test(initializerText)) {
+        continue;
+      }
+
+      const specifier = initializerText.match(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/)?.[1];
+      if (!specifier) {
+        continue;
+      }
+
+      const definitionPath = await resolveImportPath(repoRoot, sourceFile.getFilePath(), specifier);
+      if (!definitionPath) {
+        continue;
+      }
+
+      const selectedExport = initializerText.match(
+        /\bdefault\s*:\s*[A-Za-z_$][\w$]*\.([A-Za-z_$][\w$]*)/
+      )?.[1] ?? "default";
+      bindings.set(localName, {
+        definitionPath,
+        definitionName: selectedExport,
+        throughLazyComponent: true
+      });
     }
   }
 
@@ -624,10 +1120,12 @@ function getImportSpecifiers(sourceFile: SourceFile): string[] {
 }
 
 function connectInputSources(structure: ExtractedStructure): void {
+  const targetsById = new Map<string, FunctionWaypoint>();
   const targets = new Map<string, FunctionWaypoint[]>();
 
   for (const [filePath, metadata] of structure.fileMetadata) {
     for (const waypoint of metadata.functionWaypoints ?? []) {
+      targetsById.set(`${filePath}:${waypoint.waypointId}`, waypoint);
       const key = `${filePath}:${waypoint.name}`;
       const entries = targets.get(key) ?? [];
       entries.push(waypoint);
@@ -642,12 +1140,15 @@ function connectInputSources(structure: ExtractedStructure): void {
           continue;
         }
 
-        const targetCandidates = targets.get(`${call.definitionPath}:${call.definitionName}`) ?? [];
-        if (targetCandidates.length !== 1) {
+        const target = call.definitionWaypointId
+          ? targetsById.get(`${call.definitionPath}:${call.definitionWaypointId}`)
+          : (targets.get(`${call.definitionPath}:${call.definitionName}`) ?? []).length === 1
+            ? (targets.get(`${call.definitionPath}:${call.definitionName}`) ?? [])[0]
+            : undefined;
+        if (!target) {
           continue;
         }
 
-        const target = targetCandidates[0];
         target.inputs.forEach((input, index) => {
           const expression = call.arguments[index];
           if (expression === undefined) {
@@ -692,6 +1193,7 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
     .sort();
   const sourceFiles = filePaths.map((filePath) => project.addSourceFileAtPath(path.join(repoRoot, filePath)));
   const sourceFilesByPath = new Map<string, SourceFile>();
+  const pythonExtractionsByPath = new Map<string, PythonExtraction>();
   const seenEdges = new Set<string>();
 
   for (const sourceFile of sourceFiles) {
@@ -699,12 +1201,17 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
     const metadata = structure.fileMetadata.get(sourcePath);
     sourceFilesByPath.set(sourcePath, sourceFile);
     if (metadata) {
+      const imports = await importedCallTargets(repoRoot, sourceFile);
+      const localWaypoints = visibleWaypointNodesFor(sourceFile);
       metadata.functionCount = countFunctions(sourceFile);
       metadata.functionWaypoints = functionWaypoints(
         sourceFile,
         sourcePath,
-        await importedCallTargets(repoRoot, sourceFile)
+        imports,
+        localWaypoints
       );
+      metadata.variableWaypoints = variableWaypointsFor(sourceFile);
+      metadata.moduleLinks = moduleLinksFor(sourceFile, sourcePath, imports, localWaypoints);
     }
     const specifiers = getImportSpecifiers(sourceFile).sort();
 
@@ -722,12 +1229,47 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
     }
   }
 
+  const pythonPaths = [...structure.files]
+    .filter((filePath) => PYTHON_PARSE_EXTENSIONS.has(path.extname(filePath).toLowerCase()))
+    .sort();
+
+  for (const sourcePath of pythonPaths) {
+    const metadata = structure.fileMetadata.get(sourcePath);
+    if (!metadata) {
+      continue;
+    }
+
+    const extraction = extractPython(sourcePath, metadata.sourceText, structure.files);
+    pythonExtractionsByPath.set(sourcePath, extraction);
+    metadata.functionCount = extraction.functionCount;
+    metadata.functionWaypoints = extraction.functionWaypoints;
+    metadata.variableWaypoints = extraction.variableWaypoints;
+
+    for (const targetPath of extraction.importPaths) {
+      if (targetPath === sourcePath) {
+        continue;
+      }
+
+      const edgeKey = `${sourcePath}->${targetPath}`;
+      if (!seenEdges.has(edgeKey)) {
+        seenEdges.add(edgeKey);
+        structure.imports.push({ source: sourcePath, target: targetPath });
+      }
+    }
+  }
+
+  resolveCallWaypointReferences(structure);
   connectInputSources(structure);
 
   for (const filePath of structure.files) {
     const metadata = structure.fileMetadata.get(filePath);
     if (metadata) {
-      metadata.compressionReasons = classifyCompression(filePath, metadata, sourceFilesByPath.get(filePath));
+      metadata.compressionReasons = classifyCompression(
+        filePath,
+        metadata,
+        sourceFilesByPath.get(filePath),
+        pythonExtractionsByPath.get(filePath)
+      );
     }
   }
 

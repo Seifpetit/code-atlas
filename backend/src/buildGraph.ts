@@ -68,6 +68,12 @@ export function buildGraph(structure: ExtractedStructure): GraphJson {
           ...(extractedMetadata?.functionWaypoints
             ? { functionWaypoints: extractedMetadata.functionWaypoints }
             : {}),
+          ...(extractedMetadata?.variableWaypoints?.length
+            ? { variableWaypoints: extractedMetadata.variableWaypoints }
+            : {}),
+          ...(extractedMetadata?.moduleLinks?.length
+            ? { moduleLinks: extractedMetadata.moduleLinks }
+            : {}),
           compressionLevel: compressionReasons.length > 0 ? "low-signal" : undefined,
           compressionReasons: compressionReasons.length > 0 ? compressionReasons : undefined
         }

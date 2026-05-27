@@ -320,8 +320,7 @@
   list-style: none;
 }
 
-.operational-panel__roles li,
-.operational-panel__gravity {
+.operational-panel__roles li {
   border-left: 2px solid var(--operational-role-accent, rgba(45, 212, 191, 0.5));
   background: var(--operational-role-background, rgba(16, 24, 39, 0.52));
   padding: 7px 9px;
@@ -390,8 +389,33 @@
   --operational-role-text: #a5f3fc;
 }
 
-.operational-panel__gravity {
-  margin-top: 10px;
+.operational-panel__file-types {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.operational-panel__file-types li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid rgba(41, 53, 72, 0.76);
+  background: rgba(16, 24, 39, 0.48);
+  padding: 7px 9px;
+}
+
+.operational-panel__file-types code {
+  color: #a5f3fc;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.operational-panel__file-types strong {
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .operational-panel__basis {
@@ -514,4 +538,3 @@
   color: #94a3b8;
   font-weight: 800;
 }
-

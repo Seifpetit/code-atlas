@@ -154,14 +154,22 @@ Returns:
 ```
 
 File metadata is extracted deterministically: all visible files carry
-`linesOfCode`, while JS/TS-family files also carry `functionCount`. Files classified as low-signal
+`linesOfCode`, while JS/TS-family and Python files also carry `functionCount`. Files classified as low-signal
 may additionally return `compressionLevel: "low-signal"` and explicit
 `compressionReasons`; the UI renders them more quietly without removing them.
 Indexed file nodes also carry their captured UTF-8 `sourceText` so the
-file-only raw-source modal can open without recloning the temporary repository
+file-only source inspection modal can open without recloning the temporary repository
 after analysis. The modal uses deterministic, lazily loaded syntax coloring
-for `.js`, `.jsx`, `.ts`, `.tsx`, `.json`, and `.css` files, with raw-text
-fallback for other indexed formats.
+for indexed source and structured text formats: JS/TS, Python, JSON, CSS
+variants, HTML/XML/SVG, Markdown/MDX, YAML/TOML, shell, and PowerShell.
+Plain `.txt` files remain raw text.
+Markdown `.md` files open as rendered GFM documents by default and provide a
+compact `Rendered` / `Raw` switch; raw mode uses the Markdown syntax grammar.
+
+Python `.py` files are parsed through a dedicated deterministic grammar path.
+Local module imports, function/method waypoints, inputs, annotated returns,
+and traceable direct calls feed the same graph and source-inspection contract
+as the existing JS/TS extraction path.
 
 `POST /diff`
 

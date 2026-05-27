@@ -173,7 +173,8 @@ Purpose:
 
 Rules:
 - Uses only filename conventions, non-blank LOC, syntax-derived function
-  counts, and pass-through export structure.
+  counts, pass-through export structure, and import-only Python package
+  gateway structure.
 - Compression is overridden by focus, search, temporal attention, and runtime states.
 
 Technical name:
@@ -187,6 +188,7 @@ Current reason values:
 - `tiny-wrapper`
 - `conventional-support-file`
 - `pass-through-export`
+- `package-gateway`
 
 **Structural File**
 A file that appears in the atlas because it is part of repository topology.
@@ -194,6 +196,7 @@ A file that appears in the atlas because it is part of repository topology.
 Examples:
 - `.ts`
 - `.tsx`
+- `.py`
 - `.md`
 - `.json`
 - `.yml`
@@ -214,6 +217,7 @@ Current examples:
 - `.cts`
 - `.mjs`
 - `.cjs`
+- `.py`
 
 Rule:
 - Import parsing is narrower than structural visibility.
@@ -577,11 +581,11 @@ Current rule:
 - Secondary semantic layers begin collapsed, retain faint summaries, and
   unfold one at a time through explicit user action.
 - Files unfold `Operational Role` and `Activation Surface`.
-- Folders and domains unfold `Dominant Gravity` and `Regional Actions`.
+- Folders and domains unfold `File Types` and `Regional Actions`.
 - `Interaction Memory` is session-scoped residue indicating previous focus or
   Runtime X-Ray activation for the selected object.
-- A focused file's identity anchor includes a square raw-source control that
-  opens its source text in a read-only modal.
+- A focused file's identity anchor includes a square source-inspection control
+  that opens its captured content in a read-only modal.
 - Each emitted operational role category receives a stable accent color; the
   color identifies the rule category and is not a semantic-confidence score.
 - Its native scroll channel uses thin subdued tactical chrome, becoming
@@ -608,8 +612,8 @@ Rule:
 - Interaction memory is local to the current analyzed graph and is not
   repository history or persisted analytics.
 
-**Raw Source Modal**
-A screen-fixed, read-only code surface opened from the source control beside a
+**Source Inspection Modal**
+A screen-fixed, read-only content surface opened from the source control beside a
 focused file name.
 
 Purpose:
@@ -619,8 +623,11 @@ Purpose:
 Rule:
 - The modal is not part of graph coordinates and does not modify Runtime
   X-Ray, hierarchy, semantic compression, or attention behavior.
-- JavaScript-ecosystem source formats use deterministic syntax coloring;
-  unmapped text formats remain uncolored raw source.
+- Indexed source and structured text formats use deterministic syntax coloring,
+  including JS/TS, Python, markup, documentation, config, styles, and shell
+  scripts; plain `.txt` remains uncolored raw source.
+- Markdown `.md` content starts as a safely rendered GFM document and can be
+  switched to syntax-colored raw source through a compact pill control.
 - Highlighting code and individual language grammars load only when source
   inspection requires them.
 

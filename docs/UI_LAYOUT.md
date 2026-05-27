@@ -96,9 +96,9 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Max height: `calc(100% - 32px)`
 - The always-expanded anchor contains identity plus architectural weight for a
   file, or identity plus regional density for a folder/domain.
-- File identity places a compact square raw-source trigger directly beside the
+- File identity places a compact square source-inspection trigger directly beside the
   file name; territories do not show this trigger.
-- Operational role or dominant gravity, actions, and interaction memory render
+- Operational role or territory file-type counts, actions, and interaction memory render
   as collapsed semantic layers by default.
 - Only one secondary semantic layer unfolds at a time; collapsed layers keep
   a faint one-line summary and compact chevron indicator.
@@ -117,15 +117,47 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - The scrollbar uses a thin dark channel with a low-alpha teal thumb that
   brightens subtly while the panel or thumb is being used.
 
-**Raw Source Modal**
+**Source Inspection Modal**
 - Screen-fixed overlay above the graph and panels, opened only from a focused
   file's source trigger.
 - Maximum surface: `980px` wide by `720px` high, bounded by viewport padding.
+- A resizable narrow rail on the left stacks compact Operational Identity above
+  Navigation; the dominant implementation/document field spans the wider,
+  full-height working surface on the right.
+- File name, compressed path, language, LOC, function count, and applicable
+  runtime/document-mode state share a single compact header row; long paths
+  truncate rather than increasing header height.
 - Read-only monospace source viewport with dark surface and thin subdued teal
   native scrollbar.
-- JavaScript-ecosystem token colors are provided deterministically through a
-  lazily loaded dark syntax theme; unsupported text formats retain the same
+- Indexed source and structured text token colors are provided deterministically
+  through lazily loaded dark syntax grammars; plain `.txt` retains the same
   viewport with raw monochrome text.
+- Markdown `.md` opens in a styled rendered-document viewport by default; an
+  inline `Rendered` / `Raw` pill switch restores the syntax-colored raw text.
+- Parsed function declaration lines expose a brand-cyan gutter cue; folding
+  highlights the retained declaration row and residue in cyan, then compresses
+  its body until reopened or navigated. The chevron occupies a fixed left
+  gutter slot independent of line-number width.
+- Activating a folded declaration converts the implementation field into a
+  local Runtime Placement corridor: the focused function stays centered
+  between up to two resolved incoming callers and two resolved outgoing calls.
+  Relationships are keyed by concrete extracted waypoint identity; cross-file
+  neighbors include their file path at reduced visual emphasis.
+- Corridor lanes are presented as resolved flow and distinguish direct calls
+  from JSX-rendered component links; this is structural placement, not
+  execution telemetry.
+- A deterministic top-level mount may appear as `Module Scope` with its file
+  path when a focused function has no enclosing function caller, such as an
+  application root rendered from an entry module.
+- Navigation places an initially expanded `Operational Variables` layer
+  directly under `Function Waypoints`; it shows parser-backed state surfaces,
+  runtime handles, and structurally propagated projections with compact
+  reference evidence.
+- `Local Variables` begins collapsed beneath it and reports the number of
+  suppressed local declarations until explicitly unfolded.
+- Selecting a variable does not navigate the viewport; the implementation
+  field marks its declaration, a bounded set of relevant usages, and detected
+  mutations with subdued teal operational residue.
 - Close affordances: square close control, `Escape`, or backdrop click.
 
 **Raw History Inspector**
@@ -180,7 +212,7 @@ These values are layout inputs, not decorative CSS-only values. React Flow node 
 - Files are intentionally vertical rectangles.
 - Visible chrome uses the file shape with a folded corner.
 - The bottom metadata row displays lightweight `LOC` metrics and adds `/F`
-  function count only for JS/TS-family files.
+  function count only for JS/TS-family and Python files.
 - Low-signal compression changes ambient opacity/chrome emphasis only; it does
   not change file-node dimensions or layout bounds.
 

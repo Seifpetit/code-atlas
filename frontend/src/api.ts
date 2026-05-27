@@ -12,11 +12,14 @@ export interface AtlasNode extends Record<string, unknown> {
     linesOfCode?: number;
     functionCount?: number;
     functionWaypoints?: Array<{
+      waypointId?: string;
       name: string;
       kind: "function" | "arrow" | "method" | "accessor" | "constructor" | "effect";
       startLine: number;
       endLine: number;
       exported: boolean;
+      public?: boolean;
+      exportNames?: string[];
       inputs: Array<{
         name: string;
         line: number;
@@ -35,11 +38,13 @@ export interface AtlasNode extends Record<string, unknown> {
         async: boolean;
       }>;
       calls: Array<{
+        connectionKind?: "call" | "jsx-render";
         name: string;
         line: number;
         arguments: string[];
         definitionPath?: string;
         definitionName?: string;
+        definitionWaypointId?: string;
       }>;
       stateUpdates: Array<{
         state: string;
@@ -48,9 +53,30 @@ export interface AtlasNode extends Record<string, unknown> {
         arguments: string[];
       }>;
     }>;
+    variableWaypoints?: Array<{
+      variableId: string;
+      name: string;
+      declarationLine: number;
+      declarationKind: "state" | "ref" | "const" | "let" | "var" | "assignment" | "iterator";
+      usageLines: number[];
+      mutationLines: number[];
+      conditionLines: number[];
+      renderingLines: number[];
+      helperCallLines: number[];
+      runtimeRelated: boolean;
+    }>;
+    moduleLinks?: Array<{
+      connectionKind?: "call" | "jsx-render";
+      name: string;
+      line: number;
+      arguments: string[];
+      definitionPath?: string;
+      definitionName?: string;
+      definitionWaypointId?: string;
+    }>;
     compressionLevel?: "low-signal";
     compressionReasons?: Array<
-      "very-low-loc" | "tiny-wrapper" | "conventional-support-file" | "pass-through-export"
+      "very-low-loc" | "tiny-wrapper" | "conventional-support-file" | "pass-through-export" | "package-gateway"
     >;
   };
 }

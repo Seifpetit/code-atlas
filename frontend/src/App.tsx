@@ -38,7 +38,7 @@ export default function App() {
           <span className="brand__mark">CA</span>
           <div>
             <h1>Code Atlas</h1>
-            <p>for JavaScript ecosystem</p>
+            <p>for JavaScript and Python ecosystems</p>
             <p className="brand__subtitle">Deterministic repository structure graph</p>
           </div>
         </div>

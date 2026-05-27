@@ -4,7 +4,8 @@ export type CompressionReason =
   | "very-low-loc"
   | "tiny-wrapper"
   | "conventional-support-file"
-  | "pass-through-export";
+  | "pass-through-export"
+  | "package-gateway";
 export type FunctionWaypointKind = "function" | "arrow" | "method" | "accessor" | "constructor" | "effect";
 
 export interface FunctionInputSource {
@@ -29,11 +30,13 @@ export interface FunctionOutput {
 }
 
 export interface FunctionCall {
+  connectionKind?: "call" | "jsx-render";
   name: string;
   line: number;
   arguments: string[];
   definitionPath?: string;
   definitionName?: string;
+  definitionWaypointId?: string;
 }
 
 export interface FunctionStateUpdate {
@@ -43,12 +46,30 @@ export interface FunctionStateUpdate {
   arguments: string[];
 }
 
+export type VariableDeclarationKind = "state" | "ref" | "const" | "let" | "var" | "assignment" | "iterator";
+
+export interface VariableWaypoint {
+  variableId: string;
+  name: string;
+  declarationLine: number;
+  declarationKind: VariableDeclarationKind;
+  usageLines: number[];
+  mutationLines: number[];
+  conditionLines: number[];
+  renderingLines: number[];
+  helperCallLines: number[];
+  runtimeRelated: boolean;
+}
+
 export interface FunctionWaypoint {
+  waypointId: string;
   name: string;
   kind: FunctionWaypointKind;
   startLine: number;
   endLine: number;
   exported: boolean;
+  public?: boolean;
+  exportNames?: string[];
   inputs: FunctionInput[];
   outputs: FunctionOutput[];
   calls: FunctionCall[];
@@ -69,6 +90,8 @@ export interface GraphNode {
     linesOfCode?: number;
     functionCount?: number;
     functionWaypoints?: FunctionWaypoint[];
+    variableWaypoints?: VariableWaypoint[];
+    moduleLinks?: FunctionCall[];
     compressionLevel?: CompressionLevel;
     compressionReasons?: CompressionReason[];
   };
@@ -103,6 +126,8 @@ export interface ExtractedFileMetadata {
   sourceText: string;
   functionCount?: number;
   functionWaypoints?: FunctionWaypoint[];
+  variableWaypoints?: VariableWaypoint[];
+  moduleLinks?: FunctionCall[];
   compressionReasons: CompressionReason[];
 }
 

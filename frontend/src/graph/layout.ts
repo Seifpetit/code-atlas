@@ -41,7 +41,7 @@ const GRID_GAP_Y = 34;
 const GROUP_GAP_Y = 70;
 const GROUP_GAP_X = 90;
 
-const IMPORT_PARSE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+const IMPORT_PARSE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
 const EXTENSION_LABELS = new Map<string, string>([
   [".md", "Docs"],
   [".mdx", "Docs"],
