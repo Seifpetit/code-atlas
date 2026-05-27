@@ -5,6 +5,55 @@ export type CompressionReason =
   | "tiny-wrapper"
   | "conventional-support-file"
   | "pass-through-export";
+export type FunctionWaypointKind = "function" | "arrow" | "method" | "accessor" | "constructor" | "effect";
+
+export interface FunctionInputSource {
+  filePath: string;
+  functionName: string;
+  line: number;
+  expression: string;
+}
+
+export interface FunctionInput {
+  name: string;
+  line: number;
+  type?: string;
+  sources?: FunctionInputSource[];
+}
+
+export interface FunctionOutput {
+  line: number;
+  expression: string;
+  type?: string;
+  async: boolean;
+}
+
+export interface FunctionCall {
+  name: string;
+  line: number;
+  arguments: string[];
+  definitionPath?: string;
+  definitionName?: string;
+}
+
+export interface FunctionStateUpdate {
+  state: string;
+  setter: string;
+  line: number;
+  arguments: string[];
+}
+
+export interface FunctionWaypoint {
+  name: string;
+  kind: FunctionWaypointKind;
+  startLine: number;
+  endLine: number;
+  exported: boolean;
+  inputs: FunctionInput[];
+  outputs: FunctionOutput[];
+  calls: FunctionCall[];
+  stateUpdates: FunctionStateUpdate[];
+}
 
 export interface GraphNode {
   id: string;
@@ -12,12 +61,14 @@ export interface GraphNode {
   label: string;
   path: string;
   parent?: string;
+  sourceText?: string;
   metadata?: {
     extension?: string;
     importCount?: number;
     childCount?: number;
     linesOfCode?: number;
     functionCount?: number;
+    functionWaypoints?: FunctionWaypoint[];
     compressionLevel?: CompressionLevel;
     compressionReasons?: CompressionReason[];
   };
@@ -49,7 +100,9 @@ export interface ExtractedStructure {
 
 export interface ExtractedFileMetadata {
   linesOfCode: number;
+  sourceText: string;
   functionCount?: number;
+  functionWaypoints?: FunctionWaypoint[];
   compressionReasons: CompressionReason[];
 }
 

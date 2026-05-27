@@ -1,13 +1,9 @@
-import { BaseEdge, type EdgeProps, type EdgeTypes } from "@xyflow/react";
+import { BaseEdge, getBezierPath, type EdgeProps, type EdgeTypes } from "@xyflow/react";
 
 interface StructuralEdgeData extends Record<string, unknown> {
   direction?: "incoming" | "outgoing";
   kind?: string;
   laneOffset?: number;
-}
-
-function straightPath(sourceX: number, sourceY: number, targetX: number, targetY: number): string {
-  return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
 }
 
 export function StructuralEdge(props: EdgeProps) {
@@ -17,12 +13,14 @@ export function StructuralEdge(props: EdgeProps) {
   const isRuntime = typeof data?.kind === "string" && data.kind.startsWith("runtime-");
   const direction = data?.direction === "incoming" ? "incoming" : "outgoing";
   const mode = isLineage ? "lineage" : isRuntime ? "runtime" : "focus";
-  const edgePath = straightPath(
-    props.sourceX,
-    props.sourceY + laneOffset,
-    props.targetX,
-    props.targetY + laneOffset
-  );
+  const [edgePath] = getBezierPath({
+    sourceX: props.sourceX,
+    sourceY: props.sourceY + laneOffset,
+    sourcePosition: props.sourcePosition,
+    targetX: props.targetX,
+    targetY: props.targetY + laneOffset,
+    targetPosition: props.targetPosition
+  });
   const className = [
     "structural-edge",
     isLineage ? "structural-edge--lineage" : isRuntime ? `structural-edge--${data?.kind}` : `structural-edge--${direction}`,

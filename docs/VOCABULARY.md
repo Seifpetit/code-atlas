@@ -572,19 +572,57 @@ object.
 
 Current rule:
 - The details panel is click-driven, not hover-driven.
-- It identifies the focused object, explains deterministic architectural
-  weight or regional density, offers humble operational signals, and exposes
-  only working actions.
-- Files use `Identity`, `Architectural Weight`, `Operational Role`, and
-  `Activation Surface`.
-- Folders and domains use `Identity`, `Regional Density`, `Dominant Gravity`,
-  and `Regional Actions`.
+- Its always-visible anchor identifies the focused object and exposes
+  deterministic architectural weight or regional density.
+- Secondary semantic layers begin collapsed, retain faint summaries, and
+  unfold one at a time through explicit user action.
+- Files unfold `Operational Role` and `Activation Surface`.
+- Folders and domains unfold `Dominant Gravity` and `Regional Actions`.
+- `Interaction Memory` is session-scoped residue indicating previous focus or
+  Runtime X-Ray activation for the selected object.
+- A focused file's identity anchor includes a square raw-source control that
+  opens its source text in a read-only modal.
 - Each emitted operational role category receives a stable accent color; the
   color identifies the rule category and is not a semantic-confidence score.
 - Its native scroll channel uses thin subdued tactical chrome, becoming
   brighter only during direct panel interaction.
 - Native Runtime origin dropdown scrolling uses the same tactical channel
   styling where the browser exposes select scrollbar chrome.
+
+**Semantic Layer**
+A collapsible secondary region inside the details panel.
+
+Purpose:
+- Makes deeper operational meaning available without exposing every detail
+  simultaneously.
+
+Rule:
+- A collapsed semantic layer still presents its title and concise residue
+  summary; only one secondary layer opens at a time.
+
+**Interaction Memory**
+Subtle in-session residue for an object previously explored in the panel or
+activated as a Runtime X-Ray file origin.
+
+Rule:
+- Interaction memory is local to the current analyzed graph and is not
+  repository history or persisted analytics.
+
+**Raw Source Modal**
+A screen-fixed, read-only code surface opened from the source control beside a
+focused file name.
+
+Purpose:
+- Reveals exact file contents only after deliberate user request while the
+  panel remains a compact operational interpretation surface.
+
+Rule:
+- The modal is not part of graph coordinates and does not modify Runtime
+  X-Ray, hierarchy, semantic compression, or attention behavior.
+- JavaScript-ecosystem source formats use deterministic syntax coloring;
+  unmapped text formats remain uncolored raw source.
+- Highlighting code and individual language grammars load only when source
+  inspection requires them.
 
 **Relation Lens**
 The compact visible-connection tracing controls inside the focused object's

@@ -373,12 +373,24 @@ Status:
 - Accepted
 
 Decision:
-- The focused-object panel is organized into four compact regions rather than
-  presenting a generic metadata list.
-- Files show identity, deterministic architectural weight, heuristic
-  operational role, and activation surface.
-- Domains and folders show identity, recursive regional density, deterministic
-  dominant gravity, and regional actions.
+- The focused-object panel uses progressive semantic layers rather than
+  presenting every region as simultaneously open metadata.
+- The first anchor remains expanded: files show identity and deterministic
+  architectural weight, while domains and folders show identity and recursive
+  regional density.
+- Secondary layers begin collapsed and expose a compact summary until the user
+  intentionally unfolds them; only one secondary layer is expanded at a time.
+- Files expose operational role and activation surface as secondary layers.
+- Domains and folders expose dominant gravity and regional actions as
+  secondary layers.
+- A focused file exposes a compact square raw-source control beside its name;
+  invoking it opens a screen-fixed read-only source modal outside the graph
+  interaction surface.
+- The source modal applies deterministic Shiki/TextMate syntax coloring only
+  for explicitly mapped JavaScript-ecosystem formats (`js`, `jsx`, `ts`,
+  `tsx`, `json`, and `css`); other indexed text formats render as raw text.
+- A subtle interaction-memory layer reports prior focus or runtime activation
+  for the selected object during the current analyzed session.
 - Operational labels use only path/name conventions, extracted metrics,
   compression reasons, and import graph relationships; they remain candidates
   or rule-derived signals rather than semantic claims.
@@ -388,6 +400,8 @@ Decision:
 - Existing visible-connection trace hover controls remain available inside the
   action region, while low-value repeated parent/path/history and
   outside-context summary rows are not shown by default.
+- A folder or domain Runtime origin selector lists only its direct file
+  children; nested descendants become eligible after entering their region.
 
 Rationale:
 - The canvas already communicates hierarchy and spatial placement; repeating
@@ -396,6 +410,16 @@ Rationale:
   useful local architectural weight without AI interpretation.
 - Actions should expose existing capabilities such as context entry, exact
   relationship trace, and Runtime X-Ray without implying unavailable tools.
+- Limiting runtime origin choices to the active territorial level preserves
+  progressive hierarchy navigation instead of flattening nested structure in
+  the action surface.
+- Summary residue allows semantic depth to remain discoverable without making
+  all operational detail compete for attention immediately.
+- Raw source is pulled only through explicit curiosity and does not displace
+  the lightweight interpretation panel.
+- Syntax grammar loading is deferred until raw-source inspection and cached per
+  requested language so normal graph exploration does not initialize the
+  highlighting surface.
 
 Implications:
 - The panel refactor must not modify runtime corridors, hierarchy unfolding,
@@ -406,6 +430,13 @@ Implications:
   as a thin, low-noise teal channel with restrained interactive emphasis.
 - The native Runtime origin selector uses matching scroll chrome where the
   browser exposes dropdown scrollbar styling.
+- Interaction memory is local UI state and does not alter graph rendering,
+  persisted repository history, or runtime chain derivation.
+- Analysis retains the already-read UTF-8 source text for indexed file nodes
+  because the temporary repository clone is removed after the analysis
+  response is produced.
+- Syntax highlighting is deterministic presentation only and does not alter
+  extraction, semantic compression, runtime behavior, or source content.
 
 ## 21. The Temporal Scrubber Collapses At A Stable Origin
 
@@ -476,3 +507,35 @@ Implications:
 - Runtime edge emphasis uses stroke treatment rather than raising edge layer
   priority over nodes.
 - Straight-line geometry remains the current routing baseline.
+
+## 24. Sectioned Panels Reveal One Initial Layer
+
+Status:
+- Accepted
+
+Decision:
+- Any panel that contains a vertical stack of collapsible semantic subsections
+  exposes only its first subsection on initial render.
+- The first subsection begins expanded, remains user-collapsible, and is not
+  forced open after the user intentionally collapses it.
+- Every following subsection in that stack begins collapsed and is unfolded
+  only through explicit user action.
+- Persistent non-collapsible anchors, such as a compact identity header, are
+  outside this subsection rule and may remain visible above the stack.
+
+Rationale:
+- A single initial layer gives immediate orientation without making every
+  available meaning compete for attention at once.
+- Keeping the first layer collapsible preserves user control after initial
+  stabilization.
+- A consistent disclosure order makes operational panels easier to scan and
+  keeps deeper detail available without dashboard density.
+
+Implications:
+- New sectional panels must identify their primary first subsection and set
+  disclosure defaults accordingly.
+- The source inspection rail opens `Function Waypoints` initially while
+  `Structural Anchors` begins collapsed beneath it.
+- Existing focused-object progressive disclosure should preserve its compact
+  always-visible anchor and apply this rule to any collapsible subsection
+  stack it presents.

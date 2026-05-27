@@ -133,6 +133,7 @@ Returns:
       "label": "Button.tsx",
       "path": "src/components/Button.tsx",
       "parent": "src/components",
+      "sourceText": "export function Button() { ... }",
       "metadata": {
         "extension": ".tsx",
         "importCount": 2,
@@ -156,6 +157,11 @@ File metadata is extracted deterministically: all visible files carry
 `linesOfCode`, while JS/TS-family files also carry `functionCount`. Files classified as low-signal
 may additionally return `compressionLevel: "low-signal"` and explicit
 `compressionReasons`; the UI renders them more quietly without removing them.
+Indexed file nodes also carry their captured UTF-8 `sourceText` so the
+file-only raw-source modal can open without recloning the temporary repository
+after analysis. The modal uses deterministic, lazily loaded syntax coloring
+for `.js`, `.jsx`, `.ts`, `.tsx`, `.json`, and `.css` files, with raw-text
+fallback for other indexed formats.
 
 `POST /diff`
 

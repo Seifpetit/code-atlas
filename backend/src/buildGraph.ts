@@ -57,12 +57,16 @@ export function buildGraph(structure: ExtractedStructure): GraphJson {
         label: labelFromPath(filePath),
         path: filePath,
         parent: parentFromPath(filePath),
+        sourceText: extractedMetadata?.sourceText,
         metadata: {
           extension: path.posix.extname(filePath),
           importCount: importCounts.get(filePath) ?? 0,
           linesOfCode: extractedMetadata?.linesOfCode ?? 0,
           ...(typeof extractedMetadata?.functionCount === "number"
             ? { functionCount: extractedMetadata.functionCount }
+            : {}),
+          ...(extractedMetadata?.functionWaypoints
+            ? { functionWaypoints: extractedMetadata.functionWaypoints }
             : {}),
           compressionLevel: compressionReasons.length > 0 ? "low-signal" : undefined,
           compressionReasons: compressionReasons.length > 0 ? compressionReasons : undefined

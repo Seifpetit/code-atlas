@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -28,6 +28,10 @@ import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
 import { layoutStructuralContext, type AtlasFlowEdge, type AtlasFlowNode } from "./layout";
 import { nodeTypes } from "./nodeTypes";
+
+const SourceCodeModal = lazy(() =>
+  import("./SourceCodeModal").then((module) => ({ default: module.SourceCodeModal }))
+);
 
 interface GraphViewProps {
   graph: AtlasGraph | null;
@@ -61,6 +65,7 @@ const COMPRESSION_REASON_LABELS = new Map<string, string>([
 ]);
 const JAVASCRIPT_ECOSYSTEM_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 type ArchitecturalWeight = "LOW" | "MEDIUM" | "HIGH";
+type SecondaryPanelRegion = "role" | "gravity" | "actions" | "memory";
 type OperationalRoleKind =
   | "low-signal"
   | "configuration"
@@ -89,6 +94,45 @@ interface RegionalSummary {
   internalImports: number;
   inboundImports: number;
   outboundImports: number;
+}
+
+interface InteractionResidue {
+  focusCount: number;
+  runtimeActivationCount: number;
+}
+
+interface CollapsibleSemanticRegionProps {
+  title: string;
+  summary: string;
+  isExpanded: boolean;
+  hasResidue?: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}
+
+function CollapsibleSemanticRegion({
+  title,
+  summary,
+  isExpanded,
+  hasResidue = false,
+  onToggle,
+  children
+}: CollapsibleSemanticRegionProps) {
+  return (
+    <section className={`operational-panel__region operational-panel__layer ${isExpanded ? "is-expanded" : "is-collapsed"}`}>
+      <button
+        type="button"
+        className="operational-panel__layer-toggle"
+        aria-expanded={isExpanded}
+        onClick={onToggle}
+      >
+        <span className="operational-panel__layer-title">{title}</span>
+        <span className={`operational-panel__layer-summary ${hasResidue ? "has-residue" : ""}`.trim()}>{summary}</span>
+        <span className="operational-panel__layer-chevron" aria-hidden="true" />
+      </button>
+      {isExpanded ? <div className="operational-panel__layer-content">{children}</div> : null}
+    </section>
+  );
 }
 
 function compressionDescription(node: AtlasNode): string {
@@ -368,11 +412,17 @@ function budgetRelationships(
 
 export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps) {
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
+  const [sourceModalFile, setSourceModalFile] = useState<AtlasNode | null>(null);
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [tracedEdgeId, setTracedEdgeId] = useState<string | null>(null);
   const [selectedRuntimeFileId, setSelectedRuntimeFileId] = useState<string | null>(null);
+  const [expandedPanelRegion, setExpandedPanelRegion] = useState<{ nodeId: string | null; region: SecondaryPanelRegion | null }>({
+    nodeId: null,
+    region: null
+  });
+  const [interactionResidueByNodeId, setInteractionResidueByNodeId] = useState<Record<string, InteractionResidue>>({});
   const [temporalIndex, setTemporalIndex] = useState(0);
   const [focusedLandmarkId, setFocusedLandmarkId] = useState<string | null>(null);
   const [timelineCollapsed, setTimelineCollapsed] = useState(false);
@@ -392,6 +442,32 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   }, []);
   const handleTraceEnd = useCallback(() => {
     setTracedEdgeId(null);
+  }, []);
+  const recordNodeFocus = useCallback((nodeId: string) => {
+    setInteractionResidueByNodeId((current) => {
+      const residue = current[nodeId] ?? { focusCount: 0, runtimeActivationCount: 0 };
+
+      return {
+        ...current,
+        [nodeId]: {
+          ...residue,
+          focusCount: residue.focusCount + 1
+        }
+      };
+    });
+  }, []);
+  const recordRuntimeActivation = useCallback((nodeId: string) => {
+    setInteractionResidueByNodeId((current) => {
+      const residue = current[nodeId] ?? { focusCount: 0, runtimeActivationCount: 0 };
+
+      return {
+        ...current,
+        [nodeId]: {
+          ...residue,
+          runtimeActivationCount: residue.runtimeActivationCount + 1
+        }
+      };
+    });
   }, []);
 
   const structuralState = useMemo<StructuralState | null>(() => {
@@ -415,6 +491,9 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setFocusedNodeId(null);
     setTracedEdgeId(null);
     setSelectedRuntimeFileId(null);
+    setSourceModalFile(null);
+    setExpandedPanelRegion({ nodeId: null, region: null });
+    setInteractionResidueByNodeId({});
     setTemporalIndex(0);
     setFocusedLandmarkId(null);
     setSelectedNode(null);
@@ -430,6 +509,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     setHoveredNodeId(null);
     setTracedEdgeId(null);
     setSelectedRuntimeFileId(null);
+    setSourceModalFile(null);
+    setExpandedPanelRegion({ nodeId: null, region: null });
     setSelectedNode(null);
     setPageIndex(0);
     setRuntimeNodePositions({});
@@ -596,6 +677,31 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
 
     return ids;
   }, [activeNodeId, relationshipBudget]);
+  const connectionPortsByNodeId = useMemo(() => {
+    const ports = new Map<string, { input: boolean; export: boolean }>();
+
+    if (!laidOut) {
+      return ports;
+    }
+
+    const markConnection = (sourceId: string, targetId: string) => {
+      const sourcePorts = ports.get(sourceId) ?? { input: false, export: false };
+      const targetPorts = ports.get(targetId) ?? { input: false, export: false };
+
+      ports.set(sourceId, { ...sourcePorts, export: true });
+      ports.set(targetId, { ...targetPorts, input: true });
+    };
+    const connectionEdges =
+      runtimeState.active && runtimeLayout
+        ? [...laidOut.lineageEdges, ...runtimeLayout.edges]
+        : [...laidOut.lineageEdges, ...laidOut.edges];
+
+    for (const edge of connectionEdges) {
+      markConnection(edge.source, edge.target);
+    }
+
+    return ports;
+  }, [laidOut, runtimeLayout, runtimeState.active]);
 
   const nodes = useMemo<AtlasFlowNode[]>(() => {
     if (!laidOut) {
@@ -664,6 +770,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
           historyBadge: historyBadgeFor(data, graph?.fileHistory),
           temporalPressure,
           visualState: resolvedVisualState,
+          connectionPorts: connectionPortsByNodeId.get(node.id),
           runtimeStep: runtimeState.active ? runtimeState.chain?.nodes.find((runtimeNode) => runtimeNode.id === node.id)?.runtimeStep : undefined,
           relationStub:
             shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
@@ -700,7 +807,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         data: {
           ...data,
           historyBadge: historyBadgeFor(data, graph?.fileHistory),
-          visualState
+          visualState,
+          connectionPorts: connectionPortsByNodeId.get(node.id)
         },
         className: `${visualState.className} runtime-node`
       };
@@ -710,6 +818,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
   }, [
     activeMode,
     activeNodeId,
+    connectionPortsByNodeId,
     connectedNodeIds,
     handleTraceEnd,
     handleTraceStart,
@@ -864,7 +973,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     }
 
     return graph.nodes
-      .filter((node) => node.type === "file" && ownsPath(selectedNode, node.path))
+      .filter((node) => node.type === "file" && node.parent === selectedNode.id)
       .sort((a, b) => {
         const connectionDifference = Number(connectedFileIds.has(b.id)) - Number(connectedFileIds.has(a.id));
 
@@ -876,6 +985,63 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       });
   }, [graph, selectedNode]);
   const selectedRuntimeFile = selectedRuntimeFileId ? graphNodeById.get(selectedRuntimeFileId) ?? null : null;
+  const selectedInteractionResidue = selectedNode ? interactionResidueByNodeId[selectedNode.id] : undefined;
+  const sourceModalRuntimeNode =
+    sourceModalFile && runtimeState.active
+      ? runtimeState.chain?.nodes.find((node) => node.id === sourceModalFile.id)
+      : undefined;
+  const sourceModalRuntimeContext = sourceModalFile
+    ? {
+        inActiveCorridor: Boolean(sourceModalRuntimeNode),
+        isCurrentNode: sourceModalRuntimeNode?.id === runtimeLayout?.activeNodeId,
+        exploredAsOrigin: Number(interactionResidueByNodeId[sourceModalFile.id]?.runtimeActivationCount ?? 0) > 0,
+        runtimeStep: sourceModalRuntimeNode?.runtimeStep
+      }
+    : undefined;
+  const selectedWasRevisited = Number(selectedInteractionResidue?.focusCount ?? 0) > 1;
+  const selectedWasRuntimeActivated = Number(selectedInteractionResidue?.runtimeActivationCount ?? 0) > 0;
+  const visibleTraceCount =
+    (relationLens?.visibleOutgoing.length ?? 0) + (relationLens?.visibleIncoming.length ?? 0);
+  const actionSummary = !selectedNode
+    ? ""
+    : selectedNode.type === "file"
+      ? visibleTraceCount > 0
+        ? `Runtime X-Ray / ${visibleTraceCount} trace${visibleTraceCount === 1 ? "" : "s"}`
+        : "Runtime X-Ray available"
+      : [
+          canEnter(selectedNode) ? "Enter" : null,
+          runtimeCandidateFiles.length > 0
+            ? `${runtimeCandidateFiles.length} local origin${runtimeCandidateFiles.length === 1 ? "" : "s"}`
+            : null,
+          visibleTraceCount > 0 ? `${visibleTraceCount} trace${visibleTraceCount === 1 ? "" : "s"}` : null
+        ]
+          .filter(Boolean)
+          .join(" / ");
+  const hasActivationSurface = Boolean(
+    selectedNode &&
+      (selectedNode.type === "file" ||
+        canEnter(selectedNode) ||
+        runtimeCandidateFiles.length > 0 ||
+        visibleTraceCount > 0)
+  );
+  const interactionSummary = selectedWasRuntimeActivated
+    ? "Runtime explored earlier"
+    : selectedWasRevisited
+      ? "Previously focused"
+      : "No prior residue";
+  const activeSecondaryRegion =
+    selectedNode && expandedPanelRegion.nodeId === selectedNode.id ? expandedPanelRegion.region : null;
+
+  const toggleSecondaryRegion = useCallback((region: SecondaryPanelRegion) => {
+    if (!selectedNode) {
+      return;
+    }
+
+    setExpandedPanelRegion((current) => ({
+      nodeId: selectedNode.id,
+      region: current.nodeId === selectedNode.id && current.region === region ? null : region
+    }));
+  }, [selectedNode]);
 
   useEffect(() => {
     if (!selectedNode || selectedNode.type === "file") {
@@ -935,6 +1101,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       return;
     }
 
+    recordRuntimeActivation(fileNode.id);
     setFocusedNodeId(fileNode.id);
     setTracedEdgeId(null);
     setRuntimeNodePositions({});
@@ -945,7 +1112,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       chain
     });
     setRuntimePlaybackActive(chain.nodes.length > 1);
-  }, [graph, graphNodeById]);
+  }, [graph, graphNodeById, recordRuntimeActivation]);
 
   const handleRuntimeStart = useCallback(() => {
     if (!selectedNode) {
@@ -1013,6 +1180,8 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
       return;
     }
 
+    recordNodeFocus(node.id);
+    setExpandedPanelRegion({ nodeId: node.id, region: null });
     setFocusedNodeId(node.id);
     setSelectedNode(node.data as AtlasNode);
   };
@@ -1032,10 +1201,13 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
     const data = node.data as AtlasNode;
 
     if (canEnter(data)) {
+      recordNodeFocus(data.id);
       setCurrentContextId(data.id);
       return;
     }
 
+    recordNodeFocus(node.id);
+    setExpandedPanelRegion({ nodeId: node.id, region: null });
     setFocusedNodeId(node.id);
     setSelectedNode(data);
   };
@@ -1121,6 +1293,7 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
           setHoveredNodeId(null);
           setFocusedNodeId(null);
           setTracedEdgeId(null);
+          setExpandedPanelRegion({ nodeId: null, region: null });
           setSelectedNode(null);
         }}
       >
@@ -1219,15 +1392,29 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
         />
       ) : selectedNode ? (
         <aside className="metadata-panel operational-panel">
-          <section className="operational-panel__identity" aria-label="Identity">
+          <section className="operational-panel__identity operational-panel__anchor" aria-label="Identity and architectural weight">
             <div className="metadata-panel__type">{panelObjectType(selectedNode)}</div>
-            <div className="metadata-panel__title">{panelTitle(selectedNode)}</div>
+            <div className="operational-panel__title-row">
+              <div className="metadata-panel__title">{panelTitle(selectedNode)}</div>
+              {selectedNode.type === "file" ? (
+                <button
+                  type="button"
+                  className="source-open-button"
+                  aria-label={`Open raw source for ${selectedNode.label}`}
+                  title="Open raw source"
+                  onClick={() => setSourceModalFile(selectedNode)}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 8-4 4 4 4" />
+                    <path d="m15 8 4 4-4 4" />
+                    <path d="m13.5 5-3 14" />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
             <div className="operational-panel__path">{orientationPath(selectedNode)}</div>
-          </section>
-
-          {selectedNode.type === "file" ? (
-            <>
-              <section className="operational-panel__region" aria-label="Architectural weight">
+            {selectedNode.type === "file" ? (
+              <>
                 <header className="operational-panel__header">
                   <h3>Architectural Weight</h3>
                   {selectedFileWeight ? (
@@ -1246,26 +1433,12 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                   <div><strong>{selectedNode.metadata?.importCount ?? 0}</strong><span>Imports</span></div>
                   <div><strong>{importedByCount}</strong><span>Imported by</span></div>
                 </div>
-              </section>
-
-              <section className="operational-panel__region" aria-label="Operational role">
-                <h3>Operational Role</h3>
-                <ul className="operational-panel__roles">
-                  {selectedFileRoles.map((role) => (
-                    <li key={role.kind} className={`operational-panel__role--${role.kind}`}>
-                      {role.label}
-                    </li>
-                  ))}
-                </ul>
-                {selectedNode.metadata?.compressionLevel === "low-signal" ? (
-                  <p className="operational-panel__basis">Rule basis: {compressionDescription(selectedNode)}.</p>
-                ) : null}
-              </section>
-            </>
-          ) : selectedRegionSummary && selectedRegionGravity ? (
-            <>
-              <section className="operational-panel__region" aria-label="Regional density">
-                <h3>Regional Density</h3>
+              </>
+            ) : selectedRegionSummary ? (
+              <>
+                <header className="operational-panel__header">
+                  <h3>Regional Density</h3>
+                </header>
                 <div className="operational-panel__metrics">
                   <div><strong>{selectedRegionSummary.fileCount}</strong><span>Files</span></div>
                   <div><strong>{selectedRegionSummary.folderCount}</strong><span>Folders</span></div>
@@ -1277,99 +1450,157 @@ export function GraphView({ graph, searchTerm, clusteringMode }: GraphViewProps)
                   ) : null}
                 </div>
                 <p className="operational-panel__basis">{selectedRegionSummary.directChildCount} direct items in this territory.</p>
-              </section>
-
-              <section className="operational-panel__region" aria-label="Dominant gravity">
-                <h3>Dominant Gravity</h3>
-                <div className="operational-panel__gravity">{selectedRegionGravity.label}</div>
-                {selectedRegionGravity.detail ? (
-                  <p className="operational-panel__basis">{selectedRegionGravity.detail}</p>
-                ) : null}
-              </section>
-            </>
-          ) : null}
-
-          <section
-            className="operational-panel__region operational-panel__actions"
-            aria-label={selectedNode.type === "file" ? "Activation surface" : "Regional actions"}
-          >
-            <h3>{selectedNode.type === "file" ? "Activation Surface" : "Regional Actions"}</h3>
-            {selectedNode.type === "file" ? (
-              <button type="button" className="metadata-panel__action metadata-panel__action--runtime" onClick={handleRuntimeStart}>
-                Runtime X-Ray
-              </button>
-            ) : (
-              <>
-                {canEnter(selectedNode) ? (
-                  <button type="button" className="metadata-panel__action" onClick={() => navigateToContext(selectedNode.id)}>
-                    Enter Region
-                  </button>
-                ) : null}
-                {runtimeCandidateFiles.length > 0 ? (
-                  <div className="runtime-file-picker" aria-label="Runtime X-Ray file origin">
-                    <label htmlFor="runtime-file-origin">Runtime origin</label>
-                    <select
-                      id="runtime-file-origin"
-                      value={selectedRuntimeFileId ?? ""}
-                      onChange={(event) => setSelectedRuntimeFileId(event.target.value || null)}
-                    >
-                      {runtimeCandidateFiles.map((file) => (
-                        <option key={file.id} value={file.id}>
-                          {file.path}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className="metadata-panel__action metadata-panel__action--runtime"
-                      onClick={handleRuntimeStart}
-                      disabled={!selectedRuntimeFile}
-                    >
-                      Runtime X-Ray
-                    </button>
-                  </div>
-                ) : null}
               </>
-            )}
-            {relationLens && (relationLens.visibleOutgoing.length > 0 || relationLens.visibleIncoming.length > 0) ? (
-              <div className="operational-panel__traces" aria-label="Trace visible relationships">
-                <div className="operational-panel__trace-title">Trace Visible Connections</div>
-                {relationLens.visibleOutgoing.length > 0 ? (
-                  <div>
-                    <div className="operational-panel__trace-kind">Imports</div>
-                    <ul>
-                      {relationLens.visibleOutgoing.map((relation) => (
-                        <li key={relation.id} {...renderRelationTrace(relation.id)}>
-                          <span>{relation.label}</span>
-                          <strong style={{ color: edgeMarkerColor(relation.id, selectedNode.id) }}>{relation.count}</strong>
-                        </li>
-                      ))}
-                      {relationLens.hiddenVisibleOutgoing > 0 ? (
-                        <li className="operational-panel__trace-more">+{relationLens.hiddenVisibleOutgoing} more visible imports</li>
-                      ) : null}
-                    </ul>
-                  </div>
-                ) : null}
-                {relationLens.visibleIncoming.length > 0 ? (
-                  <div>
-                    <div className="operational-panel__trace-kind">Imported By</div>
-                    <ul>
-                      {relationLens.visibleIncoming.map((relation) => (
-                        <li key={relation.id} {...renderRelationTrace(relation.id)}>
-                          <span>{relation.label}</span>
-                          <strong style={{ color: edgeMarkerColor(relation.id, selectedNode.id) }}>{relation.count}</strong>
-                        </li>
-                      ))}
-                      {relationLens.hiddenVisibleIncoming > 0 ? (
-                        <li className="operational-panel__trace-more">+{relationLens.hiddenVisibleIncoming} more visible incoming</li>
-                      ) : null}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
             ) : null}
           </section>
+
+          {selectedNode.type === "file" ? (
+            <CollapsibleSemanticRegion
+              title="Operational Role"
+              summary={`${selectedFileRoles[0]?.label ?? "No role signal"}${selectedFileRoles.length > 1 ? ` / +${selectedFileRoles.length - 1}` : ""}`}
+              isExpanded={activeSecondaryRegion === "role"}
+              onToggle={() => toggleSecondaryRegion("role")}
+            >
+              <ul className="operational-panel__roles">
+                {selectedFileRoles.map((role) => (
+                  <li key={role.kind} className={`operational-panel__role--${role.kind}`}>
+                    {role.label}
+                  </li>
+                ))}
+              </ul>
+              {selectedNode.metadata?.compressionLevel === "low-signal" ? (
+                <p className="operational-panel__basis">Rule basis: {compressionDescription(selectedNode)}.</p>
+              ) : null}
+            </CollapsibleSemanticRegion>
+          ) : selectedRegionGravity ? (
+            <CollapsibleSemanticRegion
+              title="Dominant Gravity"
+              summary={selectedRegionGravity.label}
+              isExpanded={activeSecondaryRegion === "gravity"}
+              onToggle={() => toggleSecondaryRegion("gravity")}
+            >
+              <div className="operational-panel__gravity">{selectedRegionGravity.label}</div>
+              {selectedRegionGravity.detail ? (
+                <p className="operational-panel__basis">{selectedRegionGravity.detail}</p>
+              ) : null}
+            </CollapsibleSemanticRegion>
+          ) : null}
+
+          {hasActivationSurface ? (
+            <CollapsibleSemanticRegion
+              title={selectedNode.type === "file" ? "Activation Surface" : "Regional Actions"}
+              summary={actionSummary}
+              isExpanded={activeSecondaryRegion === "actions"}
+              onToggle={() => toggleSecondaryRegion("actions")}
+            >
+              {selectedNode.type === "file" ? (
+                <button type="button" className="metadata-panel__action metadata-panel__action--runtime" onClick={handleRuntimeStart}>
+                  Runtime X-Ray
+                </button>
+              ) : (
+                <>
+                  {canEnter(selectedNode) ? (
+                    <button type="button" className="metadata-panel__action" onClick={() => navigateToContext(selectedNode.id)}>
+                      Enter Region
+                    </button>
+                  ) : null}
+                  {runtimeCandidateFiles.length > 0 ? (
+                    <div className="runtime-file-picker" aria-label="Runtime X-Ray file origin">
+                      <label htmlFor="runtime-file-origin">Runtime origin</label>
+                      <select
+                        id="runtime-file-origin"
+                        value={selectedRuntimeFileId ?? ""}
+                        onChange={(event) => setSelectedRuntimeFileId(event.target.value || null)}
+                      >
+                        {runtimeCandidateFiles.map((file) => (
+                          <option key={file.id} value={file.id}>
+                            {file.path}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="metadata-panel__action metadata-panel__action--runtime"
+                        onClick={handleRuntimeStart}
+                        disabled={!selectedRuntimeFile}
+                      >
+                        Runtime X-Ray
+                      </button>
+                    </div>
+                  ) : null}
+                </>
+              )}
+              {relationLens && (relationLens.visibleOutgoing.length > 0 || relationLens.visibleIncoming.length > 0) ? (
+                <div className="operational-panel__traces" aria-label="Trace visible relationships">
+                  <div className="operational-panel__trace-title">Trace Visible Connections</div>
+                  {relationLens.visibleOutgoing.length > 0 ? (
+                    <div>
+                      <div className="operational-panel__trace-kind">Imports</div>
+                      <ul>
+                        {relationLens.visibleOutgoing.map((relation) => (
+                          <li key={relation.id} {...renderRelationTrace(relation.id)}>
+                            <span>{relation.label}</span>
+                            <strong style={{ color: edgeMarkerColor(relation.id, selectedNode.id) }}>{relation.count}</strong>
+                          </li>
+                        ))}
+                        {relationLens.hiddenVisibleOutgoing > 0 ? (
+                          <li className="operational-panel__trace-more">+{relationLens.hiddenVisibleOutgoing} more visible imports</li>
+                        ) : null}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {relationLens.visibleIncoming.length > 0 ? (
+                    <div>
+                      <div className="operational-panel__trace-kind">Imported By</div>
+                      <ul>
+                        {relationLens.visibleIncoming.map((relation) => (
+                          <li key={relation.id} {...renderRelationTrace(relation.id)}>
+                            <span>{relation.label}</span>
+                            <strong style={{ color: edgeMarkerColor(relation.id, selectedNode.id) }}>{relation.count}</strong>
+                          </li>
+                        ))}
+                        {relationLens.hiddenVisibleIncoming > 0 ? (
+                          <li className="operational-panel__trace-more">+{relationLens.hiddenVisibleIncoming} more visible incoming</li>
+                        ) : null}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </CollapsibleSemanticRegion>
+          ) : null}
+
+          <CollapsibleSemanticRegion
+            title="Interaction Memory"
+            summary={interactionSummary}
+            hasResidue={selectedWasRevisited || selectedWasRuntimeActivated}
+            isExpanded={activeSecondaryRegion === "memory"}
+            onToggle={() => toggleSecondaryRegion("memory")}
+          >
+            <div className={`operational-panel__memory ${selectedWasRevisited || selectedWasRuntimeActivated ? "has-residue" : ""}`.trim()}>
+              <span className="operational-panel__memory-marker" aria-hidden="true" />
+              <div>
+                <strong>{interactionSummary}</strong>
+                <p>
+                  {selectedWasRuntimeActivated
+                    ? "Runtime X-Ray was activated from this file in this session."
+                    : selectedWasRevisited
+                      ? "This object was focused earlier in this session."
+                      : "No earlier exploration recorded in this session."}
+                </p>
+              </div>
+            </div>
+          </CollapsibleSemanticRegion>
         </aside>
+      ) : null}
+      {sourceModalFile ? (
+        <Suspense fallback={<div className="source-modal__backdrop"><div className="source-modal__loading">Loading Raw Source</div></div>}>
+          <SourceCodeModal
+            file={sourceModalFile}
+            runtimeContext={sourceModalRuntimeContext}
+            onClose={() => setSourceModalFile(null)}
+          />
+        </Suspense>
       ) : null}
     </div>
   );

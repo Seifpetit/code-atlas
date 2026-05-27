@@ -43,6 +43,18 @@ Completed:
   objects as restrained moving cut-lines while preserving straight geometry.
 - Removed elevated Runtime X-Ray edge layering so active causal lines signal
   through stroke treatment rather than covering architectural objects.
+- Limited folder/domain Runtime origin choices to first-degree file children
+  so nested origins follow hierarchy entry.
+- Reworked the operational panel into progressive disclosure: an always-open
+  identity/weight anchor with collapsed summary-bearing secondary layers.
+- Added subtle session-local interaction memory for prior focus and Runtime
+  X-Ray activation, without changing graph rendering.
+- Added a square raw-source control beside focused file names and a fixed
+  read-only source modal with keyboard/backdrop dismissal.
+- Carried already-read indexed file text through the analysis response so raw
+  source remains available after temporary clone cleanup.
+- Added deterministic on-demand Shiki coloring for JavaScript-ecosystem raw
+  source, with per-language grammar caching and plain-text fallback.
 
 Verified:
 - Markdown location check passed: only root `CONTEXT.md` and
@@ -70,6 +82,12 @@ Verified:
   refinement.
 - Frontend production build passed after background cut-line connection
   rendering and runtime edge layering refinement.
+- Frontend production build passed after direct-child Runtime origin filtering
+  and progressive metadata-panel disclosure.
+- Backend and frontend production builds passed after raw-source payload and
+  modal implementation.
+- Frontend production build passed after lazy syntax coloring integration and
+  per-language grammar loading refinement.
 
 Archive Updates:
 - `CONTEXT.md`
@@ -84,6 +102,13 @@ Archive Updates:
   for the operational-panel native scrollbar treatment.
 - `docs/DECISIONS.md`, `docs/VOCABULARY.md`, and `docs/UI_LAYOUT.md` updated
   for background moving cut-line connection rendering.
+- `docs/DECISIONS.md`, `docs/VOCABULARY.md`, and `docs/UI_LAYOUT.md` updated
+  for progressive disclosure, interaction memory, and direct-child Runtime
+  origin behavior.
+- `docs/DECISIONS.md`, `docs/VOCABULARY.md`, `docs/UI_LAYOUT.md`, and
+  `docs/README.md` updated for the raw-source modal and source-text payload.
+- The same records document deterministic lazy syntax coloring and raw-text
+  fallback behavior.
 - `docs/WORKFLOW.md`
 - `docs/README.md`
 - `docs/SESSION_NOTES.md`
@@ -99,8 +124,8 @@ Open Issues:
 - Relationship line geometry is currently a straight-line baseline.
 
 Next Likely Task:
-- Visually evaluate moving cut-line clarity and operational panel density in
-  the running app, then continue the existing node click reliability
+- Visually evaluate moving cut-line clarity and semantic-layer pacing in the
+  running app, then continue the existing node click reliability
   investigation.
 
 Git Status:

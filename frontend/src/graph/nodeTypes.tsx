@@ -16,6 +16,11 @@ interface RelationStubData {
   onTraceEnd?: () => void;
 }
 
+interface ConnectionPortsData {
+  input: boolean;
+  export: boolean;
+}
+
 interface NodeChromeProps {
   data: AtlasNode;
   structuralKind: StructuralKind;
@@ -102,6 +107,7 @@ function FileShape(props: NodeChromeProps) {
 
 function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKind: StructuralKind }) {
   const relationStub = data.relationStub as RelationStubData | undefined;
+  const connectionPorts = data.connectionPorts as ConnectionPortsData | undefined;
   const historyBadge = typeof data.historyBadge === "string" ? data.historyBadge : undefined;
   const significanceScore = Number(data.significanceScore ?? 0);
   const visualState = data.visualState as NodeVisualState | undefined;
@@ -133,7 +139,13 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
       title={data.path}
       style={style}
     >
-      <Handle type="target" position={Position.Left} className="atlas-handle" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className={`atlas-handle atlas-handle--input ${connectionPorts?.input ? "is-connected" : ""}`.trim()}
+        data-port={connectionPorts?.input ? "I" : undefined}
+        title={connectionPorts?.input ? "Incoming connection" : undefined}
+      />
       {relationStub?.incomingCount ? (
         <button
           type="button"
@@ -183,7 +195,13 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
           <span>&gt;</span>
         </button>
       ) : null}
-      <Handle type="source" position={Position.Right} className="atlas-handle" />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className={`atlas-handle atlas-handle--export ${connectionPorts?.export ? "is-connected" : ""}`.trim()}
+        data-port={connectionPorts?.export ? "O" : undefined}
+        title={connectionPorts?.export ? "Outgoing connection" : undefined}
+      />
     </div>
   );
 }

@@ -1,0 +1,220 @@
+.graph-shell {
+  position: relative;
+  min-height: 0;
+  background: #070b12;
+}
+
+.breadcrumb-bar {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  max-width: min(720px, calc(100vw - 360px));
+  overflow: hidden;
+  border: 1px solid #293548;
+  background: rgba(15, 23, 42, 0.92);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28);
+}
+
+.breadcrumb-bar__item {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.breadcrumb-bar__separator {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.breadcrumb-bar__button {
+  max-width: 180px;
+  height: 36px;
+  border: 0;
+  padding: 0 10px;
+  overflow: hidden;
+  background: transparent;
+  color: #9fb0c8;
+  font-size: 13px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.breadcrumb-bar__button:hover,
+.breadcrumb-bar__button.is-active {
+  color: #f8fafc;
+}
+
+.empty-state {
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 28px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.empty-state__title {
+  color: #e5eefb;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.empty-state__body {
+  max-width: 560px;
+  font-size: 14px;
+}
+
+.react-flow {
+  background: #070b12;
+}
+
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid #5b6b82;
+  background: #020617;
+  box-shadow:
+    0 0 0 1px rgb(13, 86, 158),
+    0 16px 44px rgba(0, 0, 0, 0.38);
+}
+
+.react-flow__controls-button {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-bottom: 1px solid #334155;
+  background: #0f172a;
+  color: #1c2935;
+  fill: #484848;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: 0;
+}
+
+.react-flow__controls-button:hover {
+  background: #12353d;
+  color: #99f6e4;
+  fill: #99f6e4;
+}
+
+.react-flow__controls-button svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 2.5;
+}
+
+.react-flow__controls-button path {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.react-flow__minimap {
+  overflow: hidden;
+  border: 1px solid #334155;
+  background: #020617;
+  box-shadow:
+    0 0 0 1px rgba(125, 211, 252, 0.08),
+    0 18px 52px rgba(0, 0, 0, 0.38);
+}
+
+.react-flow__minimap-svg {
+  background: #020617;
+}
+
+.react-flow__minimap-node {
+  opacity: 0.92;
+}
+
+.react-flow__edges {
+  z-index: 0;
+}
+
+.react-flow__nodes {
+  z-index: 1;
+}
+
+
+.context-panel {
+  position: absolute;
+  right: 16px;
+  top: 318px;
+  border: 1px solid #293548;
+  background: rgba(15, 23, 42, 0.88);
+  padding: 10px 12px;
+  color: #b6c3d7;
+  pointer-events: auto;
+}
+
+.context-panel__label {
+  color: #7dd3fc;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.context-panel__title {
+  max-width: 220px;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-panel__meta {
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.context-panel__pager {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.context-panel__pager button {
+  height: 28px;
+  border: 1px solid #293548;
+  background: #101827;
+  padding: 0 10px;
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.context-panel__pager button:disabled {
+  color: #526174;
+  cursor: not-allowed;
+}
+
+.overview-button {
+  position: absolute;
+  left: 16px;
+  bottom: 22px;
+  z-index: 6;
+  height: 36px;
+  border: 1px solid #293548;
+  background: rgba(15, 23, 42, 0.9);
+  padding: 0 12px;
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.24);
+}
+
+.overview-button:hover {
+  border-color: #60a5fa;
+}
+

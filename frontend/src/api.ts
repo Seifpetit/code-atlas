@@ -4,12 +4,50 @@ export interface AtlasNode extends Record<string, unknown> {
   label: string;
   path: string;
   parent?: string;
+  sourceText?: string;
   metadata?: {
     extension?: string;
     importCount?: number;
     childCount?: number;
     linesOfCode?: number;
     functionCount?: number;
+    functionWaypoints?: Array<{
+      name: string;
+      kind: "function" | "arrow" | "method" | "accessor" | "constructor" | "effect";
+      startLine: number;
+      endLine: number;
+      exported: boolean;
+      inputs: Array<{
+        name: string;
+        line: number;
+        type?: string;
+        sources?: Array<{
+          filePath: string;
+          functionName: string;
+          line: number;
+          expression: string;
+        }>;
+      }>;
+      outputs: Array<{
+        line: number;
+        expression: string;
+        type?: string;
+        async: boolean;
+      }>;
+      calls: Array<{
+        name: string;
+        line: number;
+        arguments: string[];
+        definitionPath?: string;
+        definitionName?: string;
+      }>;
+      stateUpdates: Array<{
+        state: string;
+        setter: string;
+        line: number;
+        arguments: string[];
+      }>;
+    }>;
     compressionLevel?: "low-signal";
     compressionReasons?: Array<
       "very-low-loc" | "tiny-wrapper" | "conventional-support-file" | "pass-through-export"

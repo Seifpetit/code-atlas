@@ -94,19 +94,39 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - `right: 16px`
 - Width: `min(320px, calc(100vw - 32px))`
 - Max height: `calc(100% - 32px)`
-- File regions: identity, architectural weight, operational role, activation
-  surface.
-- Folder/domain regions: identity, regional density, dominant gravity,
-  regional actions.
+- The always-expanded anchor contains identity plus architectural weight for a
+  file, or identity plus regional density for a folder/domain.
+- File identity places a compact square raw-source trigger directly beside the
+  file name; territories do not show this trigger.
+- Operational role or dominant gravity, actions, and interaction memory render
+  as collapsed semantic layers by default.
+- Only one secondary semantic layer unfolds at a time; collapsed layers keep
+  a faint one-line summary and compact chevron indicator.
+- Interaction-memory residue uses a subdued warm marker only after earlier
+  focus or Runtime X-Ray activation in the current analyzed session.
 - Metric cells and action controls remain compact so the graph stays primary.
 - Actions and runtime-origin selection use thin bordered instrument controls,
   inset activation accents, and restrained focus glow rather than solid
   dashboard buttons.
+- For a selected folder or domain, the Runtime origin selector exposes only
+  first-degree file children of that territory; deeper origins require
+  entering the nested region.
 - The Runtime origin selector inherits the thin dark scroll channel and
   subdued teal interactive thumb when native dropdown scrolling is available.
 - Native scrolling remains intact; the panel scrollbar is visual chrome only.
 - The scrollbar uses a thin dark channel with a low-alpha teal thumb that
   brightens subtly while the panel or thumb is being used.
+
+**Raw Source Modal**
+- Screen-fixed overlay above the graph and panels, opened only from a focused
+  file's source trigger.
+- Maximum surface: `980px` wide by `720px` high, bounded by viewport padding.
+- Read-only monospace source viewport with dark surface and thin subdued teal
+  native scrollbar.
+- JavaScript-ecosystem token colors are provided deterministically through a
+  lazily loaded dark syntax theme; unsupported text formats retain the same
+  viewport with raw monochrome text.
+- Close affordances: square close control, `Escape`, or backdrop click.
 
 **Raw History Inspector**
 - Position: below the temporal scrubber

@@ -41,6 +41,12 @@ this file should be refreshed.
 - The focused-object panel is an operational interpretation surface: files
   expose weight, role signals, and actions; territories expose density,
   dominant gravity, and regional actions.
+- The panel progressively discloses meaning: identity and mass stay visible,
+  while summary-bearing semantic layers unfold intentionally one at a time.
+- Focused file anchors expose deliberate raw-source inspection in a fixed
+  read-only modal, backed by captured source text from analysis.
+- The raw-source modal lazily applies deterministic JS/TS/JSX/TSX/JSON/CSS
+  syntax coloring; unmapped indexed formats remain raw text.
 
 ## Working Rules
 
@@ -110,6 +116,17 @@ Completed:
   object and applied thin moving cut-line styling with reduced-motion support.
 - Removed active runtime edge elevation so corridor emphasis does not cover
   graph objects.
+- Restricted territory Runtime origin selectors to direct child files so
+  nested origins remain part of progressive hierarchy entry.
+- Refactored the operational panel into a persistent identity/weight anchor
+  with collapsed role/gravity, actions, and interaction-memory layers.
+- Added session-local exploration residue for previously focused objects and
+  Runtime X-Ray file origins without modifying graph attention.
+- Added a square raw-source trigger beside focused file names and a
+  screen-fixed code modal; indexed source text is retained in the analysis
+  payload because temporary clones are cleaned after analysis.
+- Added lazy Shiki syntax coloring with per-language loading and caching for
+  JavaScript-ecosystem source inspection only.
 
 Verification:
 - Confirmed only `CONTEXT.md` and `README_showcase.md` remain outside `docs/`
@@ -137,6 +154,11 @@ Verification:
   scrollbar refinement.
 - Frontend production build passed after background cut-line connection
   rendering and runtime edge layering refinement.
+- Frontend production build passed after direct-child Runtime origin
+  filtering and progressive metadata-panel disclosure.
+- Backend and frontend production builds passed after raw-source payload and
+  modal implementation.
+- Frontend production build passed after lazy deterministic syntax coloring.
 
 Context/Archive Documents Updated:
 - `docs/WORKFLOW.md`
@@ -164,6 +186,14 @@ Context/Archive Documents Updated:
   the runtime causal-instrument control treatment.
 - `docs/DECISIONS.md`, `docs/VOCABULARY.md`, and `docs/UI_LAYOUT.md` document
   the moving cut-line connection layer treatment.
+- `docs/DECISIONS.md`, `docs/VOCABULARY.md`, and `docs/UI_LAYOUT.md` document
+  progressive semantic layers, interaction memory, and direct-child Runtime
+  origin selection.
+- `docs/DECISIONS.md`, `docs/VOCABULARY.md`, `docs/UI_LAYOUT.md`, and
+  `docs/README.md` document the raw-source modal and its captured-text
+  analysis contract.
+- Those records also document on-demand JavaScript-ecosystem syntax coloring
+  and raw-text fallback.
 
 Open Issues:
 - `Click Selection Sometimes Does Not Register` remains open in `docs/BUGS.md`.
@@ -171,7 +201,7 @@ Open Issues:
 - Relationship trace geometry is currently a straight-line baseline.
 
 Next Task:
-- Visually evaluate moving cut-line clarity, operational panel density, and
+- Visually evaluate moving cut-line clarity, semantic-layer pacing, and
   compressed emphasis in the running app, then continue the existing node
   click reliability investigation.
 
