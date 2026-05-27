@@ -31,11 +31,11 @@ Atlas helps visualize:
 
 | Root view | Focused inspection |
 |---|---|
-| ![Root view](screenshots/root.png) | ![Focus state](screenshots/focus.png) |
+| ![Root view](docs/screenshots/root.png) | ![Focus state](docs/screenshots/focus.png) |
 
 | Timeline exploration | Context-preserving navigation |
 |---|---|
-| ![Timeline](screenshots/timeline.png) | ![Descent](screenshots/descent.png) |
+| ![Timeline](docs/screenshots/timeline.png) | ![Descent](docs/screenshots/descent.png) |
 
 ---
 
