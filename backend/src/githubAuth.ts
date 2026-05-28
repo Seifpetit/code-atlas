@@ -20,6 +20,9 @@ export interface GitHubRepository {
   description?: string | null;
   pushedAt?: string | null;
   updatedAt?: string | null;
+  stargazersCount?: number;
+  language?: string | null;
+  topics?: string[];
 }
 
 export interface GitHubSession {
@@ -57,6 +60,12 @@ interface GitHubApiRepository {
   description?: string | null;
   pushed_at?: string | null;
   updated_at?: string | null;
+  stargazers_count?: number;
+  language?: string | null;
+  topics?: string[];
+}
+interface GitHubSearchResponse {
+  items: GitHubApiRepository[];
 }
 
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
@@ -209,6 +218,34 @@ export async function repositoriesForGitHubSession(
   return filtered.slice(0, 60);
 }
 
+export async function searchPublicRepositories(query: string, accessToken?: string): Promise<GitHubRepository[]> {
+  const normalizedQuery = query.trim();
+  if (normalizedQuery.length < 2) {
+    return [];
+  }
+
+  const payload = accessToken
+    ? await fetchGitHubApi<GitHubSearchResponse>(
+        accessToken,
+        `/search/repositories?${new URLSearchParams({
+          q: normalizedQuery,
+          sort: "stars",
+          order: "desc",
+          per_page: "20"
+        }).toString()}`
+      )
+    : await fetchGitHubPublicApi<GitHubSearchResponse>(
+    `/search/repositories?${new URLSearchParams({
+      q: normalizedQuery,
+      sort: "stars",
+      order: "desc",
+      per_page: "20"
+    }).toString()}`
+    );
+
+  return payload.items.map(toGitHubRepository);
+}
+
 async function exchangeCodeForToken(code: string, redirectUri: string): Promise<string> {
   const response = await fetch(GITHUB_ACCESS_TOKEN_URL, {
     method: "POST",
@@ -262,6 +299,25 @@ async function fetchGitHubApi<T>(accessToken: string, path: string): Promise<T> 
   return await response.json() as T;
 }
 
+async function fetchGitHubPublicApi<T>(path: string): Promise<T> {
+  const response = await fetch(`${GITHUB_API_URL}${path}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "Code-Atlas",
+      "X-GitHub-Api-Version": "2022-11-28"
+    }
+  });
+
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error("GitHub public search rate limit reached. Connect GitHub or wait a few minutes.");
+    }
+    throw new Error(`GitHub API request failed with status ${response.status}.`);
+  }
+
+  return await response.json() as T;
+}
+
 function toGitHubRepository(repository: GitHubApiRepository): GitHubRepository {
   return {
     id: repository.id,
@@ -273,7 +329,10 @@ function toGitHubRepository(repository: GitHubApiRepository): GitHubRepository {
     defaultBranch: repository.default_branch,
     description: repository.description,
     pushedAt: repository.pushed_at,
-    updatedAt: repository.updated_at
+    updatedAt: repository.updated_at,
+    stargazersCount: repository.stargazers_count,
+    language: repository.language,
+    topics: repository.topics ?? []
   };
 }
 

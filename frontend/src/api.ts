@@ -116,6 +116,12 @@ export interface AtlasGraph {
   edges: AtlasEdge[];
   commits?: CommitInfo[];
   fileHistory?: Record<string, FileHistoryInfo>;
+  analyzeTiming?: {
+    cloneMs: number;
+    extractGraphMs: number;
+    extractHistoryMs: number;
+    totalMs: number;
+  };
 }
 
 export interface GitHubUser {
@@ -143,6 +149,9 @@ export interface GitHubRepository {
   description?: string | null;
   pushedAt?: string | null;
   updatedAt?: string | null;
+  stargazersCount?: number;
+  language?: string | null;
+  topics?: string[];
 }
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -214,4 +223,24 @@ export async function logoutGitHub(): Promise<void> {
     const payload = await response.json();
     throw new Error(payload?.error ?? "Failed to disconnect GitHub.");
   }
+}
+
+export async function searchPublicGitHubRepositories(query: string): Promise<GitHubRepository[]> {
+  const params = new URLSearchParams();
+
+  if (query.trim()) {
+    params.set("query", query.trim());
+  }
+
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`${API_BASE_URL}/github/public-repos${suffix}`, {
+    credentials: "include"
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to search public repositories.");
+  }
+
+  return payload.repositories as GitHubRepository[];
 }

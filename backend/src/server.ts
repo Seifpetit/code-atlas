@@ -1,6 +1,6 @@
 import cors from "cors";
 import express from "express";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanupRepo, cloneRepo } from "./cloneRepo.js";
@@ -13,6 +13,7 @@ import {
   githubSessionFor,
   logoutGitHub,
   repositoriesForGitHubSession,
+  searchPublicRepositories,
   startGitHubOAuth
 } from "./githubAuth.js";
 
@@ -22,6 +23,9 @@ let lastAnalyzedRepoUrl: string | null = null;
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendDistPath = path.resolve(currentDir, "../../frontend/dist");
 const frontendIndexPath = path.join(frontendDistPath, "index.html");
+const backendEnvPath = path.resolve(currentDir, "../.env");
+
+loadEnvFile(backendEnvPath);
 
 app.set("trust proxy", 1);
 app.use(cors({
@@ -51,7 +55,14 @@ app.get("/health", (_request, response) => {
   response.json({ ok: true });
 });
 
-app.get("/auth/github", startGitHubOAuth);
+app.get("/auth/github", (request, response) => {
+  if (typeof request.query.code === "string" || typeof request.query.state === "string") {
+    void completeGitHubOAuth(request, response);
+    return;
+  }
+
+  startGitHubOAuth(request, response);
+});
 app.get("/auth/github/callback", completeGitHubOAuth);
 app.get("/auth/github/status", githubAuthStatus);
 app.post("/auth/github/logout", logoutGitHub);
@@ -73,6 +84,17 @@ app.get("/github/repos", async (request, response) => {
   }
 });
 
+app.get("/github/public-repos", async (request, response) => {
+  try {
+    const query = typeof request.query.query === "string" ? request.query.query : "";
+    const session = githubSessionFor(request);
+    response.json({ repositories: await searchPublicRepositories(query, session?.accessToken) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to search public repositories.";
+    response.status(500).json({ error: message });
+  }
+});
+
 app.post("/analyze", async (request, response) => {
   const repoUrl = request.body?.repoUrl;
 
@@ -82,20 +104,31 @@ app.post("/analyze", async (request, response) => {
   }
 
   let repoPath: string | undefined;
+  const analyzeStartedAt = Date.now();
 
   try {
     lastAnalyzedRepoUrl = repoUrl.trim();
+    const cloneStartedAt = Date.now();
     repoPath = await cloneRepo(lastAnalyzedRepoUrl, {
       githubToken: githubSessionFor(request)?.accessToken
     });
-    const [graph, history] = await Promise.all([
-      extractGraph(repoPath),
-      extractGitHistory(repoPath)
-    ]);
+    const cloneMs = Date.now() - cloneStartedAt;
+    const graphStartedAt = Date.now();
+    const graph = await extractGraph(repoPath);
+    const extractGraphMs = Date.now() - graphStartedAt;
+    const historyStartedAt = Date.now();
+    const history = await extractGitHistory(repoPath);
+    const extractHistoryMs = Date.now() - historyStartedAt;
     response.json({
       ...graph,
       commits: history.commits,
-      fileHistory: history.fileHistory
+      fileHistory: history.fileHistory,
+      analyzeTiming: {
+        cloneMs,
+        extractGraphMs,
+        extractHistoryMs,
+        totalMs: Date.now() - analyzeStartedAt
+      }
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to analyze repository.";
@@ -149,3 +182,38 @@ if (existsSync(frontendIndexPath)) {
 app.listen(port, () => {
   console.log(`Code Atlas backend listening on http://localhost:${port}`);
 });
+
+function loadEnvFile(filePath: string): void {
+  if (!existsSync(filePath)) {
+    return;
+  }
+
+  const content = readFileSync(filePath, "utf8");
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    if (!key || process.env[key] !== undefined) {
+      continue;
+    }
+
+    let value = line.slice(separatorIndex + 1).trim();
+    if (
+      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    process.env[key] = value;
+  }
+}
