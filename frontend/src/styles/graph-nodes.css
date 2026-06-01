@@ -315,6 +315,19 @@
   font-size: calc(11px * var(--atlas-node-scale, 1));
 }
 
+.atlas-node__entrypoint-dot {
+  position: absolute;
+  top: 10px;
+  left: 36px;
+  z-index: 2;
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(254, 202, 202, 0.92);
+  border-radius: 50%;
+  background: #eb3e3e;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16), 0 0 16px rgba(239, 68, 68, 0.38);
+}
+
 .atlas-node__metrics {
   padding: 0 10px 9px;
   color: rgba(241, 245, 249, 0.9);

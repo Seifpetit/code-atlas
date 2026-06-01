@@ -58,6 +58,24 @@ const STRUCTURAL_FILE_EXTENSIONS = new Set([
 ]);
 const RESOLUTION_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".json"];
 const INDEX_FILES = RESOLUTION_EXTENSIONS.map((extension) => `index${extension}`);
+const STATIC_REFERENCE_EXTENSIONS = [
+  "",
+  ".html",
+  ".css",
+  ".scss",
+  ".sass",
+  ".less",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".tsx",
+  ".jsx",
+  ".json",
+  ".svg",
+  ".xml",
+  ".txt"
+];
 const CONVENTIONAL_LOW_SIGNAL_NAMES = new Set(["index", "types", "constants", "config"]);
 const TINY_WRAPPER_NAME_PATTERN = /(?:util|utils|helper|helpers|wrapper|adapter)$/i;
 const OPERATIONAL_VARIABLE_NAME_PATTERN = /(?:runtime|graph|node|focus|selected|context|corridor|xray|x-ray|position)/i;
@@ -93,6 +111,8 @@ interface CallTarget {
   definitionPath: string;
   definitionName: string;
   definitionWaypointId?: string;
+  definitionStartLine?: number;
+  definitionEndLine?: number;
   throughLazyComponent?: boolean;
 }
 
@@ -358,6 +378,52 @@ function definitionMatchesWaypoint(definition: MorphNode, waypoint: WaypointNode
   );
 }
 
+function waypointCallTarget(sourcePath: string, waypoint: WaypointNode): CallTarget {
+  return {
+    definitionPath: sourcePath,
+    definitionName: waypoint.identity.name,
+    definitionWaypointId: waypoint.waypointId,
+    definitionStartLine: waypoint.node.getStartLineNumber(),
+    definitionEndLine: waypoint.node.getEndLineNumber()
+  };
+}
+
+function waypointTargetKey(filePath: string, waypoint: Pick<FunctionWaypoint, "startLine" | "endLine">): string {
+  return `${filePath}:${waypoint.startLine}:${waypoint.endLine}`;
+}
+
+function resolveWaypointTarget(
+  filePath: string,
+  targetsById: Map<string, FunctionWaypoint>,
+  targetsBySpan: Map<string, FunctionWaypoint[]>,
+  targetsByName: Map<string, FunctionWaypoint[]>,
+  definitionWaypointId?: string,
+  definitionStartLine?: number,
+  definitionEndLine?: number,
+  definitionName?: string
+): FunctionWaypoint | undefined {
+  if (definitionWaypointId) {
+    const target = targetsById.get(`${filePath}:${definitionWaypointId}`);
+    if (target) {
+      return target;
+    }
+  }
+
+  if (definitionStartLine !== undefined && definitionEndLine !== undefined) {
+    const bySpan = targetsBySpan.get(waypointTargetKey(filePath, { startLine: definitionStartLine, endLine: definitionEndLine }));
+    if (bySpan?.length === 1) {
+      return bySpan[0];
+    }
+  }
+
+  if (!definitionName) {
+    return undefined;
+  }
+
+  const byName = targetsByName.get(`${filePath}:${definitionName}`) ?? [];
+  return byName.length === 1 ? byName[0] : undefined;
+}
+
 function belongsToVisibleWaypoint(
   descendant: MorphNode,
   waypoint: WaypointNode,
@@ -402,11 +468,7 @@ function targetForCall(
     );
 
     return localTargets.length === 1
-      ? {
-          definitionPath: sourcePath,
-          definitionName: localTargets[0].identity.name,
-          definitionWaypointId: localTargets[0].waypointId
-        }
+      ? waypointCallTarget(sourcePath, localTargets[0])
       : undefined;
   }
 
@@ -421,11 +483,7 @@ function targetForCall(
     );
 
     if (localTargets.length === 1) {
-      return {
-        definitionPath: sourcePath,
-        definitionName: localTargets[0].identity.name,
-        definitionWaypointId: localTargets[0].waypointId
-      };
+      return waypointCallTarget(sourcePath, localTargets[0]);
     }
 
     const owner = expression.getExpression();
@@ -483,11 +541,7 @@ function targetForJsxElement(
     );
 
     return localTargets.length === 1
-      ? {
-          definitionPath: sourcePath,
-          definitionName: localTargets[0].identity.name,
-          definitionWaypointId: localTargets[0].waypointId
-        }
+      ? waypointCallTarget(sourcePath, localTargets[0])
       : undefined;
   }
 
@@ -880,9 +934,24 @@ function moduleLinksFor(
 
 function resolveCallWaypointReferences(structure: ExtractedStructure): void {
   const exportedTargets = new Map<string, FunctionWaypoint[]>();
+  const targetsById = new Map<string, FunctionWaypoint>();
+  const targetsBySpan = new Map<string, FunctionWaypoint[]>();
+  const targetsByName = new Map<string, FunctionWaypoint[]>();
 
   for (const [filePath, metadata] of structure.fileMetadata) {
     for (const waypoint of metadata.functionWaypoints ?? []) {
+      targetsById.set(`${filePath}:${waypoint.waypointId}`, waypoint);
+
+      const spanKey = waypointTargetKey(filePath, waypoint);
+      const spanEntries = targetsBySpan.get(spanKey) ?? [];
+      spanEntries.push(waypoint);
+      targetsBySpan.set(spanKey, spanEntries);
+
+      const nameKey = `${filePath}:${waypoint.name}`;
+      const nameEntries = targetsByName.get(nameKey) ?? [];
+      nameEntries.push(waypoint);
+      targetsByName.set(nameKey, nameEntries);
+
       for (const exportName of waypoint.exportNames ?? []) {
         const key = `${filePath}:${exportName}`;
         const entries = exportedTargets.get(key) ?? [];
@@ -904,9 +973,28 @@ function resolveCallWaypointReferences(structure: ExtractedStructure): void {
           continue;
         }
 
+        const target = resolveWaypointTarget(
+          call.definitionPath,
+          targetsById,
+          targetsBySpan,
+          targetsByName,
+          call.definitionWaypointId,
+          call.definitionStartLine,
+          call.definitionEndLine,
+          call.definitionName
+        );
+        if (target) {
+          call.definitionWaypointId = target.waypointId;
+          call.definitionStartLine = target.startLine;
+          call.definitionEndLine = target.endLine;
+          continue;
+        }
+
         const candidates = exportedTargets.get(`${call.definitionPath}:${call.definitionName}`) ?? [];
         if (candidates.length === 1) {
           call.definitionWaypointId = candidates[0].waypointId;
+          call.definitionStartLine = candidates[0].startLine;
+          call.definitionEndLine = candidates[0].endLine;
         }
       }
     }
@@ -1016,6 +1104,81 @@ async function resolveImportPath(repoRoot: string, sourceFilePath: string, speci
   return null;
 }
 
+function stripStaticReference(reference: string): string | null {
+  const trimmed = reference.trim().replace(/^["']|["']$/g, "");
+  if (
+    trimmed.length === 0 ||
+    trimmed.startsWith("#") ||
+    /^(?:[a-z][a-z\d+.-]*:)?\/\//i.test(trimmed) ||
+    /^(?:data|blob|mailto|tel):/i.test(trimmed)
+  ) {
+    return null;
+  }
+
+  const withoutHash = trimmed.split("#", 1)[0] ?? "";
+  const withoutQuery = withoutHash.split("?", 1)[0] ?? "";
+  return withoutQuery || null;
+}
+
+async function resolveStaticReference(repoRoot: string, sourceFilePath: string, reference: string): Promise<string | null> {
+  const stripped = stripStaticReference(reference);
+  if (!stripped) {
+    return null;
+  }
+
+  const basePath = stripped.startsWith("/")
+    ? path.join(repoRoot, stripped.slice(1))
+    : path.resolve(path.dirname(sourceFilePath), stripped);
+  const candidates = STATIC_REFERENCE_EXTENSIONS.map((extension) => `${basePath}${extension}`);
+
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      const stats = await fs.stat(candidate);
+      if (stats.isFile()) {
+        return toPosixRelative(repoRoot, candidate);
+      }
+    }
+  }
+
+  return null;
+}
+
+function staticReferenceSpecifiers(sourceText: string, extension: string): string[] {
+  const references = new Set<string>();
+
+  if (extension === ".css" || extension === ".scss" || extension === ".sass" || extension === ".less") {
+    const importPattern = /@import\s+(?:url\(\s*)?["']?([^"')\s;]+)["']?\s*\)?/g;
+    const urlPattern = /url\(\s*["']?([^"')]+)["']?\s*\)/g;
+    for (const match of sourceText.matchAll(importPattern)) {
+      references.add(match[1]);
+    }
+    for (const match of sourceText.matchAll(urlPattern)) {
+      references.add(match[1]);
+    }
+  }
+
+  if (extension === ".html") {
+    const attributePattern = /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
+    for (const match of sourceText.matchAll(attributePattern)) {
+      references.add(match[1]);
+    }
+  }
+
+  return [...references].sort();
+}
+
+function addImportEdge(structure: ExtractedStructure, seenEdges: Set<string>, sourcePath: string, targetPath: string): void {
+  if (targetPath === sourcePath || !structure.files.has(targetPath)) {
+    return;
+  }
+
+  const edgeKey = `${sourcePath}->${targetPath}`;
+  if (!seenEdges.has(edgeKey)) {
+    seenEdges.add(edgeKey);
+    structure.imports.push({ source: sourcePath, target: targetPath });
+  }
+}
+
 async function importedCallTargets(repoRoot: string, sourceFile: SourceFile): Promise<ImportedCallTargets> {
   const bindings = new Map<string, CallTarget>();
   const namespaces = new Map<string, string>();
@@ -1102,6 +1265,9 @@ async function walkRepo(directory: string, repoRoot: string, structure: Extracte
       structure.fileMetadata.set(relativePath, {
         linesOfCode: countLinesOfCode(contents),
         sourceText: contents,
+        ...(path.extname(entry.name).toLowerCase() === ".html" && path.basename(entry.name).toLowerCase() === "index.html"
+          ? { staticEntrypoint: true, staticEntrypointKind: "html-index" as const }
+          : {}),
         compressionReasons: []
       });
       addParentFolders(structure, relativePath);
@@ -1121,11 +1287,13 @@ function getImportSpecifiers(sourceFile: SourceFile): string[] {
 
 function connectInputSources(structure: ExtractedStructure): void {
   const targetsById = new Map<string, FunctionWaypoint>();
+  const targetsBySpan = new Map<string, FunctionWaypoint>();
   const targets = new Map<string, FunctionWaypoint[]>();
 
   for (const [filePath, metadata] of structure.fileMetadata) {
     for (const waypoint of metadata.functionWaypoints ?? []) {
       targetsById.set(`${filePath}:${waypoint.waypointId}`, waypoint);
+      targetsBySpan.set(waypointTargetKey(filePath, waypoint), waypoint);
       const key = `${filePath}:${waypoint.name}`;
       const entries = targets.get(key) ?? [];
       entries.push(waypoint);
@@ -1140,11 +1308,18 @@ function connectInputSources(structure: ExtractedStructure): void {
           continue;
         }
 
-        const target = call.definitionWaypointId
-          ? targetsById.get(`${call.definitionPath}:${call.definitionWaypointId}`)
-          : (targets.get(`${call.definitionPath}:${call.definitionName}`) ?? []).length === 1
-            ? (targets.get(`${call.definitionPath}:${call.definitionName}`) ?? [])[0]
-            : undefined;
+        let target: FunctionWaypoint | undefined;
+        if (call.definitionWaypointId) {
+          target = targetsById.get(`${call.definitionPath}:${call.definitionWaypointId}`);
+        } else if (call.definitionStartLine !== undefined && call.definitionEndLine !== undefined) {
+          target = targetsBySpan.get(waypointTargetKey(call.definitionPath, {
+            startLine: call.definitionStartLine,
+            endLine: call.definitionEndLine
+          }));
+        } else {
+          const namedTargets = targets.get(`${call.definitionPath}:${call.definitionName}`) ?? [];
+          target = namedTargets.length === 1 ? namedTargets[0] : undefined;
+        }
         if (!target) {
           continue;
         }
@@ -1221,11 +1396,7 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
         continue;
       }
 
-      const edgeKey = `${sourcePath}->${targetPath}`;
-      if (!seenEdges.has(edgeKey)) {
-        seenEdges.add(edgeKey);
-        structure.imports.push({ source: sourcePath, target: targetPath });
-      }
+      addImportEdge(structure, seenEdges, sourcePath, targetPath);
     }
   }
 
@@ -1246,14 +1417,26 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
     metadata.variableWaypoints = extraction.variableWaypoints;
 
     for (const targetPath of extraction.importPaths) {
-      if (targetPath === sourcePath) {
-        continue;
-      }
+      addImportEdge(structure, seenEdges, sourcePath, targetPath);
+    }
+  }
 
-      const edgeKey = `${sourcePath}->${targetPath}`;
-      if (!seenEdges.has(edgeKey)) {
-        seenEdges.add(edgeKey);
-        structure.imports.push({ source: sourcePath, target: targetPath });
+  const staticReferencePaths = [...structure.files]
+    .filter((filePath) => [".html", ".css", ".scss", ".sass", ".less"].includes(path.extname(filePath).toLowerCase()))
+    .sort();
+
+  for (const sourcePath of staticReferencePaths) {
+    const metadata = structure.fileMetadata.get(sourcePath);
+    if (!metadata) {
+      continue;
+    }
+
+    const sourceFilePath = path.join(repoRoot, sourcePath);
+    const specifiers = staticReferenceSpecifiers(metadata.sourceText, path.extname(sourcePath).toLowerCase());
+    for (const specifier of specifiers) {
+      const targetPath = await resolveStaticReference(repoRoot, sourceFilePath, specifier);
+      if (targetPath) {
+        addImportEdge(structure, seenEdges, sourcePath, targetPath);
       }
     }
   }

@@ -38,6 +38,7 @@ const CHILDREN_Y_OFFSET = 150;
 const GRID_GAP_Y = 34;
 const GROUP_GAP_Y = 70;
 const GROUP_GAP_X = 90;
+const MAX_FILE_COLUMN_ITEMS = 5;
 
 const IMPORT_PARSE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
 const EXTENSION_LABELS = new Map<string, string>([
@@ -116,11 +117,14 @@ function childSortGroup(node: AtlasNode): string {
     return "0:Folders";
   }
 
-  if (IMPORT_PARSE_EXTENSIONS.has(extensionOf(node))) {
-    return "1:Source";
+  const extension = extensionOf(node);
+  const typeKey = extension || "[no extension]";
+
+  if (IMPORT_PARSE_EXTENSIONS.has(extension)) {
+    return `1:Source:${typeKey}`;
   }
 
-  return `2:${fileClusterType(node)}`;
+  return `2:${fileClusterType(node)}:${typeKey}`;
 }
 
 function prioritizeChildren(children: AtlasNode[]): AtlasNode[] {
@@ -135,7 +139,7 @@ function prioritizeChildren(children: AtlasNode[]): AtlasNode[] {
       return compressionComparison;
     }
 
-    if (a.type === "folder" || b.type === "folder" || childSortGroup(a) === "1:Source") {
+    if (a.type === "folder" || b.type === "folder" || IMPORT_PARSE_EXTENSIONS.has(extensionOf(a))) {
       return scoreNode(b) - scoreNode(a) || a.path.localeCompare(b.path);
     }
 
@@ -318,32 +322,37 @@ function buildVisibleNodes(visibleChildren: AtlasNode[], level: number, graph: A
   let xOffset = 0;
 
   for (const [, groupChildren] of [...groupedChildren.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    let groupMaxWidth = 0;
+    const columnSize = groupChildren.every((child) => child.type === "file") ? MAX_FILE_COLUMN_ITEMS : groupChildren.length;
 
-    groupChildren.forEach((child, index) => {
-      const dimensions = nodeDimensions(child);
-      const x = xOffset;
-      const y = index * (dimensions.height + GRID_GAP_Y);
+    for (let columnStart = 0; columnStart < groupChildren.length; columnStart += columnSize) {
+      const columnChildren = groupChildren.slice(columnStart, columnStart + columnSize);
+      let columnMaxWidth = 0;
 
-      groupMaxWidth = Math.max(groupMaxWidth, dimensions.width);
-      nodes.push({
-        id: child.id,
-        type: child.type,
-        position: {
-          x,
-          y: y + (level > 0 ? CHILDREN_Y_OFFSET : 0)
-        },
-        width: dimensions.width,
-        height: dimensions.height,
-        initialWidth: dimensions.width,
-        initialHeight: dimensions.height,
-        data: withLayoutData(child, level, graph)
+      columnChildren.forEach((child, index) => {
+        const dimensions = nodeDimensions(child);
+        const x = xOffset;
+        const y = index * (dimensions.height + GRID_GAP_Y);
+
+        columnMaxWidth = Math.max(columnMaxWidth, dimensions.width);
+        nodes.push({
+          id: child.id,
+          type: child.type,
+          position: {
+            x,
+            y: y + (level > 0 ? CHILDREN_Y_OFFSET : 0)
+          },
+          width: dimensions.width,
+          height: dimensions.height,
+          initialWidth: dimensions.width,
+          initialHeight: dimensions.height,
+          data: withLayoutData(child, level, graph)
+        });
       });
-    });
 
-    // Horizontal tree branches: each group becomes a "branch column block" in X.
-    // Keep Y stable across groups so the view expands sideways instead of stacking downward.
-    xOffset += Math.max(groupMaxWidth, 1) + GROUP_GAP_X;
+      // Horizontal tree branches: each type column becomes a branch in X.
+      // File columns wrap after five items so vertical stacks stay readable.
+      xOffset += Math.max(columnMaxWidth, 1) + GROUP_GAP_X;
+    }
   }
 
   return nodes;

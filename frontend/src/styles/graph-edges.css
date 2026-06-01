@@ -20,6 +20,43 @@
   animation: structural-flow-in 1.8s linear infinite;
 }
 
+.structural-edge--corridor-link {
+  stroke-width: 2;
+  stroke-dasharray: 10 8;
+  opacity: 0.92;
+  animation: structural-flow-out 1.4s linear infinite;
+}
+
+.structural-edge--corridor-link-outgoing {
+  stroke: #2dd4bf;
+}
+
+.structural-edge--corridor-link-incoming {
+  stroke: #facc15;
+  animation-name: structural-flow-in;
+}
+
+.structural-edge--corridor-link.structural-edge--subdued {
+  opacity: 0.74;
+}
+
+.structural-edge--corridor-link.structural-edge--halo {
+  stroke-width: 8;
+  opacity: 0.34;
+}
+
+.structural-edge--corridor-link-outgoing.structural-edge--halo {
+  stroke: rgba(45, 212, 191, 0.22);
+}
+
+.structural-edge--corridor-link-incoming.structural-edge--halo {
+  stroke: rgba(250, 204, 21, 0.2);
+}
+
+.structural-edge--corridor-link.structural-edge--subdued.structural-edge--halo {
+  opacity: 0.27;
+}
+
 .structural-edge--halo {
   stroke: rgba(248, 250, 252, 0.18);
   stroke-width: 5;

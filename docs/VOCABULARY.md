@@ -76,6 +76,98 @@ The containment links from the most recent path anchor to the currently visible 
 Purpose:
 - Makes it clear that the current layer belongs to the selected parent.
 
+**Corridor**
+A visible structural context lane in the atlas.
+
+Use this for:
+- The current structural context.
+- Any linked context opened from a file relationship.
+
+Technical note:
+- The base corridor is driven by `currentContextId`.
+- Linked corridors are appended from relationship navigation.
+
+**Corridor Spine**
+The folder ancestry that anchors a corridor.
+
+Includes:
+- The visible path anchors from `Root` to the corridor context.
+- The current-parent fanout from the last path anchor to the visible layer.
+
+Rule:
+- The origin corridor spine is the fixed anchor for corridor merge and duplicate
+  detection.
+- Child objects in the visible layer remain movable, including while recursive
+  corridor mode is active.
+
+Use this instead of:
+- folder lineage of the corridor
+- ancestry strip
+
+**Origin Corridor**
+The corridor where a relationship-following action starts.
+
+Purpose:
+- Names the left side of a relationship jump without implying it is always the
+  first corridor.
+- In recursive corridor mode, any linked corridor can become the next origin
+  corridor.
+
+**Target Corridor**
+The corridor containing the file the user followed.
+
+Use this instead of:
+- teleported corridor
+- destination room
+
+**Linked Corridor**
+A target corridor that remains visible after the user follows a file
+relationship from another corridor.
+
+Rule:
+- Linked corridors accumulate until the user explicitly resets corridor mode.
+- If the requested context is already visible, the existing corridor is reused
+  instead of duplicating the same folder lineage.
+
+Technical name:
+- `linkedCorridors`
+
+**Recursive Corridor Mode**
+The interaction state where following file relationships creates a persistent
+chain or network of linked corridors.
+
+Rule:
+- A linked corridor can become an origin corridor for another linked corridor.
+- New relationship follows add or merge corridors; they do not clear previous
+  corridor links.
+- The only user-facing way to clear this mode is the Reset control.
+
+**Corridor Merge**
+The cleanup rule that reuses an already visible linked corridor when a new
+relationship target belongs to the same context.
+
+Purpose:
+- Prevents duplicate folder corridors.
+- Keeps converging lineage readable while preserving all relationship links.
+
+**Shared Lineage**
+The ancestor path that two or more corridors have in common.
+
+Rule:
+- Shared lineage should visually converge instead of repeating identical
+  ancestor folders in each linked corridor.
+
+**Corridor Link**
+A cross-corridor relationship edge between an origin file and a target file.
+
+Rule:
+- Corridor links use direction color: outgoing imports use the right-side import
+  color, incoming imported-by links use the left-side dependency color.
+- Corridor links persist until recursive corridor mode is reset.
+
+Technical name:
+- `corridorLinks`
+
 **Significance Propagation**
 The rule that activity deep inside a subtree contributes a subtle signal to its ancestors.
 
@@ -518,6 +610,37 @@ Expected result:
 
 Technical name:
 - `focusedNodeId`
+
+**Relationship Follow**
+The action of choosing a connected file from the metadata panel.
+
+Expected result:
+- If the target file is already in the active corridor, the camera recenters on
+  that file.
+- If the target file belongs to another context, recursive corridor mode opens
+  or reuses a linked corridor and draws a corridor link.
+
+Use this instead of:
+- teleport
+
+**Focus Handoff**
+The one-time camera movement that centers the file selected by a relationship
+follow.
+
+Rule:
+- A focus handoff happens only when the target corridor is first opened or
+  reused for that selected target.
+- After the handoff, ordinary camera movement remains under user control.
+
+**Reset Corridors**
+The explicit control that exits recursive corridor mode.
+
+Rule:
+- Reset clears linked corridors and corridor links.
+- Other navigation actions must not silently reset recursive corridor mode.
+
+Technical name:
+- `handleResetCorridors`
 
 **Double Click**
 Enters an object if it can contain children.

@@ -13,8 +13,6 @@ import {
 import type { AtlasNode } from "../api";
 import {
   inspectSource,
-  operationalIdentityFor,
-  type FunctionGroupLabel,
   type SourceFunctionWaypoint,
   type SourceSectionAnchor,
   type SourceVariableWaypoint
@@ -74,10 +72,52 @@ interface RuntimePlacementModel {
   outgoingOverflow: number;
 }
 
+interface SourceOutlineItem {
+  id: string;
+  name?: string;
+  label?: string;
+  line: number;
+  iconLabel: string;
+  detail?: string;
+  tags?: string[];
+  active?: boolean;
+}
+
+interface SourceOutlineGroup {
+  id: string;
+  label: string;
+  icon: string;
+  iconClassName: string;
+  items: SourceOutlineItem[];
+}
+
+type VariableScopeTier = "app-wide" | "shared" | "local";
+
+interface VariableOutlineItem {
+  id: string;
+  name: string;
+  line: number;
+  scopeTier: VariableScopeTier;
+  typeTag: {
+    label: string;
+    className: string;
+  };
+  blastRadius: number;
+  pipFillCount: number;
+}
+
+interface VariableOutlineGroup {
+  id: VariableScopeTier;
+  label: string;
+  edgeClassName: string;
+  items: VariableOutlineItem[];
+}
+
 const SOURCE_RAIL_MIN_WIDTH = 235;
 const SOURCE_RAIL_MAX_WIDTH = 460;
 const SOURCE_RAIL_INITIAL_WIDTH = 300;
-const RUNTIME_PLACEMENT_LIMIT = 2;
+const RUNTIME_PLACEMENT_INCOMING_LIMIT = 3;
+const RUNTIME_PLACEMENT_OUTGOING_LIMIT = 2;
 
 function clampSourceRailWidth(width: number): number {
   return Math.max(SOURCE_RAIL_MIN_WIDTH, Math.min(SOURCE_RAIL_MAX_WIDTH, width));
@@ -94,8 +134,197 @@ function variableOccurrenceLines(variable: SourceVariableWaypoint): number[] {
   ])].sort((left, right) => left - right);
 }
 
+function variableScopeTierFor(variable: SourceVariableWaypoint): VariableScopeTier {
+  const reach = variable.usageLines.length + variable.mutationLines.length + variable.conditionLines.length + variable.renderingLines.length + variable.helperCallLines.length;
+
+  if (variable.declarationKind === "state" || variable.declarationKind === "ref" || reach >= 6) {
+    return "app-wide";
+  }
+
+  if (reach >= 2) {
+    return "shared";
+  }
+
+  return "local";
+}
+
+function variableBlastRadiusFor(variable: SourceVariableWaypoint): number {
+  const reach = variable.usageLines.length + variable.mutationLines.length + variable.conditionLines.length + variable.renderingLines.length + variable.helperCallLines.length;
+
+  if (variable.declarationKind === "state" || variable.declarationKind === "ref") {
+    return Math.min(4, Math.max(2, Math.ceil(reach / 2) + 1));
+  }
+
+  return Math.min(4, reach <= 1 ? 0 : reach === 2 ? 1 : reach <= 4 ? 2 : reach <= 7 ? 3 : 4);
+}
+
+function variableTypeTagFor(variable: SourceVariableWaypoint, declarationSourceLine: string): { label: string; className: string } {
+  if (/useContext\s*\(/.test(declarationSourceLine)) {
+    return { label: "ctx", className: "is-context" };
+  }
+
+  if (variable.declarationKind === "state") {
+    return { label: "useState", className: "is-state" };
+  }
+
+  if (variable.declarationKind === "ref") {
+    return { label: "useRef", className: "is-ref" };
+  }
+
+  if (variable.declarationKind === "let" || variable.declarationKind === "var") {
+    return { label: "let", className: "is-let" };
+  }
+
+  return { label: "const", className: "is-const" };
+}
+
+function variableEdgeClassName(tier: VariableScopeTier): string {
+  return tier === "app-wide" ? "is-app-wide" : tier === "shared" ? "is-shared" : "is-local";
+}
+
+function variablePipColorClass(blastRadius: number): string {
+  if (blastRadius >= 4) {
+    return "is-red";
+  }
+
+  if (blastRadius >= 2) {
+    return "is-amber";
+  }
+
+  if (blastRadius >= 1) {
+    return "is-cyan";
+  }
+
+  return "is-dark";
+}
+
 function escapedPattern(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function fileExtensionLabel(fileLabel: string): string | null {
+  const lastDot = fileLabel.lastIndexOf(".");
+  if (lastDot <= 0 || lastDot === fileLabel.length - 1) {
+    return null;
+  }
+
+  return fileLabel.slice(lastDot);
+}
+
+function fileStemLabel(fileLabel: string): string {
+  const lastDot = fileLabel.lastIndexOf(".");
+  return lastDot > 0 ? fileLabel.slice(0, lastDot) : fileLabel;
+}
+
+function isPythonSource(extension?: string): boolean {
+  return String(extension ?? "").toLowerCase() === ".py";
+}
+
+function splitCommaList(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function parseImportNames(sourceText: string, extension?: string): Array<{ name: string; line: number; detail?: string }> {
+  const rows: Array<{ name: string; line: number; detail?: string }> = [];
+  const lines = sourceText.split(/\r?\n/);
+  const python = isPythonSource(extension);
+
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("//") || line.startsWith("/*") || line.startsWith("*") || line.startsWith("#")) {
+      continue;
+    }
+
+    if (python) {
+      const fromMatch = line.match(/^from\s+[\w.]+\s+import\s+(.+)$/);
+      if (fromMatch) {
+        const imported = fromMatch[1].replace(/[()]/g, "").replace(/\\$/, "").trim();
+        for (const entry of splitCommaList(imported)) {
+          const alias = entry.match(/^([A-Za-z_]\w*)\s+as\s+([A-Za-z_]\w*)$/);
+          const name = alias ? alias[2] : entry;
+          rows.push({ name, line: index + 1, detail: alias ? alias[1] : undefined });
+        }
+        continue;
+      }
+
+      const importMatch = line.match(/^import\s+(.+)$/);
+      if (importMatch) {
+        for (const entry of splitCommaList(importMatch[1])) {
+          const alias = entry.match(/^([A-Za-z_][\w.]*)\s+as\s+([A-Za-z_]\w*)$/);
+          rows.push({ name: alias ? alias[2] : entry, line: index + 1, detail: alias ? alias[1] : undefined });
+        }
+      }
+
+      continue;
+    }
+
+    const sideEffectMatch = line.match(/^import\s+["']([^"']+)["']\s*;?$/);
+    if (sideEffectMatch) {
+      const specifier = sideEffectMatch[1];
+      const fileName = specifier.split("/").pop() ?? specifier;
+      rows.push({ name: fileName, line: index + 1, detail: specifier });
+      continue;
+    }
+
+    const importMatch = line.match(/^import\s+(type\s+)?(.+)$/);
+    if (importMatch) {
+      const clause = importMatch[2];
+      const fromSplit = clause.split(/\s+from\s+/);
+      const left = fromSplit[0].trim();
+
+      if (left.startsWith("* as ")) {
+        rows.push({ name: left.slice(5).trim(), line: index + 1, detail: "namespace" });
+        continue;
+      }
+
+      if (left.startsWith("{")) {
+        for (const entry of splitCommaList(left.replace(/[{}]/g, ""))) {
+          const alias = entry.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+          rows.push({ name: alias ? alias[2] : entry, line: index + 1, detail: alias ? alias[1] : undefined });
+        }
+        continue;
+      }
+
+      if (left.includes(",")) {
+        const [defaultImport, rest] = left.split(",", 2);
+        const trimmedDefault = defaultImport.trim();
+        if (trimmedDefault.length > 0) {
+          rows.push({ name: trimmedDefault, line: index + 1, detail: "default" });
+        }
+
+        const braceMatch = rest?.match(/\{([\s\S]+)\}/);
+        if (braceMatch) {
+          for (const entry of splitCommaList(braceMatch[1])) {
+            const alias = entry.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+            rows.push({ name: alias ? alias[2] : entry, line: index + 1, detail: alias ? alias[1] : undefined });
+          }
+        }
+
+        continue;
+      }
+
+      if (left.length > 0) {
+        rows.push({ name: left, line: index + 1, detail: "default" });
+      }
+    }
+  }
+
+  return rows;
+}
+
+function outlineSearchText(item: Pick<SourceOutlineItem, "name" | "label" | "line" | "detail" | "tags">): string {
+  return [item.name ?? item.label ?? "", String(item.line), item.detail ?? "", ...(item.tags ?? [])].join(" ").toLowerCase();
+}
+
+function sourceOutlineMatchesQuery(item: Pick<SourceOutlineItem, "name" | "label" | "line" | "detail" | "tags">, query: string): boolean {
+  if (query.length === 0) {
+    return true;
+  }
+
+  return outlineSearchText(item).includes(query);
 }
 
 function compareRuntimePlacementRelations(left: RuntimePlacementRelation, right: RuntimePlacementRelation): number {
@@ -113,16 +342,38 @@ function runtimePlacementFor(
   indexedFiles.set(file.path, file);
   const incomingById = new Map<string, RuntimePlacementRelation>();
   const outgoingById = new Map<string, RuntimePlacementRelation>();
-  const waypointForTarget = (filePath: string, definitionWaypointId?: string, definitionName?: string) => {
+  const waypointForTarget = (
+    filePath: string,
+    definitionWaypointId?: string,
+    definitionName?: string,
+    definitionStartLine?: number,
+    definitionEndLine?: number
+  ) => {
     const waypoints = indexedFiles.get(filePath)?.metadata?.functionWaypoints ?? [];
     if (definitionWaypointId) {
       return waypoints.find((waypoint) => waypoint.waypointId === definitionWaypointId) ?? null;
     }
 
+    if (definitionStartLine !== undefined && definitionEndLine !== undefined) {
+      const bySpan = waypoints.filter(
+        (waypoint) => waypoint.startLine === definitionStartLine && waypoint.endLine === definitionEndLine
+      );
+
+      if (bySpan.length === 1) {
+        return bySpan[0];
+      }
+    }
+
     const matches = definitionName ? waypoints.filter((waypoint) => waypoint.name === definitionName) : [];
     return matches.length === 1 ? matches[0] : null;
   };
-  const indexedFocusedFunction = waypointForTarget(file.path, focusedFunction.waypointId, focusedFunction.name);
+  const indexedFocusedFunction = waypointForTarget(
+    file.path,
+    focusedFunction.waypointId,
+    focusedFunction.name,
+    focusedFunction.startLine,
+    focusedFunction.endLine
+  );
 
   if (indexedFocusedFunction?.startLine === focusedFunction.startLine) {
     for (const sourceFile of indexedFiles.values()) {
@@ -130,9 +381,19 @@ function runtimePlacementFor(
         const incomingConnection = caller.calls.find(
           (call) =>
             call.definitionPath === file.path &&
-            (focusedFunction.waypointId
-              ? call.definitionWaypointId === focusedFunction.waypointId
-              : !call.definitionWaypointId && call.definitionName === focusedFunction.name)
+            (
+              (focusedFunction.waypointId && call.definitionWaypointId === focusedFunction.waypointId) ||
+              (
+                call.definitionStartLine === focusedFunction.startLine &&
+                call.definitionEndLine === focusedFunction.endLine
+              ) ||
+              (
+                !call.definitionWaypointId &&
+                !call.definitionStartLine &&
+                !call.definitionEndLine &&
+                call.definitionName === focusedFunction.name
+              )
+            )
         );
 
         if (incomingConnection) {
@@ -150,9 +411,19 @@ function runtimePlacementFor(
       const moduleConnection = sourceFile.metadata?.moduleLinks?.find(
         (call) =>
           call.definitionPath === file.path &&
-          (focusedFunction.waypointId
-            ? call.definitionWaypointId === focusedFunction.waypointId
-            : !call.definitionWaypointId && call.definitionName === focusedFunction.name)
+          (
+            (focusedFunction.waypointId && call.definitionWaypointId === focusedFunction.waypointId) ||
+            (
+              call.definitionStartLine === focusedFunction.startLine &&
+              call.definitionEndLine === focusedFunction.endLine
+            ) ||
+            (
+              !call.definitionWaypointId &&
+              !call.definitionStartLine &&
+              !call.definitionEndLine &&
+              call.definitionName === focusedFunction.name
+            )
+          )
       );
       if (moduleConnection) {
         const id = `${sourceFile.path}:module-scope`;
@@ -173,12 +444,22 @@ function runtimePlacementFor(
       continue;
     }
 
-    const targetFunction = waypointForTarget(call.definitionPath, call.definitionWaypointId, call.definitionName);
+    const targetFunction = waypointForTarget(
+      call.definitionPath,
+      call.definitionWaypointId,
+      call.definitionName,
+      call.definitionStartLine,
+      call.definitionEndLine
+    );
     if (!targetFunction) {
       continue;
     }
 
-    const id = `${call.definitionPath}:${call.definitionWaypointId ?? call.definitionName}`;
+    const id = call.definitionWaypointId
+      ? `${call.definitionPath}:${call.definitionWaypointId}`
+      : call.definitionStartLine !== undefined && call.definitionEndLine !== undefined
+        ? `${call.definitionPath}:${call.definitionStartLine}:${call.definitionEndLine}`
+        : `${call.definitionPath}:${call.definitionName}`;
     outgoingById.set(id, {
       id,
       name: targetFunction.name,
@@ -192,10 +473,10 @@ function runtimePlacementFor(
   const outgoing = [...outgoingById.values()].sort(compareRuntimePlacementRelations);
 
   return {
-    incoming: incoming.slice(0, RUNTIME_PLACEMENT_LIMIT),
-    incomingOverflow: Math.max(0, incoming.length - RUNTIME_PLACEMENT_LIMIT),
-    outgoing: outgoing.slice(0, RUNTIME_PLACEMENT_LIMIT),
-    outgoingOverflow: Math.max(0, outgoing.length - RUNTIME_PLACEMENT_LIMIT)
+    incoming: incoming.slice(0, RUNTIME_PLACEMENT_INCOMING_LIMIT),
+    incomingOverflow: Math.max(0, incoming.length - RUNTIME_PLACEMENT_INCOMING_LIMIT),
+    outgoing: outgoing.slice(0, RUNTIME_PLACEMENT_OUTGOING_LIMIT),
+    outgoingOverflow: Math.max(0, outgoing.length - RUNTIME_PLACEMENT_OUTGOING_LIMIT)
   };
 }
 
@@ -229,13 +510,14 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
   const [markdownDisplayMode, setMarkdownDisplayMode] = useState<MarkdownDisplayMode>("rendered");
   const [activeFunctionId, setActiveFunctionId] = useState<string | null>(null);
   const [selectedRange, setSelectedRange] = useState<LineRange | null>(null);
+  const [areImportsExpanded, setAreImportsExpanded] = useState(true);
   const [areFunctionWaypointsExpanded, setAreFunctionWaypointsExpanded] = useState(true);
-  const [areOperationalVariablesExpanded, setAreOperationalVariablesExpanded] = useState(true);
+  const [areVariablesExpanded, setAreVariablesExpanded] = useState(true);
+  const [areAppWideVariablesExpanded, setAreAppWideVariablesExpanded] = useState(true);
+  const [areSharedVariablesExpanded, setAreSharedVariablesExpanded] = useState(true);
   const [areLocalVariablesExpanded, setAreLocalVariablesExpanded] = useState(false);
-  const [areStructuralAnchorsExpanded, setAreStructuralAnchorsExpanded] = useState(false);
-  const [expandedFunctionGroups, setExpandedFunctionGroups] = useState<Set<FunctionGroupLabel>>(
-    () => new Set(inspection.groups[0] ? [inspection.groups[0].label] : [])
-  );
+  const [areSectionsExpanded, setAreSectionsExpanded] = useState(false);
+  const [outlineQuery, setOutlineQuery] = useState("");
   const [expandedCirculationRegion, setExpandedCirculationRegion] = useState<CirculationRegion | null>("inputs");
   const [foldedFunctionIds, setFoldedFunctionIds] = useState<Set<string>>(() => new Set());
   const [runtimePlacementFunctionId, setRuntimePlacementFunctionId] = useState<string | null>(null);
@@ -247,7 +529,10 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
   const railResizeOriginRef = useRef<{ pointerX: number; width: number } | null>(null);
   const languageLabel = sourceLanguageLabel(file.metadata?.extension);
   const totalFunctionCount = file.metadata?.functionCount ?? inspection.functions.length;
-  const navigableFunctionCount = inspection.functions.length;
+  const importRows = useMemo(
+    () => parseImportNames(sourceText ?? "", file.metadata?.extension),
+    [file.metadata?.extension, sourceText]
+  );
   const activeFunction = inspection.functions.find((waypoint) => waypoint.id === activeFunctionId) ?? null;
   const activeVariable = [...inspection.operationalVariables, ...inspection.localVariables]
     .find((variable) => variable.id === activeVariableId) ?? null;
@@ -259,12 +544,135 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     ? -1
     : activeVariableOccurrences.indexOf(activeVariableOccurrenceLine);
   const focusedVariableOccurrenceIndex = Math.max(0, activeVariableOccurrenceIndex);
+  const normalizedOutlineQuery = outlineQuery.trim().toLowerCase();
   const runtimePlacementFunction =
     inspection.functions.find((waypoint) => waypoint.id === runtimePlacementFunctionId) ?? null;
   const runtimePlacement = useMemo(
     () => runtimePlacementFunction ? runtimePlacementFor(file, runtimePlacementFunction, sourceFiles) : null,
     [file, runtimePlacementFunction, sourceFiles]
   );
+  const outlineImports = useMemo(
+    () => importRows
+      .map((row) => ({
+        id: `${row.line}:${row.name}`,
+        name: row.name,
+        line: row.line,
+        iconLabel: row.detail ?? "import",
+        detail: row.detail,
+        tags: row.detail ? [row.detail] : undefined
+      }))
+      .filter((item) => sourceOutlineMatchesQuery(item, normalizedOutlineQuery)),
+    [importRows, normalizedOutlineQuery]
+  );
+  const outlineFunctions = useMemo(
+    () => inspection.functions
+      .map((waypoint) => ({
+        id: waypoint.id,
+        name: waypoint.name,
+        line: waypoint.startLine,
+        iconLabel: waypoint.group,
+        detail: `${waypoint.lineCount}L`,
+        tags: [
+          ...(waypoint.exported ? ["export"] : []),
+          ...(waypoint.outputs.some((output) => output.async) ? ["async"] : [])
+        ]
+      }))
+      .filter((item) => sourceOutlineMatchesQuery(item, normalizedOutlineQuery)),
+    [inspection.functions, normalizedOutlineQuery]
+  );
+  const outlineVariables = useMemo(() => {
+    const declarationSourceLine = (line: number): string => sourceLines[line - 1] ?? "";
+
+    return [...inspection.operationalVariables, ...inspection.localVariables]
+      .map((variable) => {
+        const scopeTier = variableScopeTierFor(variable);
+        const blastRadius = variableBlastRadiusFor(variable);
+        const typeTag = variableTypeTagFor(variable, declarationSourceLine(variable.declarationLine));
+
+        return {
+          id: variable.id,
+          name: variable.name,
+          line: variable.declarationLine,
+          scopeTier,
+          typeTag,
+          blastRadius,
+          pipFillCount: blastRadius
+        };
+      })
+      .filter((item) => sourceOutlineMatchesQuery({
+        name: item.name,
+        line: item.line,
+        detail: item.scopeTier,
+        tags: [item.typeTag.label, item.scopeTier]
+      }, normalizedOutlineQuery))
+      .sort((left, right) =>
+        right.blastRadius - left.blastRadius ||
+        right.line - left.line ||
+        left.name.localeCompare(right.name)
+      );
+  }, [inspection.localVariables, inspection.operationalVariables, normalizedOutlineQuery, sourceLines]);
+  const outlineVariableGroups = useMemo(() => {
+    const groups: VariableOutlineGroup[] = [
+      { id: "app-wide", label: "App-wide state", edgeClassName: "is-app-wide", items: [] },
+      { id: "shared", label: "Shared / subtree", edgeClassName: "is-shared", items: [] },
+      { id: "local", label: "Local only", edgeClassName: "is-local", items: [] }
+    ];
+
+    for (const item of outlineVariables) {
+      const group = groups.find((candidate) => candidate.id === item.scopeTier);
+      if (group) {
+        group.items.push(item);
+      }
+    }
+
+    return groups;
+  }, [outlineVariables]);
+  const localVariableGroup = useMemo(
+    () => outlineVariableGroups.find((group) => group.id === "local") ?? { id: "local", label: "Local only", edgeClassName: "is-local", items: [] },
+    [outlineVariableGroups]
+  );
+  const outlineSections = useMemo(() => {
+    const sections = inspection.sections
+      .map((section, index) => {
+        const nextLine = inspection.sections[index + 1]?.line ?? (sourceLines.length + 1);
+        const span = Math.max(1, nextLine - section.line);
+
+        return {
+          id: section.id,
+          label: section.label,
+          line: section.line,
+          iconLabel: section.detail,
+          detail: section.detail,
+          span
+        };
+      })
+      .filter((item) => sourceOutlineMatchesQuery(item, normalizedOutlineQuery));
+
+    const longestSpan = sections.reduce((maximum, section) => Math.max(maximum, section.span), 1);
+
+    return sections.map((section) => ({
+      ...section,
+      barWidth: Math.max(4, (section.span / longestSpan) * 48)
+    }));
+  }, [inspection.sections, normalizedOutlineQuery, sourceLines.length]);
+  const outlineMeta = useMemo(
+    () => ({
+      lineCount: file.metadata?.linesOfCode ?? sourceLines.filter((line) => line.trim().length > 0).length,
+      importCount: outlineImports.length,
+      functionCount: outlineFunctions.length
+    }),
+    [file.metadata?.linesOfCode, outlineFunctions.length, outlineImports.length, sourceLines]
+  );
+  const isOutlineSearchActive = normalizedOutlineQuery.length > 0;
+  const variableGroupExpansion = useMemo<Record<VariableScopeTier, boolean>>(() => ({
+    "app-wide": isOutlineSearchActive || areAppWideVariablesExpanded,
+    shared: isOutlineSearchActive || areSharedVariablesExpanded,
+    local: isOutlineSearchActive || areLocalVariablesExpanded
+  }), [areAppWideVariablesExpanded, areLocalVariablesExpanded, areSharedVariablesExpanded, isOutlineSearchActive]);
+  const importsExpanded = areImportsExpanded || isOutlineSearchActive;
+  const functionsExpanded = areFunctionWaypointsExpanded || isOutlineSearchActive;
+  const variablesExpanded = areVariablesExpanded || isOutlineSearchActive;
+  const sectionsExpanded = areSectionsExpanded || isOutlineSearchActive;
   const foldableFunctionByStartLine = useMemo(() => {
     const functionsByLine = new Map<number, SourceFunctionWaypoint>();
 
@@ -281,14 +689,6 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
 
     return functionsByLine;
   }, [inspection.functions]);
-  const operationalIdentity = useMemo(
-    () => operationalIdentityFor(file, inspection, {
-      importCount: fileContext?.importCount ?? Number(file.metadata?.importCount ?? 0),
-      importedByCount: fileContext?.importedByCount ?? 0,
-      weight: fileContext?.weight
-    }),
-    [file, fileContext, inspection]
-  );
   const traceLines = useMemo(() => {
     const callLines = new Set<number>();
     const stateUpdateLines = new Set<number>();
@@ -404,18 +804,17 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     setActiveFunctionId(null);
     setSelectedRange(null);
     setMarkdownDisplayMode("rendered");
+    setAreImportsExpanded(true);
     setAreFunctionWaypointsExpanded(true);
-    setAreOperationalVariablesExpanded(true);
-    setAreLocalVariablesExpanded(false);
-    setAreStructuralAnchorsExpanded(false);
-    setExpandedFunctionGroups(new Set(inspection.groups[0] ? [inspection.groups[0].label] : []));
+    setAreVariablesExpanded(true);
+    setAreSectionsExpanded(false);
     setExpandedCirculationRegion("inputs");
     setFoldedFunctionIds(new Set());
     setRuntimePlacementFunctionId(null);
     setActiveVariableId(null);
     setActiveVariableOccurrenceLine(null);
     lineRefs.current.clear();
-  }, [file.id, inspection.groups]);
+  }, [file.id]);
 
   useEffect(() => {
     if (!isResizingRail) {
@@ -503,6 +902,31 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     });
   }
 
+  function navigateToOutlineLine(line: number): void {
+    const foldsToReveal = inspection.functions.filter(
+      (candidate) =>
+        foldedFunctionIds.has(candidate.id) &&
+        candidate.startLine < line &&
+        candidate.endLine >= line
+    );
+
+    setActiveFunctionId(null);
+    setRuntimePlacementFunctionId(null);
+    setActiveVariableId(null);
+    setActiveVariableOccurrenceLine(null);
+    setSelectedRange({ startLine: line, endLine: line });
+    if (foldsToReveal.length > 0) {
+      setFoldedFunctionIds((current) => {
+        const next = new Set(current);
+        foldsToReveal.forEach((candidate) => next.delete(candidate.id));
+        return next;
+      });
+      window.requestAnimationFrame(() => navigateToRange({ startLine: line, endLine: line }));
+    } else {
+      navigateToRange({ startLine: line, endLine: line });
+    }
+  }
+
   function navigateToFunction(waypoint: SourceFunctionWaypoint): void {
     const range = { startLine: waypoint.startLine, endLine: waypoint.endLine };
     const foldsToReveal = inspection.functions.filter(
@@ -516,7 +940,6 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     setRuntimePlacementFunctionId(null);
     setActiveVariableId(null);
     setActiveVariableOccurrenceLine(null);
-    setExpandedFunctionGroups((current) => new Set(current).add(waypoint.group));
     if (waypoint.id !== activeFunctionId) {
       setExpandedCirculationRegion("inputs");
     }
@@ -535,48 +958,13 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
   }
 
   function navigateToSection(section: SourceSectionAnchor): void {
-    const foldsToReveal = inspection.functions.filter(
-      (candidate) =>
-        foldedFunctionIds.has(candidate.id) &&
-        candidate.startLine < section.line &&
-        candidate.endLine >= section.line
-    );
-
-    setActiveFunctionId(null);
-    setSelectedRange(null);
-    setRuntimePlacementFunctionId(null);
-    setActiveVariableId(null);
-    setActiveVariableOccurrenceLine(null);
-    if (foldsToReveal.length > 0) {
-      setFoldedFunctionIds((current) => {
-        const next = new Set(current);
-        foldsToReveal.forEach((candidate) => next.delete(candidate.id));
-        return next;
-      });
-      window.requestAnimationFrame(() => navigateToRange({ startLine: section.line, endLine: section.line }));
-    } else {
-      navigateToRange({ startLine: section.line, endLine: section.line });
-    }
+    navigateToOutlineLine(section.line);
   }
 
   function clearWaypointSelection(): void {
     setActiveFunctionId(null);
     setSelectedRange(null);
     setExpandedCirculationRegion("inputs");
-  }
-
-  function toggleFunctionGroup(group: FunctionGroupLabel): void {
-    setExpandedFunctionGroups((current) => {
-      const next = new Set(current);
-
-      if (next.has(group)) {
-        next.delete(group);
-      } else {
-        next.add(group);
-      }
-
-      return next;
-    });
   }
 
   function focusVariableOccurrence(variable: SourceVariableWaypoint, line: number): void {
@@ -864,29 +1252,280 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
           className={`source-modal__surface ${isResizingRail ? "is-resizing" : ""}`}
           style={{ "--source-rail-width": `${railWidth}px` } as SourceStyle}
         >
-          <section
-            id="source-modal-operational-identity"
-            className={`source-modal__operational-identity source-modal__operational-identity--${operationalIdentity.kind}`}
-            aria-label="Operational identity"
-          >
-            <div className="source-modal__pane-label">Operational Identity</div>
-            <div className="source-modal__primary-role">
-              <small>Primary Role</small>
-              <strong>{operationalIdentity.primaryRole}</strong>
-            </div>
-            <div className="source-modal__secondary-traits">
-              <small>Secondary Traits</small>
-              <div>
-                {operationalIdentity.secondaryTraits.length > 0
-                  ? operationalIdentity.secondaryTraits.map((trait) => (
-                      <span className={`source-modal__trait source-modal__trait--${trait.kind}`} key={`${trait.kind}-${trait.label}`}>
-                        {trait.label}
-                      </span>
-                    ))
-                  : <span className="source-modal__trait-empty">No strong secondary signal</span>}
+          <aside id="source-modal-navigation" className="source-modal__navigation" aria-label="File outline">
+            <div className="source-modal__outline-header">
+              <div className="source-modal__outline-title-block">
+                <div className="source-modal__outline-title-row">
+                  <strong className="source-modal__outline-name">{fileStemLabel(file.label)}</strong>
+                  {fileExtensionLabel(file.label) ? (
+                    <span className="source-modal__outline-extension">{fileExtensionLabel(file.label)}</span>
+                  ) : null}
+                </div>
+                <div className="source-modal__outline-meta">
+                  <span>{outlineMeta.lineCount} lines</span>
+                  <span>{outlineMeta.importCount} imports</span>
+                  <span>{outlineMeta.functionCount} functions</span>
+                </div>
               </div>
+              <input
+                className="source-modal__outline-search"
+                value={outlineQuery}
+                onChange={(event) => setOutlineQuery(event.target.value)}
+                placeholder="Search outline"
+                aria-label="Search file outline"
+              />
             </div>
-          </section>
+
+            <section className={`source-modal__outline-group ${importsExpanded ? "is-expanded" : "is-collapsed"}`}>
+              <button
+                type="button"
+                className="source-modal__outline-group-toggle"
+                aria-expanded={importsExpanded}
+                onClick={() => setAreImportsExpanded((expanded) => !expanded)}
+              >
+                <span className="source-modal__outline-group-title">
+                  <span className="source-modal__outline-group-icon source-modal__outline-group-icon--imports">&#8595;</span>
+                  <span>Imports</span>
+                </span>
+                <small>{outlineImports.length}</small>
+                <i aria-hidden="true" />
+              </button>
+              {importsExpanded ? (
+                outlineImports.length > 0 ? (
+                  <div className="source-modal__outline-rows">
+                    {outlineImports.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`source-modal__outline-row ${selectedRange?.startLine === item.line ? "is-active" : ""}`.trim()}
+                        onClick={() => navigateToOutlineLine(item.line)}
+                      >
+                        <span className="source-modal__outline-row-left">
+                          <span className="source-modal__outline-row-icon source-modal__outline-row-icon--imports">&#8595;</span>
+                          <span className="source-modal__outline-row-name">{item.name}</span>
+                        </span>
+                        <span className="source-modal__outline-row-right">
+                          {item.tags?.length ? (
+                            <span className="source-modal__outline-row-tags">
+                              {item.tags.map((tag) => (
+                                <span key={tag}>{tag}</span>
+                              ))}
+                            </span>
+                          ) : null}
+                          <span className="source-modal__outline-row-line">:{item.line}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="source-modal__outline-empty">No imports match the current search.</p>
+                )
+              ) : null}
+            </section>
+
+            <section className={`source-modal__outline-group ${functionsExpanded ? "is-expanded" : "is-collapsed"}`}>
+              <button
+                type="button"
+                className="source-modal__outline-group-toggle"
+                aria-expanded={functionsExpanded}
+                onClick={() => setAreFunctionWaypointsExpanded((expanded) => !expanded)}
+              >
+                <span className="source-modal__outline-group-title">
+                  <span className="source-modal__outline-group-icon source-modal__outline-group-icon--functions">&#402;</span>
+                  <span>Functions</span>
+                </span>
+                <small>{outlineFunctions.length}</small>
+                <i aria-hidden="true" />
+              </button>
+              {functionsExpanded ? (
+                outlineFunctions.length > 0 ? (
+                  <div className="source-modal__outline-rows">
+                    {outlineFunctions.map((item) => {
+                      const isActive = activeFunctionId === item.id;
+
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`source-modal__outline-row ${isActive ? "is-active" : ""}`.trim()}
+                          onClick={() => {
+                            const waypoint = inspection.functions.find((candidate) => candidate.id === item.id);
+                            if (waypoint) {
+                              navigateToFunction(waypoint);
+                            }
+                          }}
+                        >
+                          <span className="source-modal__outline-row-left">
+                            <span className="source-modal__outline-row-icon source-modal__outline-row-icon--functions">&#402;</span>
+                            <span className="source-modal__outline-row-name">{item.name}</span>
+                          </span>
+                          <span className="source-modal__outline-row-right">
+                            {item.tags?.length ? (
+                              <span className="source-modal__outline-row-tags">
+                                {item.tags.map((tag) => (
+                                  <span key={tag}>{tag}</span>
+                                ))}
+                              </span>
+                            ) : null}
+                            <span className="source-modal__outline-row-line">:{item.line}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="source-modal__outline-empty">No functions match the current search.</p>
+                )
+              ) : null}
+            </section>
+
+            <section className={`source-modal__outline-group ${variablesExpanded ? "is-expanded" : "is-collapsed"}`}>
+              <button
+                type="button"
+                className="source-modal__outline-group-toggle"
+                aria-expanded={variablesExpanded}
+                onClick={() => setAreVariablesExpanded((expanded) => !expanded)}
+              >
+                <span className="source-modal__outline-group-title">
+                  <span className="source-modal__outline-group-icon source-modal__outline-group-icon--variables">&#8801;</span>
+                  <span>Variables</span>
+                </span>
+                <small>{outlineVariables.length}</small>
+                <i aria-hidden="true" />
+              </button>
+              {variablesExpanded ? (
+                outlineVariables.length > 0 ? (
+                  <div className="source-modal__outline-variable-legend" aria-label="Variable scope legend">
+                    <span><i className="is-app-wide" />App-wide state</span>
+                    <span><i className="is-shared" />Shared / subtree</span>
+                    <span><i className="is-local" />Local only</span>
+                  </div>
+                ) : null
+              ) : null}
+              {variablesExpanded ? (
+                outlineVariableGroups.some((group) => group.items.length > 0) ? (
+                  <div className="source-modal__outline-variable-groups">
+                    {outlineVariableGroups.map((group, groupIndex) => {
+                      const isExpanded = variableGroupExpansion[group.id];
+                      const isLocalGroup = group.id === "local";
+
+                      return (
+                        <div key={group.id} className="source-modal__outline-variable-group">
+                          {groupIndex > 0 ? <div className="source-modal__outline-divider" /> : null}
+                          <button
+                            type="button"
+                            className={`source-modal__outline-variable-group-toggle ${group.edgeClassName}`.trim()}
+                            aria-expanded={isExpanded}
+                            onClick={() => {
+                              if (group.id === "app-wide") {
+                                setAreAppWideVariablesExpanded((expanded) => !expanded);
+                              } else if (group.id === "shared") {
+                                setAreSharedVariablesExpanded((expanded) => !expanded);
+                              } else {
+                                setAreLocalVariablesExpanded((expanded) => !expanded);
+                              }
+                            }}
+                          >
+                            <span className="source-modal__outline-variable-group-title">
+                              <span className={`source-modal__outline-variable-group-dot ${group.edgeClassName}`} aria-hidden="true" />
+                              <span>{group.label}</span>
+                              <small>{group.items.length}</small>
+                            </span>
+                            <i aria-hidden="true" />
+                          </button>
+                          {isExpanded && group.items.length > 0 ? (
+                            <div className="source-modal__outline-rows source-modal__outline-rows--variables">
+                              {group.items.map((item) => {
+                                const variable = [...inspection.operationalVariables, ...inspection.localVariables].find((candidate) => candidate.id === item.id);
+                                const isActive = activeVariableId === item.id || activeVariableOccurrenceLine === item.line;
+
+                                return (
+                                  <button
+                                    key={item.id}
+                                    type="button"
+                                    className={`source-modal__outline-variable-row ${isActive ? "is-active" : ""} ${variableEdgeClassName(item.scopeTier)}`.trim()}
+                                    onClick={() => variable ? focusVariableOccurrence(variable, item.line) : undefined}
+                                  >
+                                    <span className={`source-modal__outline-variable-edge ${variableEdgeClassName(item.scopeTier)}`} aria-hidden="true" />
+                                    <span className="source-modal__outline-variable-pips" aria-hidden="true">
+                                      {Array.from({ length: 4 }, (_, index) => {
+                                        const filled = index < item.pipFillCount;
+                                        return <span key={`${item.id}-${index}`} className={`source-modal__outline-variable-pip ${filled ? variablePipColorClass(item.pipFillCount) : "is-dark"}`.trim()} />;
+                                      })}
+                                    </span>
+                                    <span className="source-modal__outline-variable-main">
+                                      <span className="source-modal__outline-variable-name">{item.name}</span>
+                                      <span className={`source-modal__outline-variable-tag ${item.typeTag.className}`.trim()}>{item.typeTag.label}</span>
+                                    </span>
+                                    <span className="source-modal__outline-variable-line">:{item.line}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                          {isLocalGroup && !isExpanded && group.items.length > 0 && !isOutlineSearchActive ? (
+                            <button
+                              type="button"
+                              className="source-modal__outline-variable-more"
+                              onClick={() => setAreLocalVariablesExpanded(true)}
+                            >
+                              <span>{group.items.length} more local variables</span>
+                              <i aria-hidden="true" />
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="source-modal__outline-empty">No variables match the current search.</p>
+                )
+              ) : null}
+            </section>
+
+            <section className={`source-modal__outline-group ${sectionsExpanded ? "is-expanded" : "is-collapsed"}`}>
+              <button
+                type="button"
+                className="source-modal__outline-group-toggle"
+                aria-expanded={sectionsExpanded}
+                onClick={() => setAreSectionsExpanded((expanded) => !expanded)}
+              >
+                <span className="source-modal__outline-group-title">
+                  <span className="source-modal__outline-group-icon source-modal__outline-group-icon--sections">&#167;</span>
+                  <span>Sections</span>
+                </span>
+                <small>{outlineSections.length}</small>
+                <i aria-hidden="true" />
+              </button>
+              {sectionsExpanded ? (
+                outlineSections.length > 0 ? (
+                  <div className="source-modal__outline-rows">
+                    {outlineSections.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`source-modal__outline-row ${selectedRange?.startLine === item.line ? "is-active" : ""}`.trim()}
+                        onClick={() => navigateToSection(item)}
+                      >
+                        <span className="source-modal__outline-row-left">
+                          <span className="source-modal__outline-row-icon source-modal__outline-row-icon--sections">&#167;</span>
+                          <span className="source-modal__outline-row-name">{item.label}</span>
+                          <span className="source-modal__outline-row-bar" aria-hidden="true">
+                            <span className="source-modal__outline-row-bar-fill" style={{ width: `${item.barWidth}px` }} />
+                          </span>
+                        </span>
+                        <span className="source-modal__outline-row-right">
+                          <span className="source-modal__outline-row-line">:{item.line}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="source-modal__outline-empty">No sections match the current search.</p>
+                )
+              ) : null}
+            </section>
+          </aside>
           <section
             className="source-modal__implementation"
             aria-label={runtimePlacementFunction ? "Runtime placement" : "Source implementation"}
@@ -964,7 +1603,14 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
                                 ? relation.isModuleScope ? "Mounts Focus" : "Renders Focus"
                                 : relation.isModuleScope ? "Invokes Focus" : "Direct Call"}
                             </small>
-                            {relation.isCrossFile || relation.isModuleScope ? <span title={relation.path}>{relation.path}</span> : null}
+                            {relation.isCrossFile || relation.isModuleScope ? (
+                              <span
+                                className="source-modal__placement-relation-path source-modal__placement-relation-path--incoming"
+                                title={relation.path}
+                              >
+                                {relation.path}
+                              </span>
+                            ) : null}
                           </article>
                         ))}
                       </div>
@@ -977,7 +1623,7 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
                   <section className="source-modal__placement-focus">
                     <small>Focused Function</small>
                     <strong>{runtimePlacementFunction.name}()</strong>
-                    <span>{file.path}</span>
+                    <span className="source-modal__placement-focus-path">{file.path}</span>
                   </section>
                   <span className="source-modal__placement-flow" aria-hidden="true" />
                   <section className="source-modal__placement-lane source-modal__placement-lane--outgoing">
@@ -1026,7 +1672,7 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
             className="source-modal__rail-resizer"
             role="separator"
             aria-label="Resize operational rail"
-            aria-controls="source-modal-operational-identity source-modal-navigation"
+            aria-controls="source-modal-navigation source-modal-implementation"
             aria-orientation="vertical"
             aria-valuemin={SOURCE_RAIL_MIN_WIDTH}
             aria-valuemax={SOURCE_RAIL_MAX_WIDTH}
@@ -1037,263 +1683,6 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
           >
             <span aria-hidden="true" />
           </div>
-          <aside id="source-modal-navigation" className="source-modal__navigation" aria-label="Operational navigation">
-            <div className="source-modal__navigation-header">
-              <div className="source-modal__pane-label">Navigation Rail</div>
-              <strong>{navigableFunctionCount} waypoint{navigableFunctionCount === 1 ? "" : "s"}</strong>
-              {totalFunctionCount > navigableFunctionCount ? (
-                <span>{totalFunctionCount - navigableFunctionCount} inline or unnamed entr{totalFunctionCount - navigableFunctionCount === 1 ? "y" : "ies"} suppressed</span>
-              ) : null}
-            </div>
-            {runtimeContext?.inActiveCorridor || runtimeContext?.exploredAsOrigin ? (
-              <section className="source-modal__runtime-context" aria-label="Runtime relation">
-                <div>Runtime Relation</div>
-                {runtimeContext.isCurrentNode ? <strong>Active corridor node</strong> : null}
-                {runtimeContext.inActiveCorridor && !runtimeContext.isCurrentNode ? <strong>Corridor participant</strong> : null}
-                {typeof runtimeContext.runtimeStep === "number" ? <span>Waypoint {runtimeContext.runtimeStep + 1}</span> : null}
-                {runtimeContext.exploredAsOrigin ? <span>Used as an X-Ray origin in this session</span> : null}
-              </section>
-            ) : null}
-            <section
-              className={`source-modal__nav-region source-modal__function-regions source-modal__disclosure-region ${areFunctionWaypointsExpanded ? "is-expanded" : "is-collapsed"}`}
-              aria-label="Function navigation"
-            >
-              <button
-                type="button"
-                className="source-modal__region-toggle"
-                aria-expanded={areFunctionWaypointsExpanded}
-                onClick={() => setAreFunctionWaypointsExpanded((expanded) => !expanded)}
-              >
-                <span>Function Waypoints</span>
-                <small>{navigableFunctionCount} waypoint{navigableFunctionCount === 1 ? "" : "s"}</small>
-                <i aria-hidden="true" />
-              </button>
-              {areFunctionWaypointsExpanded ? (
-                inspection.groups.length === 0 ? (
-                  <p className="source-modal__nav-empty">
-                    {typeof file.metadata?.functionCount === "number" && file.metadata.functionCount > 0
-                      ? "No named waypoints extracted. Re-analyze after updating the backend if this graph predates inspection data."
-                      : "No navigable source functions detected."}
-                  </p>
-                ) : inspection.groups.map((group) => {
-                  const isGroupExpanded = expandedFunctionGroups.has(group.label);
-
-                  return (
-                    <div
-                      className={`source-modal__function-group ${isGroupExpanded ? "is-expanded" : "is-collapsed"}`}
-                      key={group.label}
-                    >
-                      <button
-                        type="button"
-                        className="source-modal__group-toggle"
-                        aria-expanded={isGroupExpanded}
-                        onClick={() => toggleFunctionGroup(group.label)}
-                      >
-                        <span>{group.label}</span>
-                        <small>{group.functions.length}</small>
-                        <i aria-hidden="true" />
-                      </button>
-                      {isGroupExpanded ? group.functions.map((waypoint) => {
-                        const isActive = waypoint.id === activeFunctionId;
-
-                        return (
-                          <div
-                            className={`source-modal__function-card source-modal__function-card--${waypoint.gravityLevel} ${isActive ? "is-expanded" : ""}`}
-                            key={waypoint.id}
-                            style={functionStyle(waypoint)}
-                          >
-                            <button
-                              type="button"
-                              className={`source-modal__function ${isActive ? "is-active" : ""}`.trim()}
-                              onClick={() => navigateToFunction(waypoint)}
-                            >
-                              <span className="source-modal__function-name">{waypoint.name}()</span>
-                              <span className="source-modal__function-meta">
-                                {waypoint.lineCount}L / {waypoint.calls.length} links / {waypoint.stateUpdates.length} updates
-                                {waypoint.exported ? " / export" : waypoint.public ? " / public" : ""}
-                              </span>
-                            </button>
-                            {isActive ? (
-                              <div className="source-modal__circulation" aria-label={`Data circulation for ${waypoint.name}`}>
-                                <CirculationSection
-                                  title="Inputs"
-                                  summary={`${waypoint.inputs.length}`}
-                                  isExpanded={expandedCirculationRegion === "inputs"}
-                                  onToggle={() => setExpandedCirculationRegion((current) => current === "inputs" ? null : "inputs")}
-                                >
-                                  {waypoint.inputs.length > 0 ? waypoint.inputs.map((input) => (
-                                    <div className="source-modal__flow-row" key={`${input.name}-${input.line}`}>
-                                      <code>{input.name}</code>
-                                      {input.type ? <span>{input.type}</span> : null}
-                                      <small>line {input.line}</small>
-                                      {input.sources?.map((source) => (
-                                        <div className="source-modal__flow-link" key={`${source.filePath}-${source.line}-${source.expression}`}>
-                                          <b>from</b>
-                                          <span>{source.filePath} : {source.line}</span>
-                                          <code>{source.functionName}() / {source.expression}</code>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )) : <div className="source-modal__flow-empty">None detected</div>}
-                                </CirculationSection>
-                                <CirculationSection
-                                  title="Outputs"
-                                  summary={`${waypoint.outputs.length}`}
-                                  isExpanded={expandedCirculationRegion === "outputs"}
-                                  onToggle={() => setExpandedCirculationRegion((current) => current === "outputs" ? null : "outputs")}
-                                >
-                                  {waypoint.outputs.length > 0 ? waypoint.outputs.map((output) => (
-                                    <div className="source-modal__flow-row" key={`${output.line}-${output.expression}`}>
-                                      <code>{output.expression}</code>
-                                      {output.type ? <span>{output.type}</span> : null}
-                                      <small>line {output.line}{output.async ? " / async" : ""}</small>
-                                    </div>
-                                  )) : <div className="source-modal__flow-empty">None detected</div>}
-                                </CirculationSection>
-                                <CirculationSection
-                                  title="State Updates"
-                                  summary={`${waypoint.stateUpdates.length}`}
-                                  isExpanded={expandedCirculationRegion === "state-updates"}
-                                  onToggle={() => setExpandedCirculationRegion((current) => current === "state-updates" ? null : "state-updates")}
-                                >
-                                  {waypoint.stateUpdates.length > 0 ? waypoint.stateUpdates.map((update) => (
-                                    <div className="source-modal__flow-row" key={`${update.setter}-${update.line}`}>
-                                      <code>{update.setter}({update.arguments.join(", ")})</code>
-                                      <span>{update.state}</span>
-                                      <small>line {update.line}</small>
-                                    </div>
-                                  )) : <div className="source-modal__flow-empty">None detected</div>}
-                                </CirculationSection>
-                                <CirculationSection
-                                  title="Function Links"
-                                  summary={`${waypoint.calls.length}`}
-                                  isExpanded={expandedCirculationRegion === "calls"}
-                                  onToggle={() => setExpandedCirculationRegion((current) => current === "calls" ? null : "calls")}
-                                >
-                                  {waypoint.calls.length > 0 ? waypoint.calls.map((call) => (
-                                    <div className="source-modal__flow-row" key={`${call.connectionKind ?? "call"}-${call.name}-${call.line}`}>
-                                      <code>
-                                        {call.connectionKind === "jsx-render" ? `<${call.name} />` : `${call.name}()`}
-                                      </code>
-                                      {call.connectionKind === "jsx-render" ? <span>rendered component</span> : null}
-                                      <small>line {call.line}</small>
-                                      {call.definitionPath ? (
-                                        <div className="source-modal__flow-link">
-                                          <b>from</b>
-                                          <span>{call.definitionPath}</span>
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  )) : <div className="source-modal__flow-empty">None detected</div>}
-                                </CirculationSection>
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      }) : null}
-                    </div>
-                  );
-                })
-              ) : null}
-            </section>
-            <section
-              className={`source-modal__nav-region source-modal__variable-region source-modal__disclosure-region ${areOperationalVariablesExpanded ? "is-expanded" : "is-collapsed"}`}
-              aria-label="Operational variables"
-            >
-              <button
-                type="button"
-                className="source-modal__region-toggle"
-                aria-expanded={areOperationalVariablesExpanded}
-                onClick={() => setAreOperationalVariablesExpanded((expanded) => !expanded)}
-              >
-                <span>Operational Variables</span>
-                <small>{inspection.operationalVariables.length} signal{inspection.operationalVariables.length === 1 ? "" : "s"}</small>
-                <i aria-hidden="true" />
-              </button>
-              {areOperationalVariablesExpanded ? (
-                inspection.operationalVariables.length > 0 ? (
-                  <div className="source-modal__variable-list">
-                    {inspection.operationalVariables.map((variable) => (
-                      <button
-                        type="button"
-                        className={`source-modal__variable is-operational ${activeVariableId === variable.id ? "is-active" : ""}`.trim()}
-                        key={variable.id}
-                        onClick={() => focusVariable(variable)}
-                      >
-                        <span className="source-modal__variable-name">{variable.name}</span>
-                        <span className="source-modal__variable-class">{variable.classification}</span>
-                        <small>{variableSignal(variable)}</small>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="source-modal__nav-empty">No operational variable signals detected.</p>
-                )
-              ) : null}
-            </section>
-            <section
-              className={`source-modal__nav-region source-modal__variable-region source-modal__local-variables source-modal__disclosure-region ${areLocalVariablesExpanded ? "is-expanded" : "is-collapsed"}`}
-              aria-label="Local variables"
-            >
-              <button
-                type="button"
-                className="source-modal__region-toggle"
-                aria-expanded={areLocalVariablesExpanded}
-                onClick={() => setAreLocalVariablesExpanded((expanded) => !expanded)}
-              >
-                <span>Local Variables</span>
-                <small>{inspection.localVariables.length} local variables suppressed</small>
-                <i aria-hidden="true" />
-              </button>
-              {areLocalVariablesExpanded ? (
-                inspection.localVariables.length > 0 ? (
-                  <div className="source-modal__variable-list is-local">
-                    {inspection.localVariables.map((variable) => (
-                      <button
-                        type="button"
-                        className={`source-modal__variable is-local ${activeVariableId === variable.id ? "is-active" : ""}`.trim()}
-                        key={variable.id}
-                        onClick={() => focusVariable(variable)}
-                      >
-                        <span className="source-modal__variable-name">{variable.name}</span>
-                        <span className="source-modal__variable-class">{variable.classification}</span>
-                        <small>{variableSignal(variable)}</small>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="source-modal__nav-empty">No local implementation variables detected.</p>
-                )
-              ) : null}
-            </section>
-            {inspection.sections.length > 0 ? (
-              <section
-                className={`source-modal__nav-region source-modal__anchor-region source-modal__disclosure-region ${areStructuralAnchorsExpanded ? "is-expanded" : "is-collapsed"}`}
-                aria-label="Structural sections"
-              >
-                <button
-                  type="button"
-                  className="source-modal__region-toggle"
-                  aria-expanded={areStructuralAnchorsExpanded}
-                  onClick={() => setAreStructuralAnchorsExpanded((expanded) => !expanded)}
-                >
-                  <span>Structural Anchors</span>
-                  <small>{inspection.sections.length} section{inspection.sections.length === 1 ? "" : "s"}</small>
-                  <i aria-hidden="true" />
-                </button>
-                {areStructuralAnchorsExpanded ? (
-                  <div className="source-modal__anchor-list">
-                    {inspection.sections.map((section) => (
-                      <button type="button" key={section.id} onClick={() => navigateToSection(section)}>
-                        <span>{section.label}</span>
-                        <small>{section.detail}</small>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-            ) : null}
-          </aside>
         </div>
       </section>
     </div>

@@ -37,6 +37,8 @@ export interface FunctionCall {
   definitionPath?: string;
   definitionName?: string;
   definitionWaypointId?: string;
+  definitionStartLine?: number;
+  definitionEndLine?: number;
 }
 
 export interface FunctionStateUpdate {
@@ -88,6 +90,8 @@ export interface GraphNode {
     importCount?: number;
     childCount?: number;
     linesOfCode?: number;
+    staticEntrypoint?: boolean;
+    staticEntrypointKind?: "html-index";
     functionCount?: number;
     functionWaypoints?: FunctionWaypoint[];
     variableWaypoints?: VariableWaypoint[];
@@ -124,6 +128,8 @@ export interface ExtractedStructure {
 export interface ExtractedFileMetadata {
   linesOfCode: number;
   sourceText: string;
+  staticEntrypoint?: boolean;
+  staticEntrypointKind?: "html-index";
   functionCount?: number;
   functionWaypoints?: FunctionWaypoint[];
   variableWaypoints?: VariableWaypoint[];

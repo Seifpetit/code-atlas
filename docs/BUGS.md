@@ -112,6 +112,14 @@ Notes:
 - React Flow node/edge rerendering may still be invalidating hover state during apparition creation.
 - Next likely fix: decouple hover detection from React Flow/node DOM churn by tracking pointer coordinates against stable node bounds, or add a short hover-enter/leave debounce with cancellation.
 
+Latest trace-id fix:
+- File connection stubs, trace ids, and non-runtime connection ports now derive from
+  visible `laidOut.edges` instead of raw graph-wide import edges.
+- This aligns relationship controls with the exact visible edge ids React Flow
+  receives, including context-level aggregation to visible owners.
+- Frontend production build passed after the change; running-app visual
+  verification is still needed.
+
 ## Click Selection Sometimes Does Not Register
 
 Status:

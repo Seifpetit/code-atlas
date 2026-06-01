@@ -417,8 +417,8 @@ Decision:
   folded ranges before centering source.
 - A folded declaration can enter Runtime Placement mode inside the
   implementation field. This corridor uses only extracted calls resolved to a
-  concrete waypoint identity, caps direct incoming/outgoing neighbors at two
-  in each direction, and leaves structural circulation detail in the
+  concrete waypoint identity, caps direct incoming neighbors at three and
+  outgoing neighbors at two, and leaves structural circulation detail in the
   navigation rail.
 - Resolved function relationships use deterministic waypoint IDs rather than
   display names. Calls inside unnamed JavaScript callback wrappers attach to

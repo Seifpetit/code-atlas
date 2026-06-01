@@ -35,13 +35,25 @@ app.use(cors({
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
+    const isLoopbackOrigin = (() => {
+      if (!origin) {
+        return false;
+      }
+
+      try {
+        const url = new URL(origin);
+        return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
+      } catch {
+        return false;
+      }
+    })();
 
     if (!origin) {
       callback(null, true);
       return;
     }
 
-    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin) || isLoopbackOrigin) {
       callback(null, origin);
       return;
     }

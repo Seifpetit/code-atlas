@@ -159,7 +159,7 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
   gutter slot independent of line-number width.
 - Activating a folded declaration converts the implementation field into a
   local Runtime Placement corridor: the focused function stays centered
-  between up to two resolved incoming callers and two resolved outgoing calls.
+  between up to three resolved incoming callers and two resolved outgoing calls.
   Relationships are keyed by concrete extracted waypoint identity; cross-file
   neighbors include their file path at reduced visual emphasis.
 - Corridor lanes are presented as resolved flow and distinguish direct calls

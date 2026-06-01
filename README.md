@@ -1,152 +1,158 @@
 # Code Atlas
 
-**An interactive system for exploring how a JavaScript codebase is structured, connected, and activated at runtime.**
+**You make better decisions in a codebase when you can see the full picture without being overwhelmed by it.**
 
-→ Live: https://code-atlas.up.railway.app  
+→ Live: [code-atlas.up.railway.app](https://code-atlas.up.railway.app)
 → Stack: Node.js · Express · React · React Flow · TypeScript · Docker · Railway
 
 ---
 
+<!-- DEMO GIF — main canvas, navigating the graph -->
 ![Code Atlas Demo](docs/demo.gif)
 
 ---
 
-## What it does
+## Why this exists
 
-Paste a public GitHub repository URL, or connect a GitHub account and select an accessible repository inside Code Atlas.
+I'm a student learning how to work inside large codebases from scratch. The first question you ask when onboarding a new repo isn't technical — it's spatial. *Where do I even look first?*
 
-Code Atlas clones the repository, analyzes its folder and file structure, resolves import relationships, and turns the result into an interactive spatial graph you can explore layer by layer.
+Dumping everything at once seems smart, but it isn't. It creates noise, not clarity. You end up with a diagram you can read but don't trust, because you didn't build the mental model yourself — it was handed to you.
 
-The goal is to make large codebases easier to explore and understand without opening dozens of files manually.
+Code Atlas is built around a different idea: **clarity emerges from interactivity**. You don't get the full picture upfront. You reveal it by navigating — clicking what matters to you, following the connections that make sense in context, building a mental map you actually own.
 
-Atlas helps visualize:
-- how files connect
-- what happens when the app runs
-- which files are carrying the most complexity
-- and how data moves between functions
+The result is confidence. Not just understanding what a file does, but feeling certain enough to act on it.
 
 ---
 
-## Screenshots
+## How it works
 
-| Root view | Focused inspection |
-|---|---|
-| ![Root view](docs/screenshots/root.png) | ![Focus state](docs/screenshots/focus.png) |
+Point Code Atlas at any GitHub repository. It clones it, parses the file structure and import relationships using AST analysis, and generates an interactive spatial graph — no LLMs, no embeddings, fully deterministic. The same repo always produces the same graph.
 
-| Timeline exploration | Context-preserving navigation |
-|---|---|
-| ![Timeline](docs/screenshots/timeline.png) | ![Descent](docs/screenshots/descent.png) |
+Analysis time depends on repo size:
+- Code Atlas itself → ~15s
+- facebook/react → ~4min
 
----
-
-## Core ideas
-
-### Context-first navigation
-
-Instead of rendering the entire repository at once, Atlas only reveals the current working context and its direct neighbors.
-
-This keeps navigation readable even in larger repositories.
+**Three ways to get started:**
+- Search a public repo — good for studying open source projects
+- Paste any public GitHub URL
+- Connect your GitHub account and select from your own repos
 
 ---
 
-### Runtime X-Ray
+## What you can do with it
 
-Atlas can replay runtime activity paths through the graph so the repository feels less static and more operational.
-
-The goal is to help developers understand:
-- what activates first
-- what gets triggered next
-- and how activity propagates through the system
+The core design principle is what I call an **intent wall**: nothing is shown to you that you didn't ask for. The interface responds to where you click, what you focus on, and how deep you choose to go. Complexity is always there — it just stays hidden until you're ready for it.
 
 ---
 
-### Progressive inspection
+### Navigate the graph
 
-Most graph tools expose every dependency at once, which quickly becomes visual noise.
+The canvas starts at the root of the repository. Folders and files are nodes, connections are import relationships. Drill down by clicking into any folder — each level reveals only the current context and its immediate neighbors.
 
-Atlas only surfaces relationships around the currently focused object.
+At a glance you can already read the codebase topology: files with many inbound connections are load-bearing, files with none are safe leaves. No clicking required to see that.
 
-The interface progressively reveals deeper layers only when needed.
-
----
-
-### Operational code inspection
-
-Opening a file does not just show raw code.
-
-The inspection modal exposes:
-- function navigation
-- inputs and outputs
-- state updates
-- connected calls
-- runtime participation
-
-This helps bridge the gap between:
-architecture view → implementation view.
+<!-- GIF — canvas navigation, drilling into a folder, seeing the graph shift -->
+![Graph navigation](docs/screenshots/navigation.gif)
 
 ---
 
-### Timeline exploration
+### Inspect any file
 
-Atlas includes a timeline view showing which files changed over time.
+Click a file and the metadata panel opens on the right. You see the stats that actually matter — lines, functions, imports, imported by — and a plain-language role: entry point, coordinator, shared utility, leaf.
 
-Commits can be selected directly from the interface to reveal:
-- touched files
-- structural changes
-- evolving hotspots in the repository
+The connectivity section shows every file this one imports and every file that imports it back. Each row is clickable. Click a dependency and the graph recenters around it.
 
----
+If the target file lives in a different part of the graph, a bridge path is created — connecting your current position to the target through the actual import chain, recursively. You can reset at any moment and return to where you were.
 
-## Technical decisions
-
-### Deterministic graph generation
-
-No LLMs or embeddings are used.
-
-Every node and edge comes from:
-- file system traversal
-- AST parsing
-- static import analysis
-
-The graph is fully explainable and reproducible.
+<!-- GIF — clicking a file, metadata panel, clicking a dependency, graph recentering -->
+![File inspection](docs/screenshots/inspection.gif)
 
 ---
 
-### Relation filtering
+### Follow the connections
 
-Dependency edges are hidden by default.
+Every file node has two handle dots — one on each side. Hover the left dot to reveal all files that import this one. Hover the right dot to reveal everything this file imports. The edges only appear on intent — keeping the canvas clean until you ask.
 
-Only relationships around the currently focused object appear on screen.
-
-This keeps the graph readable and avoids dependency-spaghetti visualization.
-
----
-
-### Stateless analysis
-
-Each analysis request:
-1. clones the repository
-2. extracts structure + imports
-3. generates the graph
-4. discards the clone
-
-No repository data is persisted.
+<!-- GIF — hovering handle dots, edges appearing, following a connection -->
+![Connection handles](docs/screenshots/handles.gif)
 
 ---
 
-## Architecture
+### Read the source with context
 
-```text
+Hit Inspect Source and the file opens in a split view — raw code on the right, a structured outline on the left grouped by imports, functions, and variables.
+
+Click any row in the outline to jump to that line in the code. Variables are sorted by blast radius — the ones referenced most across the codebase float to the top, color-coded by scope. Before you read a single line of code you already know which variables are dangerous to touch and which ones are safe.
+
+Expand any function and it reveals its runtime placement: the 1–2 functions that call into it, and the 1–2 functions it calls out to — with a count of remaining direct calls if there are more.
+
+<!-- GIF — source inspector, clicking a function, blast radius variables -->
+![Source inspector](docs/screenshots/source.gif)
+
+---
+
+### Explore the timeline
+
+The timeline view maps which files changed across commits. Select any commit to see what was touched, what shifted structurally, and where complexity has been accumulating over time.
+
+<!-- GIF — timeline view, selecting a commit, files lighting up -->
+![Timeline](docs/screenshots/timeline.gif)
+
+---
+
+## How it's built
+
+No LLMs. No AI inference. Every node, every edge, every role classification comes from file system traversal, AST parsing, and static import analysis. Nothing is guessed. Nothing hallucinates.
+
+Each analysis request clones the repo, extracts structure and imports, builds the graph, then discards the clone. No repository data is stored.
+
+```
 code-atlas/
-├── backend/          Express API — repo analysis + git history
-│   ├── graph/        AST parsing + structure extraction
-│   ├── git/          commit history + timeline metadata
-│   └── routes/       analyze / diff / health
+├── backend/src/
+│   ├── extractGraph.ts       AST parsing — JS/TS import resolution
+│   ├── extractPython.ts      AST parsing — Python import resolution
+│   ├── buildGraph.ts         graph assembly from extracted nodes
+│   ├── cloneRepo.ts          temporary repo cloning + cleanup
+│   ├── gitHistory.ts         commit history extraction
+│   ├── gitDiff.ts            per-commit structural diff
+│   ├── githubAuth.ts         OAuth + repo access
+│   ├── server.ts             Express API + routes
+│   └── types.ts              shared graph types
 │
-├── frontend/         React + React Flow
-│   ├── graph/        layout engine + runtime projection
-│   ├── nodes/        custom graph node types
-│   ├── panels/       metadata, timeline, runtime inspection
-│   └── state/        interaction + navigation state
-│
-└── Dockerfile        single-image deployment
+└── frontend/src/
+    ├── App.tsx               root state + layout
+    ├── api.ts                backend communication
+    ├── graph/
+    │   ├── GraphView.tsx         main canvas — React Flow
+    │   ├── nodeTypes.tsx         file + folder node components
+    │   ├── edgeTypes.tsx         connection edge components
+    │   ├── layout.ts             spatial layout engine
+    │   ├── SourceCodeModal.tsx   source inspector split view
+    │   ├── sourceInspection.ts   outline parsing — functions, vars, imports
+    │   ├── sourceSyntaxHighlighting.ts   code highlighting
+    │   ├── filePalette.ts        file type color system
+    │   ├── overlap.ts            node collision resolution
+    │   └── attention/            focus + highlight state
+    ├── runtime/
+    │   ├── buildRuntimeChain.ts  execution path resolution
+    │   ├── runtimeLayout.ts      runtime graph projection
+    │   ├── RuntimeScrubber.tsx   runtime replay UI
+    │   └── runtimeTypes.ts       runtime data types
+    ├── history/
+    │   ├── TimelinePanel.tsx     commit timeline UI
+    │   └── historyUtils.ts       commit data helpers
+    └── time/
+        ├── TemporalScrubber.tsx  temporal navigation UI
+        ├── temporalPressure.ts   file churn + hotspot scoring
+        └── landmarkExtraction.ts structural change detection
+```
+
+---
+
+## Run it yourself
+
+```bash
+git clone https://github.com/your-username/code-atlas
+cd code-atlas
+# add instructions here
+```

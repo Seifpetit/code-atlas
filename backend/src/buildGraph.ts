@@ -62,6 +62,12 @@ export function buildGraph(structure: ExtractedStructure): GraphJson {
           extension: path.posix.extname(filePath),
           importCount: importCounts.get(filePath) ?? 0,
           linesOfCode: extractedMetadata?.linesOfCode ?? 0,
+          ...(extractedMetadata?.staticEntrypoint
+            ? {
+                staticEntrypoint: true,
+                staticEntrypointKind: extractedMetadata.staticEntrypointKind
+              }
+            : {}),
           ...(typeof extractedMetadata?.functionCount === "number"
             ? { functionCount: extractedMetadata.functionCount }
             : {}),

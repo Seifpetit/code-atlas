@@ -10,6 +10,8 @@ export interface AtlasNode extends Record<string, unknown> {
     importCount?: number;
     childCount?: number;
     linesOfCode?: number;
+    staticEntrypoint?: boolean;
+    staticEntrypointKind?: "html-index";
     functionCount?: number;
     functionWaypoints?: Array<{
       waypointId?: string;
@@ -45,6 +47,8 @@ export interface AtlasNode extends Record<string, unknown> {
         definitionPath?: string;
         definitionName?: string;
         definitionWaypointId?: string;
+        definitionStartLine?: number;
+        definitionEndLine?: number;
       }>;
       stateUpdates: Array<{
         state: string;
@@ -73,6 +77,8 @@ export interface AtlasNode extends Record<string, unknown> {
       definitionPath?: string;
       definitionName?: string;
       definitionWaypointId?: string;
+      definitionStartLine?: number;
+      definitionEndLine?: number;
     }>;
     compressionLevel?: "low-signal";
     compressionReasons?: Array<

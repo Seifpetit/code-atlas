@@ -212,12 +212,12 @@
 }
 
 .public-search-trigger {
-  height: 34px;
+  height: 28px;
   border: 1px solid rgba(45, 212, 191, 0.42);
   background: rgba(13, 148, 136, 0.12);
-  padding: 0 12px;
+  padding: 0 10px;
   color: #99f6e4;
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 900;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -481,12 +481,12 @@
 .github-repo-panel__selector select {
   min-width: 0;
   flex: 1 1 auto;
-  height: 28px;
+  height: 34px;
   border: 1px solid #293548;
   background: #101827;
-  padding: 0 28px 0 8px;
+  padding: 0 34px 0 10px;
   color: #e5eefb;
-  font-size: 12px;
+  font-size: 14px;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
@@ -499,12 +499,12 @@
 }
 
 .github-repo-panel__selector button {
-  height: 28px;
+  height: 34px;
   border: 1px solid rgba(45, 212, 191, 0.34);
   background: rgba(13, 148, 136, 0.12);
-  padding: 0 10px;
+  padding: 0 12px;
   color: #99f6e4;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.075em;
   text-transform: uppercase;

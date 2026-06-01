@@ -4,6 +4,7 @@ interface StructuralEdgeData extends Record<string, unknown> {
   direction?: "incoming" | "outgoing";
   kind?: string;
   laneOffset?: number;
+  subdued?: boolean;
 }
 
 export function StructuralEdge(props: EdgeProps) {
@@ -11,8 +12,9 @@ export function StructuralEdge(props: EdgeProps) {
   const laneOffset = Number(data?.laneOffset ?? 0);
   const isLineage = data?.kind === "lineage-chain" || data?.kind === "lineage-child";
   const isRuntime = typeof data?.kind === "string" && data.kind.startsWith("runtime-");
+  const isCorridorLink = data?.kind === "corridor-link";
   const direction = data?.direction === "incoming" ? "incoming" : "outgoing";
-  const mode = isLineage ? "lineage" : isRuntime ? "runtime" : "focus";
+  const mode = isLineage ? "lineage" : isRuntime ? "runtime" : isCorridorLink ? "corridor-link" : "focus";
   const [edgePath] = getBezierPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY + laneOffset,
@@ -23,7 +25,9 @@ export function StructuralEdge(props: EdgeProps) {
   });
   const className = [
     "structural-edge",
-    isLineage ? "structural-edge--lineage" : isRuntime ? `structural-edge--${data?.kind}` : `structural-edge--${direction}`,
+    isLineage ? "structural-edge--lineage" : isRuntime || isCorridorLink ? `structural-edge--${data?.kind}` : `structural-edge--${direction}`,
+    isCorridorLink ? `structural-edge--corridor-link-${direction}` : "",
+    data?.subdued === true ? "structural-edge--subdued" : "",
     data?.kind === "lineage-child" ? "structural-edge--lineage-child" : "",
     `structural-edge--${mode}`,
     props.selected ? "is-selected" : ""

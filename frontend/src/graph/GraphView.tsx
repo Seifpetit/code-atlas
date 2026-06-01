@@ -36,6 +36,7 @@ import { runtimeVisualState } from "../runtime/runtimeVisualState";
 import { RuntimeXRayOverlay } from "../runtime/RuntimeXRayOverlay";
 import { visualStateStyle } from "./attention/applyNodeVisualState";
 import { composeNodeVisualState } from "./attention/composeNodeVisualState";
+import { inspectSource } from "./sourceInspection";
 import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
 import { minimapColorForFile } from "./filePalette";
@@ -74,6 +75,13 @@ interface BudgetedRelationship {
 type ManualNodePositions = Record<string, { x: number; y: number }>;
 type ClientPoint = { x: number; y: number };
 
+interface LayoutBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
 interface SelectionMarqueeGesture {
   active: boolean;
   start: ClientPoint | null;
@@ -89,6 +97,14 @@ const COMPRESSION_REASON_LABELS = new Map<string, string>([
 ]);
 const SELECTION_AUTOPAN_EDGE_DISTANCE = 72;
 const SELECTION_AUTOPAN_MAX_STEP = 16;
+const SECONDARY_CORRIDOR_PREFIX = "__linked-corridor__:";
+const SECONDARY_CORRIDOR_GAP_X = 420;
+const CORRIDOR_MAP_COLUMNS = 3;
+const CORRIDOR_MAP_ROW_GAP_Y = 260;
+const RELATIONSHIP_BRIDGE_COLORS: Record<RelationshipFollowDirection, string> = {
+  imports: "#2dd4bf",
+  "imported-by": "#facc15"
+};
 const FUNCTION_METADATA_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
 type ArchitecturalWeight = "LOW" | "MEDIUM" | "HIGH";
 type SecondaryPanelRegion = "role" | "file-types" | "actions" | "memory";
@@ -123,6 +139,32 @@ interface RegionalSummary {
   fileTypes: RegionalFileTypeCount[];
 }
 
+interface ConnectedFileTarget {
+  node: AtlasNode;
+  direction: "imports" | "imported-by";
+  line: number | null;
+  edgeIds: string[];
+}
+
+interface ConnectedFileGroup {
+  folderPath: string;
+  label: string;
+  depthDelta: number;
+  targets: ConnectedFileTarget[];
+}
+
+interface ConnectedFileGroupsByDirection {
+  imports: ConnectedFileGroup[];
+  importedBy: ConnectedFileGroup[];
+}
+
+type RelationshipFollowDirection = "imports" | "imported-by";
+type FileMetadataSectionId = "stats" | "role" | "connectivity" | "recent";
+
+interface RelationshipFollowContext {
+  direction: RelationshipFollowDirection;
+}
+
 interface InteractionResidue {
   focusCount: number;
   runtimeActivationCount: number;
@@ -133,12 +175,44 @@ interface PendingContextCamera {
   zoom: number;
 }
 
+interface LinkedCorridorState {
+  contextId: string | null;
+  focusedNodeId: string;
+  pageIndex: number;
+}
+
+interface CorridorLinkState {
+  originCorridorIndex: number;
+  originNodeId: string;
+  targetCorridorIndex: number;
+  targetNodeId: string;
+  direction: RelationshipFollowDirection;
+  subdued?: boolean;
+}
+
+interface CorridorPlacementDraft {
+  corridorIndex: number;
+  nodes: AtlasFlowNode[];
+  bounds: LayoutBounds;
+  column: number;
+  row: number;
+}
+
 interface CollapsibleSemanticRegionProps {
   title: string;
   summary: string;
   isExpanded: boolean;
   hasResidue?: boolean;
   onToggle: () => void;
+  children: ReactNode;
+}
+
+interface CollapsibleMetadataSectionProps {
+  id: FileMetadataSectionId;
+  title: string;
+  isCollapsed: boolean;
+  className?: string;
+  onToggle: (sectionId: FileMetadataSectionId) => void;
   children: ReactNode;
 }
 
@@ -163,6 +237,40 @@ function CollapsibleSemanticRegion({
         <span className="operational-panel__layer-chevron" aria-hidden="true" />
       </button>
       {isExpanded ? <div className="operational-panel__layer-content">{children}</div> : null}
+    </section>
+  );
+}
+
+function CollapsibleMetadataSection({
+  id,
+  title,
+  isCollapsed,
+  className = "",
+  onToggle,
+  children
+}: CollapsibleMetadataSectionProps) {
+  const bodyId = `metadata-section-${id}`;
+
+  return (
+    <section
+      className={`metadata-panel__section metadata-panel__section--collapsible ${isCollapsed ? "is-collapsed" : "is-expanded"} ${className}`.trim()}
+      aria-label={title}
+    >
+      <button
+        type="button"
+        className="metadata-panel__section-toggle"
+        aria-expanded={!isCollapsed}
+        aria-controls={bodyId}
+        onClick={() => onToggle(id)}
+      >
+        <span className="metadata-panel__section-title">{title}</span>
+        <span className="metadata-panel__section-chevron" aria-hidden="true" />
+      </button>
+      {!isCollapsed ? (
+        <div className="metadata-panel__section-body" id={bodyId}>
+          {children}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -198,11 +306,230 @@ function orientationPath(node: AtlasNode): string {
   return node.parent ? `${node.path}/` : "repository root/";
 }
 
+function parentDirectoryPath(node: AtlasNode): string {
+  return node.type === "file"
+    ? (node.parent ? `${node.parent}/` : "repository root/")
+    : (node.parent ? `${node.path}/` : "repository root/");
+}
+
+function folderPathForFile(node: AtlasNode): string {
+  return node.parent ?? "";
+}
+
+function folderLabel(folderPath: string): string {
+  return folderPath ? `${folderPath}/` : "repository root/";
+}
+
 function fileStem(node: AtlasNode): string {
   const extension = String(node.metadata?.extension ?? "");
   return extension && node.label.endsWith(extension)
     ? node.label.slice(0, -extension.length).toLowerCase()
     : node.label.toLowerCase();
+}
+
+function isPythonSource(extension?: string): boolean {
+  return String(extension ?? "").toLowerCase() === ".py";
+}
+
+function splitCommaList(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function parseImportNames(sourceText: string, extension?: string): Array<{ name: string; line: number; detail?: string }> {
+  const rows: Array<{ name: string; line: number; detail?: string }> = [];
+  const lines = sourceText.split(/\r?\n/);
+  const python = isPythonSource(extension);
+
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("//") || line.startsWith("/*") || line.startsWith("*") || line.startsWith("#")) {
+      continue;
+    }
+
+    if (python) {
+      const fromMatch = line.match(/^from\s+[\w.]+\s+import\s+(.+)$/);
+      if (fromMatch) {
+        const imported = fromMatch[1].replace(/[()]/g, "").replace(/\\$/, "").trim();
+        for (const entry of splitCommaList(imported)) {
+          const alias = entry.match(/^([A-Za-z_]\w*)\s+as\s+([A-Za-z_]\w*)$/);
+          const name = alias ? alias[2] : entry;
+          rows.push({ name, line: index + 1, detail: alias ? alias[1] : undefined });
+        }
+        continue;
+      }
+
+      const importMatch = line.match(/^import\s+(.+)$/);
+      if (importMatch) {
+        for (const entry of splitCommaList(importMatch[1])) {
+          const alias = entry.match(/^([A-Za-z_][\w.]*)\s+as\s+([A-Za-z_]\w*)$/);
+          rows.push({ name: alias ? alias[2] : entry, line: index + 1, detail: alias ? alias[1] : undefined });
+        }
+      }
+
+      continue;
+    }
+
+    const sideEffectMatch = line.match(/^import\s+["']([^"']+)["']\s*;?$/);
+    if (sideEffectMatch) {
+      const specifier = sideEffectMatch[1];
+      const fileName = specifier.split("/").pop() ?? specifier;
+      rows.push({ name: fileName, line: index + 1, detail: specifier });
+      continue;
+    }
+
+    const importMatch = line.match(/^import\s+(type\s+)?(.+)$/);
+    if (importMatch) {
+      const clause = importMatch[2];
+      const fromSplit = clause.split(/\s+from\s+/);
+      const left = fromSplit[0].trim();
+
+      if (left.startsWith("* as ")) {
+        rows.push({ name: left.slice(5).trim(), line: index + 1, detail: "namespace" });
+        continue;
+      }
+
+      if (left.startsWith("{")) {
+        for (const entry of splitCommaList(left.replace(/[{}]/g, ""))) {
+          const alias = entry.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+          rows.push({ name: alias ? alias[2] : entry, line: index + 1, detail: alias ? alias[1] : undefined });
+        }
+        continue;
+      }
+
+      if (left.includes(",")) {
+        const [defaultImport, rest] = left.split(",", 2);
+        const trimmedDefault = defaultImport.trim();
+        if (trimmedDefault.length > 0) {
+          rows.push({ name: trimmedDefault, line: index + 1, detail: "default" });
+        }
+
+        const braceMatch = rest?.match(/\{([\s\S]+)\}/);
+        if (braceMatch) {
+          for (const entry of splitCommaList(braceMatch[1])) {
+            const alias = entry.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+            rows.push({ name: alias ? alias[2] : entry, line: index + 1, detail: alias ? alias[1] : undefined });
+          }
+        }
+
+        continue;
+      }
+
+      if (left.length > 0) {
+        rows.push({ name: left, line: index + 1, detail: "default" });
+      }
+    }
+  }
+
+  return rows;
+}
+
+function formatRelativeAge(dateValue: string): string {
+  const date = new Date(dateValue);
+
+  if (Number.isNaN(date.getTime())) {
+    return "unknown";
+  }
+
+  const diffMs = Math.max(0, Date.now() - date.getTime());
+  const minutes = Math.floor(diffMs / 60_000);
+
+  if (minutes < 1) {
+    return "just now";
+  }
+
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+
+  const days = Math.floor(hours / 24);
+  if (days < 30) {
+    return `${days}d ago`;
+  }
+
+  const months = Math.floor(days / 30);
+  if (months < 12) {
+    return `${months}mo ago`;
+  }
+
+  const years = Math.floor(months / 12);
+  return `${years}y ago`;
+}
+
+interface FileRoleSummary {
+  label: string;
+  description: string;
+}
+
+function codebaseRoleFor(node: AtlasNode, inspection: ReturnType<typeof inspectSource>, importedByCount: number): FileRoleSummary {
+  const importCount = Number(node.metadata?.importCount ?? 0);
+  const exportedFunctions = inspection.functions.filter((waypoint) => waypoint.exported || waypoint.public).length;
+  const stem = fileStem(node);
+  const compressionReasons = node.metadata?.compressionReasons ?? [];
+  const supportFile =
+    compressionReasons.includes("conventional-support-file") ||
+    compressionReasons.includes("pass-through-export") ||
+    compressionReasons.includes("package-gateway") ||
+    stem === "types" ||
+    stem === "constants" ||
+    stem === "config" ||
+    stem === "configuration";
+
+  if (stem === "main" || stem === "index" || stem === "app") {
+    return {
+      label: "Entry point",
+      description: `This file sits at the front of the graph: it is imported by ${importedByCount} file${importedByCount === 1 ? "" : "s"} and carries a small export surface.`
+    };
+  }
+
+  if (supportFile) {
+    return {
+      label: "Config",
+      description: `This file behaves like supporting configuration or a gateway module, with ${importCount} import${importCount === 1 ? "" : "s"} and ${exportedFunctions} exported function${exportedFunctions === 1 ? "" : "s"}.`
+    };
+  }
+
+  if (importedByCount >= 4 && importCount <= 4) {
+    return {
+      label: "Shared utility",
+      description: `Many files depend on this module while it keeps a compact outbound surface of ${importCount} import${importCount === 1 ? "" : "s"}.`
+    };
+  }
+
+  if (importCount >= 4 && importedByCount <= 1) {
+    return {
+      label: "Coordinator",
+      description: `This file pulls in ${importCount} dependency${importCount === 1 ? "" : "ies"} and fans work out through a narrow downstream graph.`
+    };
+  }
+
+  if (exportedFunctions > 0 && importedByCount > 0) {
+    return {
+      label: "Shared utility",
+      description: `The graph treats this as a reusable module because it exports callable surface and is consumed by ${importedByCount} file${importedByCount === 1 ? "" : "s"}.`
+    };
+  }
+
+  if (importCount === 0 && importedByCount === 0) {
+    return {
+      label: "Isolated",
+      description: "This file has no recorded dependency traffic, so it sits outside the main graph flow."
+    };
+  }
+
+  return {
+    label: importedByCount > importCount ? "Shared utility" : "Support module",
+    description: importedByCount > importCount
+      ? `This file is pulled into more places than it reaches outward, which makes it read as shared code in the graph.`
+      : `This file keeps a modest dependency surface and mostly acts as support for adjacent nodes.`
+  };
 }
 
 function architecturalWeightFor(node: AtlasNode, importedByCount: number): ArchitecturalWeight {
@@ -348,6 +675,134 @@ function corridorFocusNodeIds(nodes: AtlasFlowNode[], contextId: string | null):
     .map((node) => node.id);
 }
 
+function corridorFlowId(corridorIndex: number, id: string): string {
+  return corridorIndex === 0 ? id : `${SECONDARY_CORRIDOR_PREFIX}${corridorIndex}:${id}`;
+}
+
+function flowNodeRealId(node: AtlasFlowNode): string {
+  const data = node.data as AtlasNode;
+  return typeof data.realNodeId === "string" ? data.realNodeId : node.id;
+}
+
+function visibleFlowEndpointForPath(
+  nodePath: string,
+  visibleNodes: AtlasFlowNode[],
+  visibleFlowIdByRealId: Map<string, string>
+): string | null {
+  const exactFlowId = visibleFlowIdByRealId.get(nodePath);
+  if (exactFlowId) {
+    return exactFlowId;
+  }
+
+  const ownerNode = visibleNodes.find((node) => {
+    const data = node.data as AtlasNode;
+    return data.type === "folder" && ownsPath(data, nodePath);
+  });
+
+  return ownerNode?.id ?? null;
+}
+
+function lineageKey(node: AtlasFlowNode): string | null {
+  const data = node.data as AtlasNode;
+  return typeof data.lineageKind === "string" ? String(data.id) : null;
+}
+
+function primaryLineageFlowId(key: string): string {
+  return key === "root" ? "__lineage__:root" : `__lineage__:${key}`;
+}
+
+function duplicateKeyForNode(node: AtlasFlowNode): string | null {
+  const data = node.data as AtlasNode;
+  const key = lineageKey(node);
+  if (key) {
+    return `lineage:${key}`;
+  }
+
+  return data.type === "folder" ? `folder:${flowNodeRealId(node)}` : null;
+}
+
+function layoutBounds(nodes: AtlasFlowNode[]): LayoutBounds {
+  if (nodes.length === 0) {
+    return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+  }
+
+  return nodes.reduce((bounds, node) => {
+    const width = Number(node.width ?? node.initialWidth ?? (node.data as AtlasNode).layoutWidth ?? 0);
+    const height = Number(node.height ?? node.initialHeight ?? (node.data as AtlasNode).layoutHeight ?? 0);
+
+    return {
+      minX: Math.min(bounds.minX, node.position.x),
+      maxX: Math.max(bounds.maxX, node.position.x + width),
+      minY: Math.min(bounds.minY, node.position.y),
+      maxY: Math.max(bounds.maxY, node.position.y + height)
+    };
+  }, {
+    minX: Number.POSITIVE_INFINITY,
+    maxX: Number.NEGATIVE_INFINITY,
+    minY: Number.POSITIVE_INFINITY,
+    maxY: Number.NEGATIVE_INFINITY
+  });
+}
+
+function corridorMapPosition(corridorIndex: number): { column: number; row: number } {
+  const row = Math.floor(corridorIndex / CORRIDOR_MAP_COLUMNS);
+  const positionInRow = corridorIndex % CORRIDOR_MAP_COLUMNS;
+  const column = row % 2 === 0
+    ? positionInRow
+    : CORRIDOR_MAP_COLUMNS - 1 - positionInRow;
+
+  return { column, row };
+}
+
+function remapCorridorEdge(edge: AtlasFlowEdge, corridorIndex: number): AtlasFlowEdge {
+  return {
+    ...edge,
+    id: corridorFlowId(corridorIndex, edge.id),
+    source: corridorFlowId(corridorIndex, edge.source),
+    target: corridorFlowId(corridorIndex, edge.target),
+    data: {
+      ...(edge.data ?? {}),
+      corridor: "secondary"
+    }
+  };
+}
+
+function remapCorridorLineageEdge(edge: AtlasFlowEdge, corridorIndex: number, visibleFlowIdByRealId: Map<string, string>): AtlasFlowEdge | null {
+  const source = visibleFlowIdByRealId.get(edge.source) ?? corridorFlowId(corridorIndex, edge.source);
+  const target = visibleFlowIdByRealId.get(edge.target) ?? corridorFlowId(corridorIndex, edge.target);
+
+  if (source === target) {
+    return null;
+  }
+
+  return {
+    ...edge,
+    id: corridorFlowId(corridorIndex, edge.id),
+    source,
+    target,
+    data: {
+      ...(edge.data ?? {}),
+      corridor: "secondary"
+    }
+  };
+}
+
+function pageIndexContainingNode(graph: AtlasGraph, contextId: string | null, nodeId: string): number {
+  const firstPage = layoutStructuralContext(graph, contextId, 0);
+  if (firstPage.nodes.some((node) => node.id === nodeId)) {
+    return 0;
+  }
+
+  for (let pageIndex = 1; pageIndex < firstPage.totalPages; pageIndex += 1) {
+    const page = layoutStructuralContext(graph, contextId, pageIndex);
+    if (page.nodes.some((node) => node.id === nodeId)) {
+      return page.currentPage;
+    }
+  }
+
+  return 0;
+}
+
 function relationshipScore(activeNode: AtlasNode, otherNode: AtlasNode | null): number {
   if (!otherNode) {
     return 0;
@@ -434,7 +889,12 @@ export function GraphView({
   const [focusedLandmarkId, setFocusedLandmarkId] = useState<string | null>(null);
   const [timelineCollapsed, setTimelineCollapsed] = useState(true);
   const [selectionToolActive, setSelectionToolActive] = useState(false);
+  const [collapsedFileSections, setCollapsedFileSections] = useState<FileMetadataSectionId[]>([]);
+  const [collapsedFileConnectionSections, setCollapsedFileConnectionSections] = useState<RelationshipFollowDirection[]>([]);
   const [pageIndex, setPageIndex] = useState(0);
+  const [linkedCorridors, setLinkedCorridors] = useState<LinkedCorridorState[]>([]);
+  const [corridorLinks, setCorridorLinks] = useState<CorridorLinkState[]>([]);
+  const [selectedCorridorIndex, setSelectedCorridorIndex] = useState(0);
   const [manualNodePositions, setManualNodePositions] = useState<ManualNodePositions>({});
   const [runtimeNodePositions, setRuntimeNodePositions] = useState<ManualNodePositions>({});
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
@@ -443,6 +903,8 @@ export function GraphView({
   const [runtimePlaybackActive, setRuntimePlaybackActive] = useState(false);
   const graphShellRef = useRef<HTMLDivElement | null>(null);
   const pendingContextCameraRef = useRef<PendingContextCamera | null>(null);
+  const pendingPrimaryFocusNodeIdRef = useRef<string | null>(null);
+  const centeredSecondaryFocusKeyRef = useRef<string | null>(null);
   const selectionMarqueeRef = useRef<SelectionMarqueeGesture>({
     active: false,
     start: null,
@@ -453,6 +915,12 @@ export function GraphView({
   const laidOut = useMemo(
     () => (graph ? layoutStructuralContext(graph, currentContextId, pageIndex) : null),
     [currentContextId, graph, pageIndex]
+  );
+  const linkedCorridorLayouts = useMemo(
+    () => graph
+      ? linkedCorridors.map((corridor) => layoutStructuralContext(graph, corridor.contextId, corridor.pageIndex))
+      : [],
+    [graph, linkedCorridors]
   );
   const normalizedSearch = searchTerm.trim().toLowerCase();
   const handleTraceStart = useCallback((edgeIds: string[]) => {
@@ -516,12 +984,17 @@ export function GraphView({
     setFocusedLandmarkId(null);
     setSelectedNode(null);
     setPageIndex(0);
+    setLinkedCorridors([]);
+    setCorridorLinks([]);
+    setSelectedCorridorIndex(0);
     setManualNodePositions({});
     setRuntimeNodePositions({});
     setSelectedObjectIds([]);
     setRuntimeState(inactiveRuntimeState);
     setRuntimePlaybackActive(false);
     pendingContextCameraRef.current = null;
+    pendingPrimaryFocusNodeIdRef.current = null;
+    centeredSecondaryFocusKeyRef.current = null;
   }, [graph]);
 
   useEffect(() => {
@@ -537,6 +1010,8 @@ export function GraphView({
     setSelectedObjectIds([]);
     setRuntimeState(inactiveRuntimeState);
     setRuntimePlaybackActive(false);
+    pendingPrimaryFocusNodeIdRef.current = null;
+    centeredSecondaryFocusKeyRef.current = null;
   }, [currentContextId]);
 
   useEffect(() => {
@@ -657,14 +1132,134 @@ export function GraphView({
     if (!laidOut) {
       return [];
     }
-    return laidOut.nodes;
-  }, [laidOut]);
+    if (linkedCorridorLayouts.length === 0) {
+      return laidOut.nodes;
+    }
+
+    const linkedLineageIds = new Set(
+      linkedCorridorLayouts
+        .flatMap((layout) => layout.nodes)
+        .map(lineageKey)
+        .filter((key): key is string => key !== null)
+    );
+    const baseNodes = laidOut.nodes.filter((node) => {
+      const data = node.data as AtlasNode;
+      return !(data.type === "folder" && !isLineageNode(node) && linkedLineageIds.has(flowNodeRealId(node)));
+    });
+    const renderedDuplicateKeys = new Set(baseNodes.map(duplicateKeyForNode).filter((key): key is string => key !== null));
+    const corridorDrafts: CorridorPlacementDraft[] = [{
+      corridorIndex: 0,
+      nodes: baseNodes,
+      bounds: layoutBounds(baseNodes),
+      ...corridorMapPosition(0)
+    }];
+
+    for (const [index, layout] of linkedCorridorLayouts.entries()) {
+      const corridorIndex = index + 1;
+      const freshNodes = layout.nodes.filter((node) => {
+        const data = node.data as AtlasNode;
+        const duplicateKey = duplicateKeyForNode(node);
+
+        return !(
+          (data.type === "folder" && !isLineageNode(node) && linkedLineageIds.has(flowNodeRealId(node))) ||
+          (duplicateKey && renderedDuplicateKeys.has(duplicateKey))
+        );
+      });
+
+      for (const key of freshNodes.map(duplicateKeyForNode).filter((value): value is string => value !== null)) {
+        renderedDuplicateKeys.add(key);
+      }
+
+      if (freshNodes.length > 0) {
+        corridorDrafts.push({
+          corridorIndex,
+          nodes: freshNodes,
+          bounds: layoutBounds(freshNodes),
+          ...corridorMapPosition(corridorIndex)
+        });
+      }
+    }
+
+    const columnWidths = Array.from({ length: CORRIDOR_MAP_COLUMNS }, () => 0);
+    const rowHeights: number[] = [];
+    for (const draft of corridorDrafts) {
+      columnWidths[draft.column] = Math.max(columnWidths[draft.column] ?? 0, draft.bounds.maxX - draft.bounds.minX);
+      rowHeights[draft.row] = Math.max(rowHeights[draft.row] ?? 0, draft.bounds.maxY - draft.bounds.minY);
+    }
+
+    const baseBounds = corridorDrafts[0]?.bounds ?? layoutBounds(baseNodes);
+    const columnLefts = Array.from({ length: CORRIDOR_MAP_COLUMNS }, () => baseBounds.minX);
+    for (let column = 1; column < CORRIDOR_MAP_COLUMNS; column += 1) {
+      columnLefts[column] = columnLefts[column - 1] + (columnWidths[column - 1] ?? 0) + SECONDARY_CORRIDOR_GAP_X;
+    }
+
+    const rowTops: number[] = [baseBounds.minY];
+    for (let row = 1; row < rowHeights.length; row += 1) {
+      rowTops[row] = rowTops[row - 1] + (rowHeights[row - 1] ?? 0) + CORRIDOR_MAP_ROW_GAP_Y;
+    }
+
+    const linkedNodes = corridorDrafts.slice(1).flatMap((draft) => {
+      const xOffset = (columnLefts[draft.column] ?? baseBounds.minX) - draft.bounds.minX;
+      const yOffset = (rowTops[draft.row] ?? baseBounds.minY) - draft.bounds.minY;
+
+      return draft.nodes.map((node) => {
+        const data = node.data as AtlasNode;
+
+        return {
+          ...node,
+          id: corridorFlowId(draft.corridorIndex, node.id),
+          position: {
+            x: node.position.x + xOffset,
+            y: node.position.y + yOffset
+          },
+          data: {
+            ...data,
+            realNodeId: node.id,
+            corridor: "linked",
+            corridorIndex: draft.corridorIndex
+          }
+        };
+      });
+    });
+
+    return [...baseNodes, ...linkedNodes];
+  }, [laidOut, linkedCorridorLayouts]);
   const visibleById = useMemo(() => {
     return new Map(displayedLayoutNodes.map((node) => [node.id, node.data as AtlasNode]));
+  }, [displayedLayoutNodes]);
+  const visibleFlowIdByRealId = useMemo(() => {
+    const ids = new Map<string, string>();
+    for (const node of displayedLayoutNodes) {
+      const realId = flowNodeRealId(node);
+      if (!ids.has(realId)) {
+        ids.set(realId, node.id);
+      }
+    }
+
+    return ids;
   }, [displayedLayoutNodes]);
   const graphNodeById = useMemo(() => {
     return new Map((graph?.nodes ?? []).map((node) => [node.id, node]));
   }, [graph]);
+  const collapsedFileSectionSet = useMemo(() => new Set(collapsedFileSections), [collapsedFileSections]);
+  const collapsedFileConnectionSectionSet = useMemo(
+    () => new Set(collapsedFileConnectionSections),
+    [collapsedFileConnectionSections]
+  );
+  const toggleFileMetadataSection = useCallback((sectionId: FileMetadataSectionId) => {
+    setCollapsedFileSections((current) => (
+      current.includes(sectionId)
+        ? current.filter((candidate) => candidate !== sectionId)
+        : [...current, sectionId]
+    ));
+  }, []);
+  const toggleFileConnectionSection = useCallback((sectionId: RelationshipFollowDirection) => {
+    setCollapsedFileConnectionSections((current) => (
+      current.includes(sectionId)
+        ? current.filter((candidate) => candidate !== sectionId)
+        : [...current, sectionId]
+    ));
+  }, []);
   const runtimeLayout = useMemo(() => {
     if (!graph || !runtimeState.active || !runtimeState.chain) {
       return null;
@@ -680,7 +1275,7 @@ export function GraphView({
 
     setSelectedObjectIds(
       selectedNodes
-        .filter((node) => !isLineageNode(node))
+        .filter((node) => node.selectable !== false)
         .map((node) => node.id)
     );
   }, [structuralSelectionActive]);
@@ -704,7 +1299,7 @@ export function GraphView({
       bottom: Math.max(gesture.start.y, gesture.pointer.y)
     };
     const selectedIds = reactFlowInstance.getNodes()
-      .filter((node) => node.selectable !== false && !isLineageNode(node))
+      .filter((node) => node.selectable !== false)
       .filter((node) => {
         const bounds = reactFlowInstance.getNodesBounds([node]);
         const topLeft = reactFlowInstance.flowToScreenPosition({ x: bounds.x, y: bounds.y });
@@ -881,13 +1476,25 @@ export function GraphView({
       return null;
     }
 
+    const activeLinkedLayout = selectedCorridorIndex > 0 ? linkedCorridorLayouts[selectedCorridorIndex - 1] : null;
+    if (activeLinkedLayout?.nodes.some((node) => node.id === activeNodeId)) {
+      const secondaryVisibleById = new Map(activeLinkedLayout.nodes.map((node) => [node.id, node.data as AtlasNode]));
+
+      return budgetRelationships(
+        activeLinkedLayout.edges.filter((edge) => secondaryVisibleById.has(edge.source) && secondaryVisibleById.has(edge.target)),
+        secondaryVisibleById,
+        activeNodeId,
+        6
+      );
+    }
+
     return budgetRelationships(
       laidOut.edges.filter((edge) => visibleById.has(edge.source) && visibleById.has(edge.target)),
       visibleById,
       activeNodeId,
       6
     );
-  }, [activeMode, activeNodeId, laidOut, runtimeState.active, visibleById]);
+  }, [activeMode, activeNodeId, laidOut, linkedCorridorLayouts, runtimeState.active, selectedCorridorIndex, visibleById]);
   const connectedNodeIds = useMemo(() => {
     const ids = new Set<string>();
 
@@ -936,13 +1543,15 @@ export function GraphView({
 
     const baseNodes = displayedLayoutNodes.map((node) => {
       const data = node.data as AtlasNode;
+      const realNodeId = flowNodeRealId(node);
       const isLineageAnchor = typeof data.lineageKind === "string";
+      const isOriginCorridorSpine = Number(data.corridorIndex ?? 0) === 0 && isLineageAnchor;
       const matchesSearch = normalizedSearch.length > 0 && data.path.toLowerCase().includes(normalizedSearch);
       const temporalPressure = nodeTemporalPressure(data, activeTemporalState);
       const temporalLevel = temporalPressureLevel(temporalPressure);
-      const isActive = activeNodeId === node.id;
-      const isHovered = hoveredNodeId === node.id;
-      const isNeighbor = !isActive && connectedNodeIds.has(node.id);
+      const isActive = activeNodeId === realNodeId;
+      const isHovered = hoveredNodeId === realNodeId;
+      const isNeighbor = !isActive && connectedNodeIds.has(realNodeId);
       const hasFocusContext = Boolean(activeNodeId) && connectedNodeIds.size > 1;
       const hasCriticalEvent = Boolean(focusedLandmark);
       const visualState = composeNodeVisualState({
@@ -970,7 +1579,7 @@ export function GraphView({
                 : "background"
           : null;
       const resolvedVisualState = runtimePhase ? runtimeVisualState(runtimePhase) : visualState;
-      const shouldShowStubs = !runtimeState.active && focusedNodeId === node.id;
+      const shouldShowStubs = !runtimeState.active && focusedNodeId === realNodeId;
       const outgoingCount = shouldShowStubs ? relationshipBudget?.totalOutgoing ?? 0 : 0;
       const incomingCount = shouldShowStubs ? relationshipBudget?.totalIncoming ?? 0 : 0;
       const outgoingEdgeIds = shouldShowStubs
@@ -991,9 +1600,11 @@ export function GraphView({
       return {
         ...node,
         position: resolvedPosition,
-        draggable: runtimeState.active ? Boolean(runtimeLayout?.revealedNodeIds.has(node.id)) : !isLineageAnchor,
-        selectable: structuralSelectionActive && !isLineageAnchor,
-        selected: structuralSelectionActive && !isLineageAnchor && selectedObjectIdSet.has(node.id),
+        draggable: runtimeState.active
+          ? Boolean(runtimeLayout?.revealedNodeIds.has(node.id))
+          : !isOriginCorridorSpine,
+        selectable: structuralSelectionActive && !isOriginCorridorSpine,
+        selected: structuralSelectionActive && !isOriginCorridorSpine && selectedObjectIdSet.has(node.id),
         zIndex: resolvedVisualState.zIndex,
         style: visualStateStyle(resolvedVisualState),
         data: {
@@ -1001,7 +1612,7 @@ export function GraphView({
           historyBadge: historyBadgeFor(data, graph?.fileHistory),
           temporalPressure,
           visualState: resolvedVisualState,
-          connectionPorts: connectionPortsByNodeId.get(node.id),
+          connectionPorts: connectionPortsByNodeId.get(node.id) ?? connectionPortsByNodeId.get(realNodeId),
           runtimeStep: runtimeState.active ? runtimeState.chain?.nodes.find((runtimeNode) => runtimeNode.id === node.id)?.runtimeStep : undefined,
           relationStub:
             shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
@@ -1072,12 +1683,95 @@ export function GraphView({
     structuralSelectionActive
   ]);
 
+  useEffect(() => {
+    const pendingPrimaryFocusNodeId = pendingPrimaryFocusNodeIdRef.current;
+    if (pendingPrimaryFocusNodeId && reactFlowInstance) {
+      const flowNode = nodes.find((candidate) => (
+        flowNodeRealId(candidate) === pendingPrimaryFocusNodeId &&
+        (candidate.data as AtlasNode).corridor !== "secondary"
+      ));
+
+      if (flowNode) {
+        pendingPrimaryFocusNodeIdRef.current = null;
+        window.requestAnimationFrame(() => {
+          const bounds = reactFlowInstance.getNodesBounds([flowNode]);
+          void reactFlowInstance.setCenter(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, {
+            zoom: Math.max(reactFlowInstance.getViewport().zoom, 1.1),
+            duration: 420
+          });
+        });
+      }
+    }
+
+    const latestCorridorIndex = linkedCorridors.length;
+    const latestCorridor = linkedCorridors[latestCorridorIndex - 1];
+    if (!latestCorridor || !reactFlowInstance) {
+      return;
+    }
+
+    const secondaryFocusKey = `${latestCorridorIndex}:${latestCorridor.contextId ?? "root"}:${latestCorridor.focusedNodeId}:${latestCorridor.pageIndex}`;
+    if (centeredSecondaryFocusKeyRef.current === secondaryFocusKey) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const flowNode = nodes.find((candidate) => candidate.id === corridorFlowId(latestCorridorIndex, latestCorridor.focusedNodeId));
+      if (!flowNode) {
+        return;
+      }
+
+      centeredSecondaryFocusKeyRef.current = secondaryFocusKey;
+      const bounds = reactFlowInstance.getNodesBounds([flowNode]);
+      void reactFlowInstance.setCenter(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, {
+        zoom: Math.max(reactFlowInstance.getViewport().zoom, 1.05),
+        duration: 420
+      });
+    });
+  }, [linkedCorridors, nodes, reactFlowInstance]);
+
   const edges = useMemo(() => {
     if (!laidOut) {
       return [];
     }
 
-    const baseEdges = laidOut.lineageEdges;
+    const visibleFlowNodeIds = new Set(displayedLayoutNodes.map((node) => node.id));
+    const primaryLineageEdges = laidOut.lineageEdges.filter((edge) => (
+      visibleFlowNodeIds.has(edge.source) && visibleFlowNodeIds.has(edge.target)
+    ));
+    const linkedLineageEdges = linkedCorridorLayouts.flatMap((layout, index) => {
+      const corridorIndex = index + 1;
+      return layout.lineageEdges
+        .map((edge) => remapCorridorLineageEdge(edge, corridorIndex, visibleFlowIdByRealId))
+        .filter((edge): edge is AtlasFlowEdge => edge !== null);
+    });
+    const crossCorridorEdges: AtlasFlowEdge[] = corridorLinks.map((link, index) => {
+      const isImportedBy = link.direction === "imported-by";
+      const sourceNodeId = isImportedBy ? link.targetNodeId : link.originNodeId;
+      const sourceCorridorIndex = isImportedBy ? link.targetCorridorIndex : link.originCorridorIndex;
+      const targetNodeId = isImportedBy ? link.originNodeId : link.targetNodeId;
+      const targetCorridorIndex = isImportedBy ? link.originCorridorIndex : link.targetCorridorIndex;
+
+      return {
+        id: `corridor-link:${index + 1}:${sourceCorridorIndex}:${sourceNodeId}->${targetCorridorIndex}:${targetNodeId}`,
+        source: visibleFlowIdByRealId.get(sourceNodeId) ?? corridorFlowId(sourceCorridorIndex, sourceNodeId),
+        target: visibleFlowIdByRealId.get(targetNodeId) ?? corridorFlowId(targetCorridorIndex, targetNodeId),
+        type: "structural",
+        animated: false,
+        zIndex: 2,
+        data: {
+          kind: "corridor-link",
+          direction: isImportedBy ? "incoming" : "outgoing",
+          mode: "focus",
+          corridor: "bridge",
+          subdued: link.subdued === true
+        },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: RELATIONSHIP_BRIDGE_COLORS[link.direction]
+        }
+      };
+    });
+    const baseEdges = [...primaryLineageEdges, ...linkedLineageEdges, ...crossCorridorEdges];
     if (runtimeState.active && runtimeLayout) {
       return [...baseEdges, ...runtimeLayout.edges];
     }
@@ -1086,19 +1780,59 @@ export function GraphView({
       return baseEdges;
     }
 
-    const activeTraceEdges = tracedEdgeIds.flatMap((tracedEdgeId) => {
-      const tracedEdge = laidOut.edges.find((edge) => edge.id === tracedEdgeId);
+    const activeTraceEdges: AtlasFlowEdge[] = tracedEdgeIds.flatMap((tracedEdgeId): AtlasFlowEdge[] => {
+      const primaryTraceEdge = laidOut.edges.find((edge) => edge.id === tracedEdgeId);
+      const linkedTraceMatch = linkedCorridorLayouts
+        .map((layout, index) => ({ edge: layout.edges.find((edge) => edge.id === tracedEdgeId), corridorIndex: index + 1 }))
+        .find((match) => match.edge);
+      const tracedEdge = primaryTraceEdge ?? linkedTraceMatch?.edge;
+      const graphTraceEdge = graph?.edges.find((edge) => edge.id === tracedEdgeId);
+      if (graphTraceEdge) {
+        if (graphTraceEdge.source !== activeNodeId && graphTraceEdge.target !== activeNodeId) {
+          return [];
+        }
+
+        const source = visibleFlowEndpointForPath(graphTraceEdge.source, displayedLayoutNodes, visibleFlowIdByRealId);
+        const target = visibleFlowEndpointForPath(graphTraceEdge.target, displayedLayoutNodes, visibleFlowIdByRealId);
+        if (!source || !target || source === target) {
+          return [];
+        }
+
+        const isOutgoing = graphTraceEdge.source === activeNodeId;
+        return [{
+          id: `metadata-trace:${graphTraceEdge.id}`,
+          source,
+          target,
+          type: "structural" as const,
+          animated: false,
+          className: undefined,
+          zIndex: 1,
+          data: {
+            kind: "context-import",
+            direction: isOutgoing ? "outgoing" : "incoming",
+            laneOffset: 0,
+            mode: "focus",
+            exactTrace: true
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: isOutgoing ? "#2dd4bf" : "#facc15"
+          }
+        }];
+      }
+
       if (!tracedEdge || (tracedEdge.source !== activeNodeId && tracedEdge.target !== activeNodeId)) {
         return [];
       }
 
       const isOutgoing = tracedEdge.source === activeNodeId;
+      const renderedTraceEdge = linkedTraceMatch?.edge ? remapCorridorEdge(tracedEdge, linkedTraceMatch.corridorIndex) : tracedEdge;
       return [{
-        ...tracedEdge,
+        ...renderedTraceEdge,
         animated: false,
         className: undefined,
         data: {
-          ...tracedEdge.data,
+          ...renderedTraceEdge.data,
           direction: isOutgoing ? "outgoing" : "incoming",
           laneOffset: 0,
           mode: "focus",
@@ -1115,7 +1849,7 @@ export function GraphView({
       ...baseEdges,
       ...activeTraceEdges
     ];
-  }, [activeNodeId, laidOut, runtimeLayout, runtimeState.active, tracedEdgeIds]);
+  }, [activeNodeId, corridorLinks, displayedLayoutNodes, graph?.edges, laidOut, linkedCorridorLayouts, runtimeLayout, runtimeState.active, tracedEdgeIds, visibleFlowIdByRealId]);
 
   function renderRelationTrace(edgeId: string): {
     onMouseEnter: () => void;
@@ -1171,6 +1905,139 @@ export function GraphView({
 
     return graph.edges.filter((edge) => edge.target === selectedNode.id).length;
   }, [graph, selectedNode]);
+  const selectedFileFunctionCount = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "file" || !hasFunctionMetadata(selectedNode)) {
+      return 0;
+    }
+
+    return selectedNode.metadata?.functionWaypoints?.length ?? selectedNode.metadata?.functionCount ?? 0;
+  }, [selectedNode]);
+  const selectedFileInspection = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "file") {
+      return null;
+    }
+
+    return inspectSource(selectedNode);
+  }, [selectedNode]);
+  const selectedFileImportRows = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "file") {
+      return [];
+    }
+
+    return parseImportNames(selectedNode.sourceText ?? "", selectedNode.metadata?.extension);
+  }, [selectedNode]);
+  const selectedFileRecentCommits = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "file") {
+      return [];
+    }
+
+    return graph?.fileHistory?.[selectedNode.path]?.recentCommits.slice(0, 3) ?? [];
+  }, [graph?.fileHistory, selectedNode]);
+  const selectedFileRole = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "file" || !selectedFileInspection) {
+      return null;
+    }
+
+    return codebaseRoleFor(selectedNode, selectedFileInspection, importedByCount);
+  }, [importedByCount, selectedFileInspection, selectedNode]);
+  const selectedFileConnectionGroups = useMemo<ConnectedFileGroupsByDirection>(() => {
+    if (!graph || !selectedNode || selectedNode.type !== "file") {
+      return { imports: [], importedBy: [] };
+    }
+
+    const targetsByKey = new Map<string, ConnectedFileTarget>();
+    const addTarget = (target: ConnectedFileTarget) => {
+      const key = `${target.direction}:${target.node.id}`;
+      const existing = targetsByKey.get(key);
+      if (existing) {
+        existing.edgeIds.push(...target.edgeIds);
+        existing.line = existing.line ?? target.line;
+        return;
+      }
+
+      targetsByKey.set(key, {
+        ...target,
+        edgeIds: [...target.edgeIds]
+      });
+    };
+
+    graph.edges
+      .filter((edge) => edge.source === selectedNode.id)
+      .forEach((edge, index) => {
+        const node = graphNodeById.get(edge.target) ?? null;
+        if (node?.type === "file") {
+          addTarget({
+            node,
+            direction: "imports",
+            line: selectedFileImportRows[index]?.line ?? index + 1,
+            edgeIds: [edge.id]
+          });
+        }
+      });
+
+    graph.edges
+      .filter((edge) => edge.target === selectedNode.id)
+      .forEach((edge) => {
+        const node = graphNodeById.get(edge.source) ?? null;
+        if (node?.type === "file") {
+          addTarget({
+            node,
+            direction: "imported-by",
+            line: null,
+            edgeIds: [edge.id]
+          });
+        }
+      });
+
+    const selectedFolder = folderPathForFile(selectedNode);
+    const selectedDepth = selectedFolder ? selectedFolder.split("/").length : 0;
+    const groupTargets = (targets: ConnectedFileTarget[]): ConnectedFileGroup[] => {
+      const groupsByFolder = new Map<string, ConnectedFileTarget[]>();
+
+      for (const target of targets) {
+        const folderPath = folderPathForFile(target.node);
+        const existingTargets = groupsByFolder.get(folderPath) ?? [];
+        existingTargets.push(target);
+        groupsByFolder.set(folderPath, existingTargets);
+      }
+
+      return [...groupsByFolder.entries()]
+        .map(([folderPath, folderTargets]) => {
+          const depth = folderPath ? folderPath.split("/").length : 0;
+
+          return {
+            folderPath,
+            label: folderLabel(folderPath),
+            depthDelta: depth - selectedDepth,
+            targets: folderTargets.sort((left, right) => (
+              left.node.label.localeCompare(right.node.label) ||
+              left.node.path.localeCompare(right.node.path)
+            ))
+          };
+        })
+        .sort((left, right) => {
+          const leftSameFolder = left.folderPath === selectedFolder ? 0 : 1;
+          const rightSameFolder = right.folderPath === selectedFolder ? 0 : 1;
+          if (leftSameFolder !== rightSameFolder) {
+            return leftSameFolder - rightSameFolder;
+          }
+
+          const leftDepthScore = left.depthDelta === 0 ? 0 : left.depthDelta > 0 ? 2 + left.depthDelta : 1 + Math.abs(left.depthDelta);
+          const rightDepthScore = right.depthDelta === 0 ? 0 : right.depthDelta > 0 ? 2 + right.depthDelta : 1 + Math.abs(right.depthDelta);
+          if (leftDepthScore !== rightDepthScore) {
+            return leftDepthScore - rightDepthScore;
+          }
+
+          return left.label.localeCompare(right.label);
+        });
+    };
+    const targets = [...targetsByKey.values()];
+
+    return {
+      imports: groupTargets(targets.filter((target) => target.direction === "imports")),
+      importedBy: groupTargets(targets.filter((target) => target.direction === "imported-by"))
+    };
+  }, [graph, graphNodeById, selectedFileImportRows, selectedNode]);
   const selectedFileWeight = useMemo(() => {
     if (!selectedNode || selectedNode.type !== "file") {
       return null;
@@ -1379,6 +2246,137 @@ export function GraphView({
     }
   }, [selectedNode, selectedRuntimeFileId, startRuntimeFromFile]);
 
+  const focusGraphNode = useCallback((node: AtlasNode, relationshipContext?: RelationshipFollowContext) => {
+    const originFileNode = selectedNode?.type === "file" ? selectedNode : null;
+    const originCorridorIndex = selectedCorridorIndex;
+    recordNodeFocus(node.id);
+    setFocusedNodeId(node.id);
+    setExpandedPanelRegion({ nodeId: node.id, region: null });
+    setSelectedNode(node);
+
+    const targetContextId = node.type === "file" ? node.parent ?? null : node.id;
+    const originContextId = selectedCorridorIndex === 0
+      ? currentContextId
+      : linkedCorridors[selectedCorridorIndex - 1]?.contextId ?? null;
+    if (node.type === "file" && graph) {
+      const existingLinkedIndex = linkedCorridors.findIndex((corridor) => corridor.contextId === targetContextId);
+      const targetCorridorIndex = targetContextId === currentContextId
+        ? 0
+        : existingLinkedIndex >= 0
+          ? existingLinkedIndex + 1
+          : linkedCorridors.length + 1;
+      const targetPageIndex = pageIndexContainingNode(graph, targetContextId, node.id);
+      const isSameContextFollow = targetContextId === originContextId;
+
+      if (relationshipContext && originFileNode && originFileNode.id !== node.id) {
+        setCorridorLinks((current) => {
+          const exists = current.some((link) => (
+            link.originCorridorIndex === originCorridorIndex &&
+            link.originNodeId === originFileNode.id &&
+            link.targetCorridorIndex === targetCorridorIndex &&
+            link.targetNodeId === node.id &&
+            link.direction === relationshipContext.direction
+          ));
+
+          return exists
+            ? current
+            : [
+                ...current,
+                {
+                  originCorridorIndex,
+                  originNodeId: originFileNode.id,
+                  targetCorridorIndex,
+                  targetNodeId: node.id,
+                  direction: relationshipContext.direction,
+                  subdued: isSameContextFollow
+                }
+              ];
+        });
+      }
+
+      if (targetContextId !== originContextId) {
+        if (targetCorridorIndex > 0) {
+          setLinkedCorridors((current) => {
+            if (existingLinkedIndex >= 0) {
+              return current.map((corridor, index) => (
+                index === existingLinkedIndex
+                  ? { ...corridor, focusedNodeId: node.id, pageIndex: targetPageIndex }
+                  : corridor
+              ));
+            }
+
+            return [
+              ...current,
+              {
+                contextId: targetContextId,
+                focusedNodeId: node.id,
+                pageIndex: targetPageIndex
+              }
+            ];
+          });
+        } else {
+          pendingPrimaryFocusNodeIdRef.current = node.id;
+          setPageIndex(targetPageIndex);
+        }
+
+        setSelectedCorridorIndex(targetCorridorIndex);
+        return;
+      }
+
+      setSelectedCorridorIndex(targetCorridorIndex);
+    }
+
+    if (!reactFlowInstance) {
+      return;
+    }
+
+    const flowNode = nodes.find((candidate) => (
+      flowNodeRealId(candidate) === node.id &&
+      Number((candidate.data as AtlasNode).corridorIndex ?? 0) === selectedCorridorIndex
+    )) ?? null;
+    if (!flowNode) {
+      if (graph) {
+        pendingPrimaryFocusNodeIdRef.current = node.id;
+        if (selectedCorridorIndex === 0) {
+          setPageIndex(pageIndexContainingNode(graph, currentContextId, node.id));
+        } else {
+          setLinkedCorridors((current) => current.map((corridor, index) => (
+            index === selectedCorridorIndex - 1
+              ? { ...corridor, pageIndex: pageIndexContainingNode(graph, corridor.contextId, node.id) }
+              : corridor
+          )));
+        }
+      }
+      return;
+    }
+
+    const bounds = reactFlowInstance.getNodesBounds([flowNode]);
+    void reactFlowInstance.setCenter(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, {
+      zoom: Math.max(reactFlowInstance.getViewport().zoom, 1.1),
+      duration: 420
+    });
+  }, [currentContextId, graph, linkedCorridors, nodes, reactFlowInstance, recordNodeFocus, selectedCorridorIndex, selectedNode]);
+
+  const handleSelectOnGraph = useCallback(() => {
+    if (!selectedNode) {
+      return;
+    }
+
+    focusGraphNode(selectedNode);
+  }, [focusGraphNode, selectedNode]);
+
+  const handleResetCorridors = useCallback(() => {
+    setLinkedCorridors([]);
+    setCorridorLinks([]);
+    setSelectedCorridorIndex(0);
+    setFocusedNodeId(null);
+    setTracedEdgeIds([]);
+    setExpandedPanelRegion({ nodeId: null, region: null });
+    setSelectedNode(null);
+    centeredSecondaryFocusKeyRef.current = null;
+    pendingPrimaryFocusNodeIdRef.current = null;
+  }, []);
+
   const handleRuntimeExit = useCallback(() => {
     setRuntimeState(inactiveRuntimeState);
     setRuntimePlaybackActive(false);
@@ -1434,10 +2432,15 @@ export function GraphView({
       return;
     }
 
-    recordNodeFocus(node.id);
-    setExpandedPanelRegion({ nodeId: node.id, region: null });
-    setFocusedNodeId(node.id);
-    setSelectedNode(node.data as AtlasNode);
+    const realNodeId = flowNodeRealId(node);
+    const graphNode = graphNodeById.get(realNodeId) ?? (node.data as AtlasNode);
+    const corridorIndex = Number((node.data as AtlasNode).corridorIndex ?? 0);
+
+    recordNodeFocus(realNodeId);
+    setExpandedPanelRegion({ nodeId: realNodeId, region: null });
+    setFocusedNodeId(realNodeId);
+    setSelectedNode(graphNode);
+    setSelectedCorridorIndex(corridorIndex);
   };
 
   const handleNodeDoubleClick: NodeMouseHandler<AtlasFlowNode> = (_event, node) => {
@@ -1457,21 +2460,25 @@ export function GraphView({
     }
 
     const data = node.data as AtlasNode;
+    const realNodeId = flowNodeRealId(node);
+    const graphNode = graphNodeById.get(realNodeId) ?? data;
+    const corridorIndex = Number(data.corridorIndex ?? 0);
 
-    if (canEnter(data)) {
-      recordNodeFocus(data.id);
-      navigateToContext(data.id);
+    if (canEnter(graphNode)) {
+      recordNodeFocus(graphNode.id);
+      navigateToContext(graphNode.id);
       return;
     }
 
-    recordNodeFocus(node.id);
-    setExpandedPanelRegion({ nodeId: node.id, region: null });
-    setFocusedNodeId(node.id);
-    setSelectedNode(data);
+    recordNodeFocus(realNodeId);
+    setExpandedPanelRegion({ nodeId: realNodeId, region: null });
+    setFocusedNodeId(realNodeId);
+    setSelectedNode(graphNode);
+    setSelectedCorridorIndex(corridorIndex);
   };
 
   const handleNodeMouseEnter: NodeMouseHandler<AtlasFlowNode> = (_event, node) => {
-    setHoveredNodeId(node.id);
+    setHoveredNodeId(flowNodeRealId(node));
   };
 
   const handleNodeMouseLeave: NodeMouseHandler<AtlasFlowNode> = () => {
@@ -1548,7 +2555,10 @@ export function GraphView({
   return (
     <div
       ref={graphShellRef}
-      className={structuralSelectionActive ? "graph-shell is-selection-mode" : "graph-shell"}
+      className={[
+        "graph-shell",
+        structuralSelectionActive ? "is-selection-mode" : ""
+      ].filter(Boolean).join(" ")}
       onPointerDownCapture={handleSelectionPointerDownCapture}
       onPointerMoveCapture={handleSelectionPointerMoveCapture}
     >
@@ -1583,6 +2593,20 @@ export function GraphView({
           </svg>
           <span>Select</span>
         </button>
+        {linkedCorridors.length > 0 || corridorLinks.length > 0 ? (
+          <button
+            type="button"
+            className="select-tool-button select-tool-button--reset"
+            title="Reset linked corridors"
+            onClick={handleResetCorridors}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7" />
+              <path d="M3 4v6h6" />
+            </svg>
+            <span>Reset</span>
+          </button>
+        ) : null}
       </div>
 
       <ReactFlow<AtlasFlowNode, AtlasFlowEdge>
@@ -1592,8 +2616,8 @@ export function GraphView({
         edgeTypes={edgeTypes}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.24, duration: 420 }}
-        minZoom={0.35}
+        fitViewOptions={{ padding: 0.36, duration: 420 }}
+        minZoom={0.18}
         maxZoom={1.45}
         nodesDraggable={true}
         nodesConnectable={false}
@@ -1727,88 +2751,237 @@ export function GraphView({
           onExit={handleRuntimeExit}
         />
       ) : selectedNode ? (
-        <aside className="metadata-panel operational-panel">
-          <section className="operational-panel__identity operational-panel__anchor" aria-label="Identity and architectural weight">
-            <div className="metadata-panel__type">{panelObjectType(selectedNode)}</div>
-            <div className="operational-panel__title-row">
-              <div className="metadata-panel__title">{panelTitle(selectedNode)}</div>
-              {selectedNode.type === "file" ? (
+        selectedNode.type === "file" ? (
+          <aside className="metadata-panel metadata-panel--file">
+            <section className="metadata-panel__section metadata-panel__header-section" aria-label="File header">
+              <div className="metadata-panel__eyebrow">File</div>
+              <div className="metadata-panel__file-title-row">
+                <div className="metadata-panel__filename">{selectedNode.label}</div>
+                {selectedNode.metadata?.extension ? (
+                  <span className="metadata-panel__ext-badge">{selectedNode.metadata.extension}</span>
+                ) : null}
+              </div>
+              <div className="metadata-panel__path">{parentDirectoryPath(selectedNode)}</div>
+              {selectedNode.metadata?.staticEntrypoint ? (
+                <div className="metadata-panel__role-pill metadata-panel__role-pill--entrypoint">
+                  <span className="metadata-panel__role-dot" />
+                  <span>Confirmed static entrypoint</span>
+                </div>
+              ) : null}
+              <div className="metadata-panel__actions">
                 <button
                   type="button"
-                  className="source-open-button"
-                  aria-label={`Inspect source for ${selectedNode.label}`}
-                  title="Inspect source"
+                  className="metadata-panel__button metadata-panel__button--primary"
                   onClick={() => setSourceModalFile(selectedNode)}
                 >
+                  Inspect source
+                </button>
+                <button
+                  type="button"
+                  className="metadata-panel__icon-button"
+                  aria-label={`Select ${selectedNode.label} on graph`}
+                  title="Select on graph"
+                  onClick={handleSelectOnGraph}
+                >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="m9 8-4 4 4 4" />
-                    <path d="m15 8 4 4-4 4" />
-                    <path d="m13.5 5-3 14" />
+                    <circle cx="12" cy="12" r="3.5" />
+                    <path d="M12 3v3" />
+                    <path d="M12 18v3" />
+                    <path d="M3 12h3" />
+                    <path d="M18 12h3" />
                   </svg>
                 </button>
-              ) : null}
-            </div>
-            <div className="operational-panel__path">{orientationPath(selectedNode)}</div>
-            {selectedNode.type === "file" ? (
-              <>
-                <header className="operational-panel__header">
-                  <h3>Architectural Weight</h3>
-                  {selectedFileWeight ? (
-                    <span className={`operational-panel__signal operational-panel__signal--${selectedFileWeight.toLowerCase()}`}>
-                      {selectedFileWeight}
-                    </span>
-                  ) : null}
-                </header>
-                <div className="operational-panel__metrics">
-                  {typeof selectedNode.metadata?.linesOfCode === "number" ? (
-                    <div><strong>{selectedNode.metadata.linesOfCode}</strong><span>LOC</span></div>
-                  ) : null}
-                  {hasFunctionMetadata(selectedNode) && typeof selectedNode.metadata?.functionCount === "number" ? (
-                    <div><strong>{selectedNode.metadata.functionCount}</strong><span>Functions</span></div>
-                  ) : null}
-                  <div><strong>{selectedNode.metadata?.importCount ?? 0}</strong><span>Imports</span></div>
-                  <div><strong>{importedByCount}</strong><span>Imported by</span></div>
-                </div>
-              </>
-            ) : selectedRegionSummary ? (
-              <>
-                <header className="operational-panel__header">
-                  <h3>Regional Density</h3>
-                </header>
-                <div className="operational-panel__metrics">
-                  <div><strong>{selectedRegionSummary.fileCount}</strong><span>Files</span></div>
-                  <div><strong>{selectedRegionSummary.folderCount}</strong><span>Folders</span></div>
-                  {typeof selectedRegionSummary.totalLinesOfCode === "number" ? (
-                    <div><strong>{selectedRegionSummary.totalLinesOfCode}</strong><span>LOC</span></div>
-                  ) : null}
-                  {typeof selectedRegionSummary.totalFunctionCount === "number" ? (
-                    <div><strong>{selectedRegionSummary.totalFunctionCount}</strong><span>Functions</span></div>
-                  ) : null}
-                </div>
-                <p className="operational-panel__basis">{selectedRegionSummary.directChildCount} direct items in this territory.</p>
-              </>
-            ) : null}
-          </section>
+              </div>
+            </section>
 
-          {selectedNode.type === "file" ? (
-            <CollapsibleSemanticRegion
-              title="Operational Role"
-              summary={`${selectedFileRoles[0]?.label ?? "No role signal"}${selectedFileRoles.length > 1 ? ` / +${selectedFileRoles.length - 1}` : ""}`}
-              isExpanded={activeSecondaryRegion === "role"}
-              onToggle={() => toggleSecondaryRegion("role")}
+            <CollapsibleMetadataSection
+              id="stats"
+              title="Stats"
+              isCollapsed={collapsedFileSectionSet.has("stats")}
+              onToggle={toggleFileMetadataSection}
             >
-              <ul className="operational-panel__roles">
-                {selectedFileRoles.map((role) => (
-                  <li key={role.kind} className={`operational-panel__role--${role.kind}`}>
-                    {role.label}
-                  </li>
-                ))}
-              </ul>
-              {selectedNode.metadata?.compressionLevel === "low-signal" ? (
-                <p className="operational-panel__basis">Rule basis: {compressionDescription(selectedNode)}.</p>
-              ) : null}
-            </CollapsibleSemanticRegion>
-          ) : selectedRegionSummary ? (
+              <div className="metadata-panel__stats-grid">
+                <div className="metadata-panel__stat">
+                  <strong className={typeof selectedNode.metadata?.linesOfCode === "number" && selectedNode.metadata.linesOfCode === 0 ? "metadata-panel__stat-number metadata-panel__stat-number--zero" : "metadata-panel__stat-number"}>
+                    {selectedNode.metadata?.linesOfCode ?? 0}
+                  </strong>
+                  <span>Lines</span>
+                </div>
+                <div className="metadata-panel__stat">
+                  <strong className={selectedFileFunctionCount === 0 ? "metadata-panel__stat-number metadata-panel__stat-number--zero" : "metadata-panel__stat-number"}>
+                    {selectedFileFunctionCount}
+                  </strong>
+                  <span>Functions</span>
+                </div>
+                <div className="metadata-panel__stat">
+                  <strong className={Number(selectedNode.metadata?.importCount ?? 0) === 0 ? "metadata-panel__stat-number metadata-panel__stat-number--zero" : "metadata-panel__stat-number"}>
+                    {selectedNode.metadata?.importCount ?? 0}
+                  </strong>
+                  <span>Imports</span>
+                </div>
+                <div className="metadata-panel__stat">
+                  <strong className={importedByCount === 0 ? "metadata-panel__stat-number metadata-panel__stat-number--zero" : "metadata-panel__stat-number"}>
+                    {importedByCount}
+                  </strong>
+                  <span>Imported by</span>
+                </div>
+              </div>
+            </CollapsibleMetadataSection>
+
+            <CollapsibleMetadataSection
+              id="role"
+              title="Role in codebase"
+              isCollapsed={collapsedFileSectionSet.has("role")}
+              onToggle={toggleFileMetadataSection}
+            >
+              <div className="metadata-panel__role-pill">
+                <span className="metadata-panel__role-dot" />
+                <span>{selectedFileRole?.label ?? "Support module"}</span>
+              </div>
+              <p className="metadata-panel__body-text">
+                {selectedFileRole?.description ?? "This file keeps a modest dependency surface and mostly supports nearby nodes."}
+              </p>
+            </CollapsibleMetadataSection>
+
+            <CollapsibleMetadataSection
+              id="connectivity"
+              title="Connectivity"
+              isCollapsed={collapsedFileSectionSet.has("connectivity")}
+              onToggle={toggleFileMetadataSection}
+            >
+              <div className="metadata-panel__import-list" aria-label="Connected files">
+                {selectedFileConnectionGroups.imports.length > 0 ? (
+                  <div className={`metadata-panel__connection-section ${collapsedFileConnectionSectionSet.has("imports") ? "is-collapsed" : "is-expanded"}`.trim()}>
+                    <button
+                      type="button"
+                      className="metadata-panel__connection-heading"
+                      aria-expanded={!collapsedFileConnectionSectionSet.has("imports")}
+                      onClick={() => toggleFileConnectionSection("imports")}
+                    >
+                      <span>Imports</span>
+                      <strong>{selectedNode.metadata?.importCount ?? 0}</strong>
+                      <span className="metadata-panel__connection-heading-chevron" aria-hidden="true" />
+                    </button>
+                    {!collapsedFileConnectionSectionSet.has("imports") ? (
+                      selectedFileConnectionGroups.imports.map((group) => (
+                        <div className="metadata-panel__import-group" key={`imports:${group.folderPath || "root"}`}>
+                          <div className="metadata-panel__import-group-title">
+                            <span>{group.label}</span>
+                            <small>{group.depthDelta === 0 ? "same depth" : group.depthDelta > 0 ? "nested" : "parent"}</small>
+                          </div>
+                          {group.targets.map(({ node, line, edgeIds }) => (
+                            <button
+                              key={`imports:${node.id}`}
+                              type="button"
+                              className="metadata-panel__import-row metadata-panel__import-row--imports"
+                              onClick={() => focusGraphNode(node, { direction: "imports" })}
+                              onFocus={() => handleTraceStart(edgeIds)}
+                              onBlur={handleTraceEnd}
+                              onPointerEnter={() => handleTraceStart(edgeIds)}
+                              onPointerLeave={handleTraceEnd}
+                            >
+                              <span className="metadata-panel__import-name">{node.label}</span>
+                              <span className="metadata-panel__import-line">{line ? `:${line}` : "import"}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ))
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {selectedFileConnectionGroups.importedBy.length > 0 ? (
+                  <div className={`metadata-panel__connection-section ${collapsedFileConnectionSectionSet.has("imported-by") ? "is-collapsed" : "is-expanded"}`.trim()}>
+                    <button
+                      type="button"
+                      className="metadata-panel__connection-heading"
+                      aria-expanded={!collapsedFileConnectionSectionSet.has("imported-by")}
+                      onClick={() => toggleFileConnectionSection("imported-by")}
+                    >
+                      <span>Imported by</span>
+                      <strong>{importedByCount}</strong>
+                      <span className="metadata-panel__connection-heading-chevron" aria-hidden="true" />
+                    </button>
+                    {!collapsedFileConnectionSectionSet.has("imported-by") ? (
+                      selectedFileConnectionGroups.importedBy.map((group) => (
+                        <div className="metadata-panel__import-group" key={`imported-by:${group.folderPath || "root"}`}>
+                          <div className="metadata-panel__import-group-title">
+                            <span>{group.label}</span>
+                            <small>{group.depthDelta === 0 ? "same depth" : group.depthDelta > 0 ? "nested" : "parent"}</small>
+                          </div>
+                          {group.targets.map(({ node, edgeIds }) => (
+                            <button
+                              key={`imported-by:${node.id}`}
+                              type="button"
+                              className="metadata-panel__import-row metadata-panel__import-row--imported-by"
+                              onClick={() => focusGraphNode(node, { direction: "imported-by" })}
+                              onFocus={() => handleTraceStart(edgeIds)}
+                              onBlur={handleTraceEnd}
+                              onPointerEnter={() => handleTraceStart(edgeIds)}
+                              onPointerLeave={handleTraceEnd}
+                            >
+                              <span className="metadata-panel__import-name">{node.label}</span>
+                              <span className="metadata-panel__import-line">in</span>
+                            </button>
+                          ))}
+                        </div>
+                      ))
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {selectedFileConnectionGroups.imports.length === 0 && selectedFileConnectionGroups.importedBy.length === 0 ? (
+                  <div className="metadata-panel__empty-line">No connected files resolved.</div>
+                ) : null}
+              </div>
+            </CollapsibleMetadataSection>
+
+            <CollapsibleMetadataSection
+              id="recent"
+              title="Recent changes"
+              className="metadata-panel__recent-section"
+              isCollapsed={collapsedFileSectionSet.has("recent")}
+              onToggle={toggleFileMetadataSection}
+            >
+              <div className="metadata-panel__recent-list">
+                {selectedFileRecentCommits.length > 0 ? (
+                  selectedFileRecentCommits.map((commit, index) => (
+                    <div className="metadata-panel__recent-row" key={commit.hash}>
+                      <span className={`metadata-panel__recent-dot ${index === 0 ? "is-active" : ""}`.trim()} />
+                      <span className="metadata-panel__recent-message">{commit.message}</span>
+                      <span className="metadata-panel__recent-age">{formatRelativeAge(commit.date)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="metadata-panel__empty-line">No recent commits recorded.</div>
+                )}
+              </div>
+            </CollapsibleMetadataSection>
+          </aside>
+        ) : selectedRegionSummary ? (
+          <aside className="metadata-panel operational-panel">
+            <section className="operational-panel__identity operational-panel__anchor" aria-label="Identity and architectural weight">
+              <div className="metadata-panel__type">{panelObjectType(selectedNode)}</div>
+              <div className="operational-panel__title-row">
+                <div className="metadata-panel__title">{panelTitle(selectedNode)}</div>
+              </div>
+              <div className="operational-panel__path">{orientationPath(selectedNode)}</div>
+              <header className="operational-panel__header">
+                <h3>Regional Density</h3>
+              </header>
+              <div className="operational-panel__metrics">
+                <div><strong>{selectedRegionSummary.fileCount}</strong><span>Files</span></div>
+                <div><strong>{selectedRegionSummary.folderCount}</strong><span>Folders</span></div>
+                {typeof selectedRegionSummary.totalLinesOfCode === "number" ? (
+                  <div><strong>{selectedRegionSummary.totalLinesOfCode}</strong><span>LOC</span></div>
+                ) : null}
+                {typeof selectedRegionSummary.totalFunctionCount === "number" ? (
+                  <div><strong>{selectedRegionSummary.totalFunctionCount}</strong><span>Functions</span></div>
+                ) : null}
+              </div>
+              <p className="operational-panel__basis">{selectedRegionSummary.directChildCount} direct items in this territory.</p>
+            </section>
+
             <CollapsibleSemanticRegion
               title="File Types"
               summary={selectedRegionSummary.fileTypes.length > 0
@@ -1830,114 +3003,8 @@ export function GraphView({
                 <p className="operational-panel__basis">No indexed files in this territory.</p>
               )}
             </CollapsibleSemanticRegion>
-          ) : null}
-
-          {hasActivationSurface ? (
-            <CollapsibleSemanticRegion
-              title={selectedNode.type === "file" ? "Activation Surface" : "Regional Actions"}
-              summary={actionSummary}
-              isExpanded={activeSecondaryRegion === "actions"}
-              onToggle={() => toggleSecondaryRegion("actions")}
-            >
-              {selectedNode.type === "file" ? (
-                <button type="button" className="metadata-panel__action metadata-panel__action--runtime" onClick={handleRuntimeStart}>
-                  Runtime X-Ray
-                </button>
-              ) : (
-                <>
-                  {canEnter(selectedNode) ? (
-                    <button type="button" className="metadata-panel__action" onClick={() => navigateToContext(selectedNode.id)}>
-                      Enter Region
-                    </button>
-                  ) : null}
-                  {runtimeCandidateFiles.length > 0 ? (
-                    <div className="runtime-file-picker" aria-label="Runtime X-Ray file origin">
-                      <label htmlFor="runtime-file-origin">Runtime origin</label>
-                      <select
-                        id="runtime-file-origin"
-                        value={selectedRuntimeFileId ?? ""}
-                        onChange={(event) => setSelectedRuntimeFileId(event.target.value || null)}
-                      >
-                        {runtimeCandidateFiles.map((file) => (
-                          <option key={file.id} value={file.id}>
-                            {file.path}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="metadata-panel__action metadata-panel__action--runtime"
-                        onClick={handleRuntimeStart}
-                        disabled={!selectedRuntimeFile}
-                      >
-                        Runtime X-Ray
-                      </button>
-                    </div>
-                  ) : null}
-                </>
-              )}
-              {relationLens && (relationLens.visibleOutgoing.length > 0 || relationLens.visibleIncoming.length > 0) ? (
-                <div className="operational-panel__traces" aria-label="Trace visible relationships">
-                  <div className="operational-panel__trace-title">Trace Visible Connections</div>
-                  {relationLens.visibleOutgoing.length > 0 ? (
-                    <div>
-                      <div className="operational-panel__trace-kind">Imports</div>
-                      <ul>
-                        {relationLens.visibleOutgoing.map((relation) => (
-                          <li key={relation.id} {...renderRelationTrace(relation.id)}>
-                            <span>{relation.label}</span>
-                            <strong style={{ color: edgeMarkerColor(relation.id, selectedNode.id) }}>{relation.count}</strong>
-                          </li>
-                        ))}
-                        {relationLens.hiddenVisibleOutgoing > 0 ? (
-                          <li className="operational-panel__trace-more">+{relationLens.hiddenVisibleOutgoing} more visible imports</li>
-                        ) : null}
-                      </ul>
-                    </div>
-                  ) : null}
-                  {relationLens.visibleIncoming.length > 0 ? (
-                    <div>
-                      <div className="operational-panel__trace-kind">Imported By</div>
-                      <ul>
-                        {relationLens.visibleIncoming.map((relation) => (
-                          <li key={relation.id} {...renderRelationTrace(relation.id)}>
-                            <span>{relation.label}</span>
-                            <strong style={{ color: edgeMarkerColor(relation.id, selectedNode.id) }}>{relation.count}</strong>
-                          </li>
-                        ))}
-                        {relationLens.hiddenVisibleIncoming > 0 ? (
-                          <li className="operational-panel__trace-more">+{relationLens.hiddenVisibleIncoming} more visible incoming</li>
-                        ) : null}
-                      </ul>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </CollapsibleSemanticRegion>
-          ) : null}
-
-          <CollapsibleSemanticRegion
-            title="Interaction Memory"
-            summary={interactionSummary}
-            hasResidue={selectedWasRevisited || selectedWasRuntimeActivated}
-            isExpanded={activeSecondaryRegion === "memory"}
-            onToggle={() => toggleSecondaryRegion("memory")}
-          >
-            <div className={`operational-panel__memory ${selectedWasRevisited || selectedWasRuntimeActivated ? "has-residue" : ""}`.trim()}>
-              <span className="operational-panel__memory-marker" aria-hidden="true" />
-              <div>
-                <strong>{interactionSummary}</strong>
-                <p>
-                  {selectedWasRuntimeActivated
-                    ? "Runtime X-Ray was activated from this file in this session."
-                    : selectedWasRevisited
-                      ? "This object was focused earlier in this session."
-                      : "No earlier exploration recorded in this session."}
-                </p>
-              </div>
-            </div>
-          </CollapsibleSemanticRegion>
-        </aside>
+          </aside>
+        ) : null
       ) : null}
       {sourceModalFile ? (
         <Suspense fallback={<div className="source-modal__backdrop"><div className="source-modal__loading">Loading Raw Source</div></div>}>

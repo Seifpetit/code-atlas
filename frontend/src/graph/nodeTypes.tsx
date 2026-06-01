@@ -101,6 +101,9 @@ function NodeContent({
         <div className="atlas-node__label">{data.label}</div>
       )}
       {path ? <div className="atlas-node__path">{path}</div> : null}
+      {structuralKind === "file" && data.metadata?.staticEntrypoint ? (
+        <span className="atlas-node__entrypoint-dot" title="Confirmed static HTML entrypoint" aria-label="Confirmed static HTML entrypoint" />
+      ) : null}
       <div className="atlas-node__meta">{detailFor(data, structuralKind)}</div>
       {shouldShowFileFooter ? (
         <div
