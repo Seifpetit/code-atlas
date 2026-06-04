@@ -2,6 +2,7 @@ import {
   FormEvent,
   lazy,
   Suspense,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -16,15 +17,19 @@ import {
   githubConnectUrl,
   listSavedGraphs,
   loadSavedGraph,
+  loadSharedGraph,
   loadGitHubRepositories,
   logoutGitHub,
   saveGraph,
   searchPublicGitHubRepositories,
+  shareSavedGraph,
   type AtlasGraph,
   type AtlasNode,
   type GitHubAuthStatus,
   type GitHubRepository,
-  type SavedGraphSummary
+  type LoadedSavedGraph,
+  type SavedGraphSummary,
+  type SavedMapViewState
 } from "./api";
 import { clusteringOptions, type ClusteringMode } from "./graph/clustering";
 import { GraphView } from "./graph/GraphView";
@@ -352,6 +357,42 @@ function tagClassName(tag: string): string {
   return `is-${tag.toLowerCase()}`;
 }
 
+function sharedMapTokenFromPathname(pathname: string): string | null {
+  const match = /^\/share\/([^/?#]+)/.exec(pathname);
+
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function shareUrlForToken(token: string): string {
+  return `${window.location.origin}/share/${encodeURIComponent(token)}`;
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back to a temporary textarea for browsers that block clipboard writes.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-1000px";
+  textarea.style.left = "-1000px";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 function summarizeFunctions(graph: AtlasGraph | null): FunctionStatusSummary | null {
   if (!graph) {
     return null;
@@ -650,6 +691,12 @@ export default function App() {
   const [savedGraphsError, setSavedGraphsError] = useState<string | null>(null);
   const [isSavingGraph, setIsSavingGraph] = useState(false);
   const [isLoadingSavedGraph, setIsLoadingSavedGraph] = useState(false);
+  const [isSharingGraph, setIsSharingGraph] = useState(false);
+  const [isLoadingSharedGraph, setIsLoadingSharedGraph] = useState(false);
+  const [saveMapName, setSaveMapName] = useState("");
+  const [currentGraphViewState, setCurrentGraphViewState] = useState<SavedMapViewState | null>(null);
+  const [restoreGraphViewState, setRestoreGraphViewState] = useState<SavedMapViewState | null>(null);
+  const [restoreGraphViewStateKey, setRestoreGraphViewStateKey] = useState<string | null>(null);
   const [functionModalOpen, setFunctionModalOpen] = useState(false);
   const [functionSortMode, setFunctionSortMode] = useState<FunctionSortMode>("category");
   const [selectedFunctionId, setSelectedFunctionId] = useState<string | null>(null);
@@ -676,6 +723,25 @@ export default function App() {
     () => new Set(collapsedFunctionInventoryGroups),
     [collapsedFunctionInventoryGroups]
   );
+  const handleGraphViewStateChange = useCallback((viewState: SavedMapViewState | null) => {
+    setCurrentGraphViewState(viewState);
+  }, []);
+
+  function applyLoadedGraph(result: LoadedSavedGraph, restoreKey: string): void {
+    setGraph(result.graph);
+    setCurrentGraphRepoUrl(result.savedGraph.repoUrl);
+    setRepoUrl(result.savedGraph.repoUrl);
+    setLastAnalyzeTiming(result.graph.analyzeTiming);
+    setCurrentGraphViewState(result.viewState);
+    setRestoreGraphViewState(result.viewState);
+    setRestoreGraphViewStateKey(restoreKey);
+
+    if (result.viewState?.clusteringMode && clusteringOptions.some((option) => option.id === result.viewState?.clusteringMode)) {
+      setClusteringMode(result.viewState.clusteringMode as ClusteringMode);
+    }
+
+    setSaveMapName(result.savedGraph.saveName);
+  }
 
   function compactUpdatedAt(isoDate?: string | null): string {
     if (!isoDate) {
@@ -733,6 +799,47 @@ export default function App() {
       const nextQuery = params.toString();
       window.history.replaceState(null, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`);
     }
+  }, []);
+
+  useEffect(() => {
+    const shareToken = sharedMapTokenFromPathname(window.location.pathname);
+
+    if (!shareToken) {
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingSharedGraph(true);
+    setError(null);
+    setSavedGraphsError(null);
+    setStatus("Opening shared map...");
+
+    loadSharedGraph(shareToken)
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+
+        applyLoadedGraph(result, `share:${shareToken}:${result.savedGraph.updatedAt}`);
+        setSelectedSavedGraphId("");
+        setStatus(`${result.savedGraph.saveName} opened from shared link`);
+      })
+      .catch((caughtError) => {
+        if (!cancelled) {
+          const message = caughtError instanceof Error ? caughtError.message : "Failed to open shared map.";
+          setError(message);
+          setStatus("Shared map open failed");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingSharedGraph(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -862,6 +969,10 @@ export default function App() {
       setGraph(result);
       setCurrentGraphRepoUrl(targetRepoUrl);
       setSelectedSavedGraphId("");
+      setCurrentGraphViewState(null);
+      setRestoreGraphViewState(null);
+      setRestoreGraphViewStateKey(null);
+      setSaveMapName("");
       setLastAnalyzeTiming(result.analyzeTiming);
       setStatus(`${result.nodes.length} nodes, ${result.edges.length} imports, ${result.commits?.length ?? 0} commits`);
     } catch (caughtError) {
@@ -900,6 +1011,10 @@ export default function App() {
       setSavedGraphs([]);
       setSelectedSavedGraphId("");
       setSavedGraphsError(null);
+      setSaveMapName("");
+      setCurrentGraphViewState(null);
+      setRestoreGraphViewState(null);
+      setRestoreGraphViewStateKey(null);
       setStatus("GitHub disconnected");
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Failed to disconnect GitHub.";
@@ -936,17 +1051,23 @@ export default function App() {
       return;
     }
 
+    const trimmedSaveName = saveMapName.trim();
+    if (!trimmedSaveName) {
+      setSavedGraphsError("Type a save name first.");
+      return;
+    }
+
     setIsSavingGraph(true);
     setSavedGraphsError(null);
 
     try {
-      const savedGraph = await saveGraph(currentGraphRepoUrl, graph);
+      const savedGraph = await saveGraph(currentGraphRepoUrl, trimmedSaveName, graph, currentGraphViewState);
       setSavedGraphs((current) => [
         savedGraph,
         ...current.filter((candidate) => candidate.id !== savedGraph.id)
       ]);
       setSelectedSavedGraphId(savedGraph.id);
-      setStatus(`Saved map: ${savedGraph.repoLabel}`);
+      setStatus(`Saved map: ${savedGraph.saveName}`);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Failed to save map.";
       setSavedGraphsError(message);
@@ -967,21 +1088,47 @@ export default function App() {
 
     try {
       const result = await loadSavedGraph(selectedSavedGraphId);
-      setGraph(result.graph);
-      setCurrentGraphRepoUrl(result.savedGraph.repoUrl);
-      setRepoUrl(result.savedGraph.repoUrl);
-      setLastAnalyzeTiming(result.graph.analyzeTiming);
+      applyLoadedGraph(result, `${result.savedGraph.id}:${result.savedGraph.updatedAt}`);
       setSavedGraphs((current) => [
         result.savedGraph,
         ...current.filter((candidate) => candidate.id !== result.savedGraph.id)
       ]);
-      setStatus(`${result.savedGraph.repoLabel} opened from saved map`);
+      setStatus(`${result.savedGraph.saveName} opened from saved map`);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Failed to open saved map.";
       setSavedGraphsError(message);
       setStatus("Saved map open failed");
     } finally {
       setIsLoadingSavedGraph(false);
+    }
+  }
+
+  async function handleCopyShareLink() {
+    if (!selectedSavedGraphId) {
+      return;
+    }
+
+    setIsSharingGraph(true);
+    setSavedGraphsError(null);
+
+    try {
+      const sharedGraph = await shareSavedGraph(selectedSavedGraphId);
+
+      if (!sharedGraph.shareToken) {
+        throw new Error("Share link was not created.");
+      }
+
+      await copyTextToClipboard(shareUrlForToken(sharedGraph.shareToken));
+      setSavedGraphs((current) =>
+        current.map((candidate) => candidate.id === sharedGraph.id ? sharedGraph : candidate)
+      );
+      setStatus(`Share link copied: ${sharedGraph.saveName}`);
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : "Failed to copy share link.";
+      setSavedGraphsError(message);
+      setStatus("Share link failed");
+    } finally {
+      setIsSharingGraph(false);
     }
   }
 
@@ -1258,10 +1405,27 @@ export default function App() {
         </div>
         <div className="toolbar__controls">
           <div className="saved-map-controls" aria-label="Saved maps">
+            <input
+              className="saved-map-controls__name"
+              value={saveMapName}
+              onChange={(event) => setSaveMapName(event.target.value)}
+              placeholder="Save name"
+              aria-label="Saved map name"
+              disabled={!githubStatus.connected || !graph || isSavingGraph || isLoadingSharedGraph}
+              required
+            />
             <button
               type="button"
               className="saved-map-controls__save"
-              disabled={!githubStatus.connected || !graph || !currentGraphRepoUrl || isSavingGraph}
+              disabled={
+                !githubStatus.connected ||
+                !graph ||
+                !currentGraphRepoUrl ||
+                !currentGraphViewState ||
+                saveMapName.trim().length === 0 ||
+                isLoadingSharedGraph ||
+                isSavingGraph
+              }
               title={githubStatus.connected ? "Save the current graph map" : "Connect GitHub to save maps"}
               onClick={() => void handleSaveCurrentGraph()}
             >
@@ -1281,7 +1445,7 @@ export default function App() {
                     ) : null}
                     {savedGraphs.map((savedGraph) => (
                       <option key={savedGraph.id} value={savedGraph.id}>
-                        {savedGraph.repoLabel} - {savedGraph.nodeCount} nodes - {compactUpdatedAt(savedGraph.updatedAt)}
+                        {savedGraph.saveName} - {savedGraph.repoLabel} - {savedGraph.nodeCount} nodes - {compactUpdatedAt(savedGraph.updatedAt)}
                       </option>
                     ))}
                   </select>
@@ -1294,6 +1458,15 @@ export default function App() {
                   onClick={() => void handleOpenSavedGraph()}
                 >
                   {isLoadingSavedGraph ? "Opening" : "Open"}
+                </button>
+                <button
+                  type="button"
+                  className="saved-map-controls__share"
+                  disabled={!selectedSavedGraphId || savedGraphsLoading || isLoadingSavedGraph || isSharingGraph}
+                  title="Copy a read-only share link for the selected saved map"
+                  onClick={() => void handleCopyShareLink()}
+                >
+                  {isSharingGraph ? "Copying" : "Link"}
                 </button>
               </>
             ) : null}
@@ -1329,6 +1502,9 @@ export default function App() {
         graph={graph}
         searchTerm={searchTerm}
         clusteringMode={clusteringMode}
+        initialViewState={restoreGraphViewState}
+        viewStateKey={restoreGraphViewStateKey}
+        onViewStateChange={handleGraphViewStateChange}
         githubConnected={githubStatus.connected}
         githubUserLogin={githubStatus.user?.login}
         onConnectGitHub={handleConnectGitHub}

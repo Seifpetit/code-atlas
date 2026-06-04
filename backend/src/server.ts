@@ -19,8 +19,10 @@ import {
 import {
   ensureSavedGraphStore,
   listSavedGraphsForSession,
+  loadSavedGraphByShareToken,
   loadSavedGraphForSession,
   saveGraphForSession,
+  shareSavedGraphForSession,
   type SavedGraphPayload
 } from "./savedGraphs.js";
 
@@ -147,20 +149,35 @@ app.get("/graphs/:id", async (request, response) => {
     }
 
     response.json({
-      savedGraph: {
-        id: savedGraph.id,
-        repoUrl: savedGraph.repoUrl,
-        repoLabel: savedGraph.repoLabel,
-        commitSha: savedGraph.commitSha,
-        nodeCount: savedGraph.nodeCount,
-        edgeCount: savedGraph.edgeCount,
-        createdAt: savedGraph.createdAt,
-        updatedAt: savedGraph.updatedAt
-      },
-      graph: savedGraph.graph
+      savedGraph: savedGraphSummaryPayload(savedGraph),
+      graph: savedGraph.graph,
+      viewState: savedGraph.viewState
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to open saved map.";
+    response.status(500).json({ error: message });
+  }
+});
+
+app.post("/graphs/:id/share", async (request, response) => {
+  const session = githubSessionFor(request);
+
+  if (!session) {
+    response.status(401).json({ error: "Connect GitHub before sharing saved maps." });
+    return;
+  }
+
+  try {
+    const savedGraph = await shareSavedGraphForSession(session, request.params.id);
+
+    if (!savedGraph) {
+      response.status(404).json({ error: "Saved map not found." });
+      return;
+    }
+
+    response.json({ savedGraph });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to create share link.";
     response.status(500).json({ error: message });
   }
 });
@@ -174,10 +191,17 @@ app.post("/graphs", async (request, response) => {
   }
 
   const repoUrl = request.body?.repoUrl;
+  const saveName = request.body?.name;
   const graph = request.body?.graph as SavedGraphPayload | undefined;
+  const viewState = request.body?.viewState;
 
   if (typeof repoUrl !== "string" || repoUrl.trim().length === 0) {
     response.status(400).json({ error: "repoUrl is required." });
+    return;
+  }
+
+  if (typeof saveName !== "string" || saveName.trim().length === 0) {
+    response.status(400).json({ error: "A save name is required." });
     return;
   }
 
@@ -187,10 +211,36 @@ app.post("/graphs", async (request, response) => {
   }
 
   try {
-    const savedGraph = await saveGraphForSession(session, repoUrl.trim(), graph);
+    const savedGraph = await saveGraphForSession(
+      session,
+      repoUrl.trim(),
+      saveName.trim(),
+      graph,
+      viewState && typeof viewState === "object" ? viewState : null
+    );
     response.json({ savedGraph });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to save map.";
+    response.status(500).json({ error: message });
+  }
+});
+
+app.get("/shared-graphs/:shareToken", async (request, response) => {
+  try {
+    const savedGraph = await loadSavedGraphByShareToken(request.params.shareToken);
+
+    if (!savedGraph) {
+      response.status(404).json({ error: "Shared map not found." });
+      return;
+    }
+
+    response.json({
+      savedGraph: savedGraphSummaryPayload(savedGraph),
+      graph: savedGraph.graph,
+      viewState: savedGraph.viewState
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to open shared map.";
     response.status(500).json({ error: message });
   }
 });
@@ -321,4 +371,32 @@ function loadEnvFile(filePath: string): void {
 
     process.env[key] = value;
   }
+}
+
+function savedGraphSummaryPayload(savedGraph: {
+  id: string;
+  saveName: string;
+  shareToken: string | null;
+  sharedAt: string | null;
+  repoUrl: string;
+  repoLabel: string;
+  commitSha: string | null;
+  nodeCount: number;
+  edgeCount: number;
+  createdAt: string;
+  updatedAt: string;
+}) {
+  return {
+    id: savedGraph.id,
+    saveName: savedGraph.saveName,
+    shareToken: savedGraph.shareToken,
+    sharedAt: savedGraph.sharedAt,
+    repoUrl: savedGraph.repoUrl,
+    repoLabel: savedGraph.repoLabel,
+    commitSha: savedGraph.commitSha,
+    nodeCount: savedGraph.nodeCount,
+    edgeCount: savedGraph.edgeCount,
+    createdAt: savedGraph.createdAt,
+    updatedAt: savedGraph.updatedAt
+  };
 }

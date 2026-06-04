@@ -23,7 +23,7 @@ import {
   type NodeMouseHandler,
   type ReactFlowInstance
 } from "@xyflow/react";
-import type { AtlasEdge, AtlasGraph, AtlasNode } from "../api";
+import type { AtlasEdge, AtlasGraph, AtlasNode, SavedMapViewState } from "../api";
 import { historyBadgeFor } from "../history/historyUtils";
 import { extractArchitecturalLandmarks, snapToLandmark } from "../time/landmarkExtraction";
 import { RawHistoryInspector } from "../time/RawHistoryInspector";
@@ -58,6 +58,9 @@ interface GraphViewProps {
   graph: AtlasGraph | null;
   searchTerm: string;
   clusteringMode: ClusteringMode;
+  initialViewState?: SavedMapViewState | null;
+  viewStateKey?: string | null;
+  onViewStateChange?: (viewState: SavedMapViewState | null) => void;
   githubConnected?: boolean;
   githubUserLogin?: string;
   onConnectGitHub?: () => void;
@@ -1390,6 +1393,9 @@ export function GraphView({
   graph,
   searchTerm,
   clusteringMode,
+  initialViewState = null,
+  viewStateKey = null,
+  onViewStateChange,
   githubConnected = false,
   githubUserLogin,
   onConnectGitHub
@@ -1427,10 +1433,14 @@ export function GraphView({
   const [runtimeState, setRuntimeState] = useState<RuntimeState>(inactiveRuntimeState);
   const [runtimePlaybackActive, setRuntimePlaybackActive] = useState(false);
   const [healthTooltip, setHealthTooltip] = useState<HealthTooltipState | null>(null);
+  const [viewportSnapshot, setViewportSnapshot] = useState<SavedMapViewState["viewport"]>(null);
   const graphShellRef = useRef<HTMLDivElement | null>(null);
   const pendingContextCameraRef = useRef<PendingContextCamera | null>(null);
   const pendingPrimaryFocusNodeIdRef = useRef<string | null>(null);
   const centeredSecondaryFocusKeyRef = useRef<string | null>(null);
+  const appliedViewStateKeyRef = useRef<string | null>(null);
+  const pendingSavedViewportRef = useRef<{ key: string; viewport: SavedMapViewState["viewport"] } | null>(null);
+  const skipNextContextResetRef = useRef(false);
   const selectionMarqueeRef = useRef<SelectionMarqueeGesture>({
     active: false,
     start: null,
@@ -1583,12 +1593,19 @@ export function GraphView({
     setSelectedObjectIds([]);
     setRuntimeState(inactiveRuntimeState);
     setRuntimePlaybackActive(false);
+    setViewportSnapshot(null);
+    appliedViewStateKeyRef.current = null;
     pendingContextCameraRef.current = null;
     pendingPrimaryFocusNodeIdRef.current = null;
     centeredSecondaryFocusKeyRef.current = null;
   }, [graph]);
 
   useEffect(() => {
+    if (skipNextContextResetRef.current) {
+      skipNextContextResetRef.current = false;
+      return;
+    }
+
     setFocusedNodeId(null);
     setHoveredNodeId(null);
     setTracedEdgeIds([]);
@@ -1840,6 +1857,105 @@ export function GraphView({
   const graphNodeById = useMemo(() => {
     return new Map((graph?.nodes ?? []).map((node) => [node.id, node]));
   }, [graph]);
+  useEffect(() => {
+    if (!graph || !initialViewState || !viewStateKey || appliedViewStateKeyRef.current === viewStateKey) {
+      return;
+    }
+
+    const hasNode = (nodeId: string | null | undefined): nodeId is string =>
+      typeof nodeId === "string" && graphNodeById.has(nodeId);
+    const isValidContext = (nodeId: string | null): boolean =>
+      nodeId === null || graphNodeById.get(nodeId)?.type === "folder";
+    const numericPositionMap = (positions: SavedMapViewState["manualNodePositions"]): ManualNodePositions => {
+      const nextPositions: ManualNodePositions = {};
+
+      for (const [nodeId, position] of Object.entries(positions ?? {})) {
+        if (
+          typeof position?.x === "number" &&
+          Number.isFinite(position.x) &&
+          typeof position.y === "number" &&
+          Number.isFinite(position.y)
+        ) {
+          nextPositions[nodeId] = { x: position.x, y: position.y };
+        }
+      }
+
+      return nextPositions;
+    };
+
+    const selectedNodeId = hasNode(initialViewState.selectedNodeId)
+      ? initialViewState.selectedNodeId
+      : hasNode(initialViewState.focusedNodeId)
+        ? initialViewState.focusedNodeId
+        : null;
+    const focusedNodeIdFromState = hasNode(initialViewState.focusedNodeId) ? initialViewState.focusedNodeId : null;
+    const forecastNodeId =
+      hasNode(initialViewState.metadataForecastNodeId) &&
+      graphNodeById.get(initialViewState.metadataForecastNodeId)?.type === "file"
+        ? initialViewState.metadataForecastNodeId
+        : null;
+    const linkedCorridorsFromState = (initialViewState.linkedCorridors ?? [])
+      .filter((corridor) => hasNode(corridor.focusedNodeId) && isValidContext(corridor.contextId))
+      .map((corridor) => ({
+        contextId: corridor.contextId,
+        focusedNodeId: corridor.focusedNodeId,
+        pageIndex: Number.isInteger(corridor.pageIndex) ? Math.max(0, corridor.pageIndex) : 0
+      }));
+    const corridorLinksFromState = (initialViewState.corridorLinks ?? [])
+      .filter((link) => (
+        hasNode(link.originNodeId) &&
+        hasNode(link.targetNodeId) &&
+        (link.direction === "imports" || link.direction === "imported-by")
+      ))
+      .map((link) => ({
+        originCorridorIndex: Math.max(0, Number(link.originCorridorIndex) || 0),
+        originNodeId: link.originNodeId,
+        targetCorridorIndex: Math.max(0, Number(link.targetCorridorIndex) || 0),
+        targetNodeId: link.targetNodeId,
+        direction: link.direction,
+        subdued: link.subdued === true
+      }));
+    const pinnedTraceGroupsFromState = (initialViewState.pinnedTraceGroups ?? [])
+      .filter((group) => hasNode(group.anchor?.nodeId) && Array.isArray(group.edgeIds))
+      .map((group) => ({
+        key: group.key,
+        edgeIds: [...new Set(group.edgeIds.filter((edgeId) => typeof edgeId === "string"))],
+        folderRelationCounts: Object.fromEntries(
+          Object.entries(group.folderRelationCounts ?? {})
+            .filter(([, count]) => typeof count === "number" && Number.isFinite(count))
+        ),
+        anchor: {
+          nodeId: group.anchor.nodeId,
+          corridorIndex: Math.max(0, Number(group.anchor.corridorIndex) || 0)
+        }
+      }))
+      .filter((group) => group.edgeIds.length > 0);
+
+    const nextContextId = isValidContext(initialViewState.currentContextId) ? initialViewState.currentContextId : null;
+    skipNextContextResetRef.current = nextContextId !== currentContextId;
+    setCurrentContextId(nextContextId);
+    setPageIndex(Number.isInteger(initialViewState.pageIndex) ? Math.max(0, initialViewState.pageIndex) : 0);
+    setFocusedNodeId(focusedNodeIdFromState);
+    setSelectedNode(selectedNodeId ? graphNodeById.get(selectedNodeId) ?? null : null);
+    setFilePanelView(initialViewState.filePanelView === "wires" ? "wires" : "metadata");
+    setMetadataForecastNodeId(forecastNodeId);
+    setSelectedCorridorIndex(Math.max(0, Number(initialViewState.selectedCorridorIndex) || 0));
+    setLinkedCorridors(linkedCorridorsFromState);
+    setCorridorLinks(corridorLinksFromState);
+    setPinnedTraceGroups(pinnedTraceGroupsFromState);
+    setTracedEdgeIds([]);
+    setTracedFolderRelationCounts({});
+    setManualNodePositions(numericPositionMap(initialViewState.manualNodePositions));
+    setRuntimeNodePositions({});
+    setSelectedObjectIds([]);
+    setRuntimeState(inactiveRuntimeState);
+    setRuntimePlaybackActive(false);
+    pendingSavedViewportRef.current = {
+      key: viewStateKey,
+      viewport: initialViewState.viewport
+    };
+    appliedViewStateKeyRef.current = viewStateKey;
+  }, [currentContextId, graph, graphNodeById, initialViewState, viewStateKey]);
   const healthRankContextById = useMemo(() => {
     const contexts = new Map<string, FileHealthRankContext>();
     if (!graph) {
@@ -2366,6 +2482,25 @@ export function GraphView({
   ]);
 
   useEffect(() => {
+    const pendingSavedViewport = pendingSavedViewportRef.current;
+
+    if (!pendingSavedViewport || !reactFlowInstance || nodes.length === 0) {
+      return;
+    }
+
+    pendingSavedViewportRef.current = null;
+    const savedViewport = pendingSavedViewport.viewport;
+    if (!savedViewport) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      void reactFlowInstance.setViewport(savedViewport, { duration: 320 });
+      setViewportSnapshot(savedViewport);
+    });
+  }, [nodes, reactFlowInstance]);
+
+  useEffect(() => {
     const pendingPrimaryFocusNodeId = pendingPrimaryFocusNodeIdRef.current;
     if (pendingPrimaryFocusNodeId && reactFlowInstance) {
       const flowNode = nodes.find((candidate) => (
@@ -2616,6 +2751,59 @@ export function GraphView({
       ...activeTraceEdges
     ];
   }, [activeNodeId, corridorLinks, displayedLayoutNodes, graph?.edges, graphNodeById, laidOut, linkedCorridorLayouts, pinnedTraceGroups, runtimeLayout, runtimeState.active, selectedCorridorIndex, tracedEdgeIds, visibleFlowIdByRealId]);
+
+  useEffect(() => {
+    if (!onViewStateChange) {
+      return;
+    }
+
+    if (!graph || !laidOut) {
+      onViewStateChange(null);
+      return;
+    }
+
+    onViewStateChange({
+      version: 1,
+      currentContextId,
+      pageIndex: laidOut.currentPage,
+      focusedNodeId,
+      selectedNodeId: selectedNode?.id ?? null,
+      filePanelView,
+      metadataForecastNodeId,
+      selectedCorridorIndex,
+      clusteringMode,
+      linkedCorridors,
+      corridorLinks,
+      pinnedTraceGroups,
+      manualNodePositions,
+      viewport: viewportSnapshot ?? reactFlowInstance?.getViewport() ?? null,
+      visibleNodeIds: [...new Set(displayedLayoutNodes.map(flowNodeRealId))],
+      visibleFlowNodeIds: displayedLayoutNodes.map((node) => node.id),
+      visibleEdgeIds: edges.map((edge) => edge.id),
+      activeTraceEdgeIds
+    });
+  }, [
+    activeTraceEdgeIds,
+    clusteringMode,
+    corridorLinks,
+    currentContextId,
+    displayedLayoutNodes,
+    edges,
+    filePanelView,
+    focusedNodeId,
+    graph,
+    laidOut,
+    linkedCorridors,
+    manualNodePositions,
+    metadataForecastNodeId,
+    onViewStateChange,
+    pageIndex,
+    pinnedTraceGroups,
+    reactFlowInstance,
+    selectedCorridorIndex,
+    selectedNode?.id,
+    viewportSnapshot
+  ]);
 
   function renderRelationTrace(edgeId: string): {
     onMouseEnter: () => void;
@@ -3574,6 +3762,7 @@ export function GraphView({
         zoomOnScroll
         zoomOnPinch
         zoomOnDoubleClick={false}
+        onMoveEnd={(_event, viewport) => setViewportSnapshot(viewport)}
         onInit={setReactFlowInstance}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}

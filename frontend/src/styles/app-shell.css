@@ -1311,6 +1311,7 @@
     rgba(2, 6, 23, 0.42);
 }
 
+.saved-map-controls input,
 .saved-map-controls button,
 .saved-map-controls select {
   height: 30px;
@@ -1320,6 +1321,13 @@
   font-size: 11px;
   font-weight: 800;
   outline: none;
+}
+
+.saved-map-controls input {
+  flex: 0 1 120px;
+  min-width: 82px;
+  max-width: 140px;
+  padding: 0 8px;
 }
 
 .saved-map-controls button {
@@ -1332,11 +1340,13 @@
 
 .saved-map-controls button:hover,
 .saved-map-controls button:focus-visible,
+.saved-map-controls input:focus,
 .saved-map-controls select:focus {
   border-color: rgba(45, 212, 191, 0.64);
   box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.12);
 }
 
+.saved-map-controls input:disabled,
 .saved-map-controls button:disabled,
 .saved-map-controls select:disabled {
   cursor: not-allowed;
@@ -1345,6 +1355,10 @@
 
 .saved-map-controls__save {
   color: #99f6e4;
+}
+
+.saved-map-controls__share {
+  color: #7dd3fc;
 }
 
 .saved-map-controls__select {

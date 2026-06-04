@@ -145,6 +145,46 @@ export interface AtlasGraph {
   };
 }
 
+export interface SavedMapViewState {
+  version: 1;
+  currentContextId: string | null;
+  pageIndex: number;
+  focusedNodeId: string | null;
+  selectedNodeId: string | null;
+  filePanelView: "metadata" | "wires";
+  metadataForecastNodeId: string | null;
+  selectedCorridorIndex: number;
+  clusteringMode: string;
+  linkedCorridors: Array<{
+    contextId: string | null;
+    focusedNodeId: string;
+    pageIndex: number;
+  }>;
+  corridorLinks: Array<{
+    originCorridorIndex: number;
+    originNodeId: string;
+    targetCorridorIndex: number;
+    targetNodeId: string;
+    direction: "imports" | "imported-by";
+    subdued?: boolean;
+  }>;
+  pinnedTraceGroups: Array<{
+    key: string;
+    edgeIds: string[];
+    folderRelationCounts: Record<string, number>;
+    anchor: {
+      nodeId: string;
+      corridorIndex: number;
+    };
+  }>;
+  manualNodePositions: Record<string, { x: number; y: number }>;
+  viewport: { x: number; y: number; zoom: number } | null;
+  visibleNodeIds: string[];
+  visibleFlowNodeIds: string[];
+  visibleEdgeIds: string[];
+  activeTraceEdgeIds: string[];
+}
+
 export interface GitHubUser {
   id: number;
   login: string;
@@ -177,6 +217,9 @@ export interface GitHubRepository {
 
 export interface SavedGraphSummary {
   id: string;
+  saveName: string;
+  shareToken: string | null;
+  sharedAt: string | null;
   repoUrl: string;
   repoLabel: string;
   commitSha: string | null;
@@ -184,6 +227,12 @@ export interface SavedGraphSummary {
   edgeCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LoadedSavedGraph {
+  savedGraph: SavedGraphSummary;
+  graph: AtlasGraph;
+  viewState: SavedMapViewState | null;
 }
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -258,7 +307,7 @@ export async function listSavedGraphs(): Promise<SavedGraphSummary[]> {
   return payload.graphs as SavedGraphSummary[];
 }
 
-export async function loadSavedGraph(id: string): Promise<{ savedGraph: SavedGraphSummary; graph: AtlasGraph }> {
+export async function loadSavedGraph(id: string): Promise<LoadedSavedGraph> {
   const response = await fetch(`${API_BASE_URL}/graphs/${encodeURIComponent(id)}`, {
     credentials: "include"
   });
@@ -268,17 +317,22 @@ export async function loadSavedGraph(id: string): Promise<{ savedGraph: SavedGra
     throw new Error(payload?.error ?? "Failed to open saved map.");
   }
 
-  return payload as { savedGraph: SavedGraphSummary; graph: AtlasGraph };
+  return payload as LoadedSavedGraph;
 }
 
-export async function saveGraph(repoUrl: string, graph: AtlasGraph): Promise<SavedGraphSummary> {
+export async function saveGraph(
+  repoUrl: string,
+  name: string,
+  graph: AtlasGraph,
+  viewState: SavedMapViewState | null
+): Promise<SavedGraphSummary> {
   const response = await fetch(`${API_BASE_URL}/graphs`, {
     method: "POST",
     credentials: "include",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ repoUrl, graph })
+    body: JSON.stringify({ repoUrl, name, graph, viewState })
   });
   const payload = await response.json();
 
@@ -287,6 +341,31 @@ export async function saveGraph(repoUrl: string, graph: AtlasGraph): Promise<Sav
   }
 
   return payload.savedGraph as SavedGraphSummary;
+}
+
+export async function shareSavedGraph(id: string): Promise<SavedGraphSummary> {
+  const response = await fetch(`${API_BASE_URL}/graphs/${encodeURIComponent(id)}/share`, {
+    method: "POST",
+    credentials: "include"
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to create share link.");
+  }
+
+  return payload.savedGraph as SavedGraphSummary;
+}
+
+export async function loadSharedGraph(shareToken: string): Promise<LoadedSavedGraph> {
+  const response = await fetch(`${API_BASE_URL}/shared-graphs/${encodeURIComponent(shareToken)}`);
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to open shared map.");
+  }
+
+  return payload as LoadedSavedGraph;
 }
 
 export async function logoutGitHub(): Promise<void> {

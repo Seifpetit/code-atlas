@@ -51,6 +51,11 @@
     flex: 1 1 180px;
   }
 
+  .saved-map-controls__name {
+    max-width: none;
+    flex: 1 1 140px;
+  }
+
   .status {
     align-items: flex-start;
     flex-wrap: wrap;
