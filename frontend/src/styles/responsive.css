@@ -28,6 +28,10 @@
     grid-template-columns: 1fr;
   }
 
+  .repo-entry__primary {
+    grid-template-columns: 1fr;
+  }
+
   .toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -96,6 +100,26 @@
 
   .analyze-form {
     grid-template-columns: 1fr;
+  }
+
+  .graph-idle-state {
+    padding: 32px 16px;
+  }
+
+  .graph-idle-state__headline {
+    font-size: 24px;
+  }
+
+  .graph-idle-state__url-row {
+    flex-direction: column;
+  }
+
+  .graph-idle-state__url-row button {
+    width: 100%;
+  }
+
+  .graph-idle-state__connect {
+    width: 100%;
   }
 
   .function-modal__panel {

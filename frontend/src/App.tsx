@@ -984,6 +984,11 @@ export default function App() {
     }
   }
 
+  function handleAnalyzeExampleRepo(targetRepoUrl: string, label: string) {
+    setRepoUrl(targetRepoUrl);
+    void runAnalysis(targetRepoUrl, label);
+  }
+
   useEffect(() => {
     if (!isAnalyzing) {
       return;
@@ -1006,6 +1011,8 @@ export default function App() {
     try {
       await logoutGitHub();
       setGithubStatus({ configured: githubStatus.configured, connected: false, user: null });
+      setGraph(null);
+      setCurrentGraphRepoUrl("");
       setGithubRepos([]);
       setGithubQuery("");
       setSavedGraphs([]);
@@ -1271,237 +1278,247 @@ export default function App() {
     await runAnalysis(repository.htmlUrl, repository.fullName);
   }
 
+  const showWorkflowChrome = graph !== null || githubStatus.connected;
+
   return (
     <main className="app">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand__mark">CA</span>
-          <div>
-            <h1>Code Atlas</h1>
-            <p>for JavaScript and Python ecosystems</p>
-            <p className="brand__subtitle">Deterministic repository structure graph</p>
-          </div>
-        </div>
-
-        <div className="repo-entry">
-          {githubStatus.connected ? (
-            <section className="github-repo-panel" aria-label="Connected GitHub repositories">
-              <div className="github-repo-panel__header">
-                <span>GitHub: <strong>@{githubStatus.user?.login}</strong></span>
-                <button type="button" onClick={handleLogoutGitHub}>Disconnect</button>
-              </div>
-              <div className="github-repo-panel__selector">
-                <input
-                  className="github-repo-panel__search"
-                  value={githubQuery}
-                  onChange={(event) => setGithubQuery(event.target.value)}
-                  placeholder="Search connected repos"
-                  aria-label="Search connected GitHub repositories"
-                />
-                <div className="atlas-select">
-                  <select
-                    aria-label="Connected repository selector"
-                    value={selectedGitHubRepoUrl}
-                    onChange={(event) => setSelectedGitHubRepoUrl(event.target.value)}
-                    disabled={githubLoading || githubRepos.length === 0}
-                  >
-                    {githubRepos.map((repository) => (
-                      <option key={repository.id} value={repository.htmlUrl}>
-                        {repository.fullName} {repository.private ? "(Private)" : "(Public)"}
-                      </option>
-                    ))}
-                  </select>
-                  <span aria-hidden="true" className="atlas-select__chevron" />
-                </div>
-                <button
-                  type="button"
-                  disabled={isAnalyzing || !selectedGitHubRepoUrl}
-                  onClick={() => void handleGitHubSelectorAnalyze()}
-                >
-                  Analyze Selected
-                </button>
-              </div>
-              {githubLoading ? <span className="github-repo-panel__empty">Loading repositories</span> : null}
-              {!githubLoading && githubRepos.length === 0 ? (
-                <span className="github-repo-panel__empty">No repositories found</span>
-              ) : null}
-              {githubError ? <p className="github-repo-panel__error">{githubError}</p> : null}
-            </section>
-          ) : (
-            <div className="github-connect-strip">
-              <button type="button" onClick={handleConnectGitHub}>
-                Connect GitHub
-              </button>
-              <span>
-                {githubStatus.configured
-                  ? "Select connected repositories without leaving Code Atlas."
-                  : "Set GitHub OAuth env vars to enable connected repositories."}
-              </span>
+      {showWorkflowChrome ? (
+        <header className="topbar">
+          <div className="brand">
+            <span className="brand__mark">CA</span>
+            <div>
+              <h1>Code Atlas</h1>
+              <p>for JavaScript and Python ecosystems</p>
+              <p className="brand__subtitle">Deterministic repository structure graph</p>
             </div>
-          )}
+          </div>
 
-          <div className="analyze-form is-secondary">
-            <button
-              type="button"
-              className="public-search-trigger"
-              onClick={() => setPublicSearchOpen(true)}
-              disabled={isAnalyzing}
-            >
-              Search Public Repos
-            </button>
-            {isAnalyzing ? (
-              <div className="analyze-progress-chip" aria-live="polite">
-                <span>Analyzing</span>
-                <strong>{formatDuration(analyzeElapsedMs)}</strong>
-              </div>
-            ) : null}
-            {!isAnalyzing && lastAnalyzeTiming ? (
-              <div className="analyze-progress-chip is-timing" aria-live="polite">
-                <span>Clone {formatDuration(lastAnalyzeTiming.cloneMs)}</span>
-                <span>Graph {formatDuration(lastAnalyzeTiming.extractGraphMs)}</span>
-                <span>History {formatDuration(lastAnalyzeTiming.extractHistoryMs)}</span>
-                <strong>Total {formatDuration(lastAnalyzeTiming.totalMs)}</strong>
-              </div>
-            ) : null}
-            <form className="analyze-form analyze-form--inline" onSubmit={handleSubmit}>
-              <input
-                value={repoUrl}
-                onChange={(event) => setRepoUrl(event.target.value)}
-                placeholder="https://github.com/owner/repo"
-                aria-label="GitHub repository URL"
-              />
-              <button type="submit" disabled={isAnalyzing || repoUrl.trim().length === 0}>
-                {isAnalyzing ? "Analyzing" : "Analyze URL"}
-              </button>
-            </form>
-          </div>
-        </div>
-        {isAnalyzing ? (
-          <div className="repo-fetch-bar" role="progressbar" aria-label="Fetching repository">
-            <span />
-          </div>
-        ) : null}
-      </header>
-
-      <section className="toolbar">
-        <div className="status">
-          <span className={error ? "status__dot status__dot--error" : "status__dot"} />
-          <span className="status__text">{error ?? status}</span>
-          {!error && functionStatusSummary ? (
-            <button
-              type="button"
-              className="status__functions-button"
-              onClick={openFunctionInventory}
-            >
-              <span>| FUNCTIONS:</span>
-              <strong>{functionStatusSummary.raw}</strong>
-              <span>raw /</span>
-              <strong>{functionStatusSummary.runtime}</strong>
-              <span>runtime /</span>
-              <strong>{functionStatusSummary.ghost}</strong>
-              <span>ghost</span>
-            </button>
-          ) : null}
-        </div>
-        <div className="toolbar__controls">
-          <div className="saved-map-controls" aria-label="Saved maps">
-            <input
-              className="saved-map-controls__name"
-              value={saveMapName}
-              onChange={(event) => setSaveMapName(event.target.value)}
-              placeholder="Save name"
-              aria-label="Saved map name"
-              disabled={!githubStatus.connected || !graph || isSavingGraph || isLoadingSharedGraph}
-              required
-            />
-            <button
-              type="button"
-              className="saved-map-controls__save"
-              disabled={
-                !githubStatus.connected ||
-                !graph ||
-                !currentGraphRepoUrl ||
-                !currentGraphViewState ||
-                saveMapName.trim().length === 0 ||
-                isLoadingSharedGraph ||
-                isSavingGraph
-              }
-              title={githubStatus.connected ? "Save the current graph map" : "Connect GitHub to save maps"}
-              onClick={() => void handleSaveCurrentGraph()}
-            >
-              {isSavingGraph ? "Saving" : "Save Map"}
-            </button>
-            {githubStatus.connected ? (
-              <>
-                <div className="saved-map-controls__select">
-                  <select
-                    aria-label="Saved map selector"
-                    value={selectedSavedGraphId}
-                    disabled={savedGraphsLoading || savedGraphs.length === 0 || isLoadingSavedGraph}
-                    onChange={(event) => setSelectedSavedGraphId(event.target.value)}
-                  >
-                    {savedGraphs.length === 0 ? (
-                      <option value="">{savedGraphsLoading ? "Loading saved maps" : "No saved maps"}</option>
-                    ) : null}
-                    {savedGraphs.map((savedGraph) => (
-                      <option key={savedGraph.id} value={savedGraph.id}>
-                        {savedGraph.saveName} - {savedGraph.repoLabel} - {savedGraph.nodeCount} nodes - {compactUpdatedAt(savedGraph.updatedAt)}
-                      </option>
-                    ))}
-                  </select>
-                  <span aria-hidden="true" />
-                </div>
-                <button
-                  type="button"
-                  className="saved-map-controls__open"
-                  disabled={!selectedSavedGraphId || savedGraphsLoading || isLoadingSavedGraph}
-                  onClick={() => void handleOpenSavedGraph()}
-                >
-                  {isLoadingSavedGraph ? "Opening" : "Open"}
-                </button>
-                <button
-                  type="button"
-                  className="saved-map-controls__share"
-                  disabled={!selectedSavedGraphId || savedGraphsLoading || isLoadingSavedGraph || isSharingGraph}
-                  title="Copy a read-only share link for the selected saved map"
-                  onClick={() => void handleCopyShareLink()}
-                >
-                  {isSharingGraph ? "Copying" : "Link"}
-                </button>
-              </>
-            ) : null}
-            {savedGraphsError ? (
-              <span className="saved-map-controls__error" title={savedGraphsError}>Save error</span>
-            ) : null}
-          </div>
-          <div className="cluster-switch" aria-label="Clustering mode">
-            {clusteringOptions.map((option) => (
+          <div className="repo-entry">
+            <div className="repo-entry__primary">
               <button
-                key={option.id}
                 type="button"
-                className={option.id === clusteringMode ? "cluster-switch__button is-active" : "cluster-switch__button"}
-                disabled={!option.enabled}
-                title={option.enabled ? `${option.label} clustering` : `${option.label} clustering is planned`}
-                onClick={() => setClusteringMode(option.id)}
+                className="public-search-trigger"
+                onClick={() => setPublicSearchOpen(true)}
+                disabled={isAnalyzing}
               >
-                {option.label}
+                Search Public Repos
               </button>
-            ))}
+
+              {githubStatus.connected ? (
+                <section className="github-repo-panel" aria-label="Connected GitHub repositories">
+                  <div className="github-repo-panel__header">
+                    <span>GitHub: <strong>@{githubStatus.user?.login}</strong></span>
+                    <button type="button" onClick={handleLogoutGitHub}>Disconnect</button>
+                  </div>
+                  <div className="github-repo-panel__selector">
+                    <input
+                      className="github-repo-panel__search"
+                      value={githubQuery}
+                      onChange={(event) => setGithubQuery(event.target.value)}
+                      placeholder="Search connected repos"
+                      aria-label="Search connected GitHub repositories"
+                    />
+                    <div className="atlas-select">
+                      <select
+                        aria-label="Connected repository selector"
+                        value={selectedGitHubRepoUrl}
+                        onChange={(event) => setSelectedGitHubRepoUrl(event.target.value)}
+                        disabled={githubLoading || githubRepos.length === 0}
+                      >
+                        {githubRepos.map((repository) => (
+                          <option key={repository.id} value={repository.htmlUrl}>
+                            {repository.fullName} {repository.private ? "(Private)" : "(Public)"}
+                          </option>
+                        ))}
+                      </select>
+                      <span aria-hidden="true" className="atlas-select__chevron" />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isAnalyzing || !selectedGitHubRepoUrl}
+                      onClick={() => void handleGitHubSelectorAnalyze()}
+                    >
+                      Analyze Selected
+                    </button>
+                  </div>
+                  {githubLoading ? <span className="github-repo-panel__empty">Loading repositories</span> : null}
+                  {!githubLoading && githubRepos.length === 0 ? (
+                    <span className="github-repo-panel__empty">No repositories found</span>
+                  ) : null}
+                  {githubError ? <p className="github-repo-panel__error">{githubError}</p> : null}
+                </section>
+              ) : (
+                <div className="github-connect-strip">
+                  <span>
+                    {githubStatus.configured
+                      ? "GitHub account available. Open the graph view to connect."
+                      : "Set GitHub OAuth env vars to enable connected repositories."}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="analyze-form is-secondary">
+              {isAnalyzing ? (
+                <div className="analyze-progress-chip" aria-live="polite">
+                  <span>Analyzing</span>
+                  <strong>{formatDuration(analyzeElapsedMs)}</strong>
+                </div>
+              ) : null}
+              {!isAnalyzing && lastAnalyzeTiming ? (
+                <div className="analyze-progress-chip is-timing" aria-live="polite">
+                  <span>Clone {formatDuration(lastAnalyzeTiming.cloneMs)}</span>
+                  <span>Graph {formatDuration(lastAnalyzeTiming.extractGraphMs)}</span>
+                  <span>History {formatDuration(lastAnalyzeTiming.extractHistoryMs)}</span>
+                  <strong>Total {formatDuration(lastAnalyzeTiming.totalMs)}</strong>
+                </div>
+              ) : null}
+              <form className="analyze-form analyze-form--inline" onSubmit={handleSubmit}>
+                <input
+                  value={repoUrl}
+                  onChange={(event) => setRepoUrl(event.target.value)}
+                  placeholder="https://github.com/owner/repo"
+                  aria-label="GitHub repository URL"
+                />
+                <button type="submit" disabled={isAnalyzing || repoUrl.trim().length === 0}>
+                  {isAnalyzing ? "Analyzing" : "Analyze URL"}
+                </button>
+              </form>
+            </div>
           </div>
-          <input
-            className="search-input"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search files or folders"
-            aria-label="Search files or folders"
-          />
-        </div>
-      </section>
+          {isAnalyzing ? (
+            <div className="repo-fetch-bar" role="progressbar" aria-label="Fetching repository">
+              <span />
+            </div>
+          ) : null}
+        </header>
+      ) : null}
+
+      {showWorkflowChrome ? (
+        <section className="toolbar">
+          <div className="status">
+            <span className={error ? "status__dot status__dot--error" : "status__dot"} />
+            <span className="status__text">{error ?? status}</span>
+            {!error && functionStatusSummary ? (
+              <button
+                type="button"
+                className="status__functions-button"
+                onClick={openFunctionInventory}
+              >
+                <span>| FUNCTIONS:</span>
+                <strong>{functionStatusSummary.raw}</strong>
+                <span>raw /</span>
+                <strong>{functionStatusSummary.runtime}</strong>
+                <span>runtime /</span>
+                <strong>{functionStatusSummary.ghost}</strong>
+                <span>ghost</span>
+              </button>
+            ) : null}
+          </div>
+          <div className="toolbar__controls">
+            <div className="saved-map-controls" aria-label="Saved maps">
+              <input
+                className="saved-map-controls__name"
+                value={saveMapName}
+                onChange={(event) => setSaveMapName(event.target.value)}
+                placeholder="Save name"
+                aria-label="Saved map name"
+                disabled={!githubStatus.connected || !graph || isSavingGraph || isLoadingSharedGraph}
+                required
+              />
+              <button
+                type="button"
+                className="saved-map-controls__save"
+                disabled={
+                  !githubStatus.connected ||
+                  !graph ||
+                  !currentGraphRepoUrl ||
+                  !currentGraphViewState ||
+                  saveMapName.trim().length === 0 ||
+                  isLoadingSharedGraph ||
+                  isSavingGraph
+                }
+                title={githubStatus.connected ? "Save the current graph map" : "Connect GitHub to save maps"}
+                onClick={() => void handleSaveCurrentGraph()}
+              >
+                {isSavingGraph ? "Saving" : "Save Map"}
+              </button>
+              {githubStatus.connected ? (
+                <>
+                  <div className="saved-map-controls__select">
+                    <select
+                      aria-label="Saved map selector"
+                      value={selectedSavedGraphId}
+                      disabled={savedGraphsLoading || savedGraphs.length === 0 || isLoadingSavedGraph}
+                      onChange={(event) => setSelectedSavedGraphId(event.target.value)}
+                    >
+                      {savedGraphs.length === 0 ? (
+                        <option value="">{savedGraphsLoading ? "Loading saved maps" : "No saved maps"}</option>
+                      ) : null}
+                      {savedGraphs.map((savedGraph) => (
+                        <option key={savedGraph.id} value={savedGraph.id}>
+                          {savedGraph.saveName} - {savedGraph.repoLabel} - {savedGraph.nodeCount} nodes - {compactUpdatedAt(savedGraph.updatedAt)}
+                        </option>
+                      ))}
+                    </select>
+                    <span aria-hidden="true" />
+                  </div>
+                  <button
+                    type="button"
+                    className="saved-map-controls__open"
+                    disabled={!selectedSavedGraphId || savedGraphsLoading || isLoadingSavedGraph}
+                    onClick={() => void handleOpenSavedGraph()}
+                  >
+                    {isLoadingSavedGraph ? "Opening" : "Open"}
+                  </button>
+                  <button
+                    type="button"
+                    className="saved-map-controls__share"
+                    disabled={!selectedSavedGraphId || savedGraphsLoading || isLoadingSavedGraph || isSharingGraph}
+                    title="Copy a read-only share link for the selected saved map"
+                    onClick={() => void handleCopyShareLink()}
+                  >
+                    {isSharingGraph ? "Copying" : "Link"}
+                  </button>
+                </>
+              ) : null}
+              {savedGraphsError ? (
+                <span className="saved-map-controls__error" title={savedGraphsError}>Save error</span>
+              ) : null}
+            </div>
+            <div className="cluster-switch" aria-label="Clustering mode">
+              {clusteringOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={option.id === clusteringMode ? "cluster-switch__button is-active" : "cluster-switch__button"}
+                  disabled={!option.enabled}
+                  title={option.enabled ? `${option.label} clustering` : `${option.label} clustering is planned`}
+                  onClick={() => setClusteringMode(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <input
+              className="search-input"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search files or folders"
+              aria-label="Search files or folders"
+            />
+          </div>
+        </section>
+      ) : null}
 
       <GraphView
         graph={graph}
         searchTerm={searchTerm}
         clusteringMode={clusteringMode}
+        repoUrl={repoUrl}
+        onRepoUrlChange={setRepoUrl}
+        onAnalyzeRepo={handleSubmit}
+        onAnalyzeExampleRepo={handleAnalyzeExampleRepo}
         initialViewState={restoreGraphViewState}
         viewStateKey={restoreGraphViewStateKey}
         onViewStateChange={handleGraphViewStateChange}

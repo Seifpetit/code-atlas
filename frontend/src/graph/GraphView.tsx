@@ -1,5 +1,6 @@
 import {
   lazy,
+  type FormEventHandler,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -58,6 +59,10 @@ interface GraphViewProps {
   graph: AtlasGraph | null;
   searchTerm: string;
   clusteringMode: ClusteringMode;
+  repoUrl: string;
+  onRepoUrlChange: (value: string) => void;
+  onAnalyzeRepo: FormEventHandler<HTMLFormElement>;
+  onAnalyzeExampleRepo: (repoUrl: string, label: string) => void;
   initialViewState?: SavedMapViewState | null;
   viewStateKey?: string | null;
   onViewStateChange?: (viewState: SavedMapViewState | null) => void;
@@ -1393,6 +1398,10 @@ export function GraphView({
   graph,
   searchTerm,
   clusteringMode,
+  repoUrl,
+  onRepoUrlChange,
+  onAnalyzeRepo,
+  onAnalyzeExampleRepo,
   initialViewState = null,
   viewStateKey = null,
   onViewStateChange,
@@ -3655,28 +3664,85 @@ export function GraphView({
   }
 
   if (!graph || !laidOut || !structuralState) {
+    if (githubConnected || graph) {
+      return <div className="graph-shell graph-shell--empty" />;
+    }
+
     return (
-      <div className="empty-state">
-        <div className="empty-state__connect">
-          <span>{githubConnected ? `GitHub connected${githubUserLogin ? ` as @${githubUserLogin}` : ""}` : "Connect GitHub account"}</span>
-          {!githubConnected ? <button type="button" disabled={!onConnectGitHub} onClick={onConnectGitHub}>Connect</button> : null}
+      <div className="graph-idle-state">
+        <div className="graph-idle-state__ambient" aria-hidden="true" />
+        <div className="graph-idle-state__content">
+          <div className="graph-idle-state__eyebrow">Code Atlas</div>
+          <h2 className="graph-idle-state__headline">Understand any codebase before you touch it</h2>
+          <p className="graph-idle-state__subline">
+            Paste a GitHub URL. Get a spatial graph, health scores, and a concrete refactor plan - in seconds.
+          </p>
+
+          <form className="graph-idle-state__url-row" onSubmit={onAnalyzeRepo}>
+            <input
+              value={repoUrl}
+              onChange={(event) => onRepoUrlChange(event.target.value)}
+              placeholder="https://github.com/owner/repo"
+              aria-label="GitHub repository URL"
+            />
+            <button type="submit" disabled={repoUrl.trim().length === 0}>
+              Analyze
+            </button>
+          </form>
+
+          <div className="graph-idle-state__divider" aria-hidden="true">
+            <span />
+            <span>or</span>
+            <span />
+          </div>
+
+          <button type="button" className="graph-idle-state__connect" disabled={!onConnectGitHub} onClick={onConnectGitHub}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2C6.477 2 2 6.545 2 12.162c0 4.494 2.865 8.308 6.839 9.654.5.093.682-.22.682-.49 0-.242-.008-.883-.012-1.734-2.782.618-3.369-1.37-3.369-1.37-.455-1.19-1.11-1.507-1.11-1.507-.907-.631.069-.618.069-.618 1.003.072 1.53 1.053 1.53 1.053.892 1.554 2.341 1.105 2.91.844.09-.659.35-1.105.636-1.359-2.22-.259-4.555-1.136-4.555-5.057 0-1.117.39-2.031 1.029-2.748-.103-.258-.446-1.299.098-2.707 0 0 .84-.274 2.75 1.05A9.27 9.27 0 0 1 12 7.116c.85.004 1.706.117 2.506.343 1.909-1.324 2.748-1.05 2.748-1.05.546 1.408.203 2.449.1 2.707.64.717 1.028 1.631 1.028 2.748 0 3.931-2.339 4.795-4.566 5.048.359.318.678.945.678 1.905 0 1.376-.012 2.485-.012 2.823 0 .272.18.588.688.489C19.137 20.467 22 16.654 22 12.162 22 6.545 17.523 2 12 2z" />
+            </svg>
+            <span>Connect GitHub</span>
+          </button>
+
+          <div className="graph-idle-state__pills" aria-label="Feature highlights">
+            <span className="graph-idle-state__pill">
+              <span className="graph-idle-state__dot is-cyan" />
+              <span>Spatial graph navigation</span>
+            </span>
+            <span className="graph-idle-state__pill">
+              <span className="graph-idle-state__dot is-amber" />
+              <span>Health scoring</span>
+            </span>
+            <span className="graph-idle-state__pill">
+              <span className="graph-idle-state__dot is-indigo" />
+              <span>Refactor forecast</span>
+            </span>
+            <span className="graph-idle-state__pill">
+              <span className="graph-idle-state__dot is-cyan" />
+              <span>No LLMs</span>
+            </span>
+          </div>
+
+          <div className="demo-video-slot" style={{ width: "100%", minHeight: "88px", marginTop: "16px", marginBottom: "16px" }} />
+
+          <div className="graph-idle-state__examples-label">Try with a public repo</div>
+          <div className="graph-idle-state__repo-chips" aria-label="Example repositories">
+            {[
+              { label: "facebook/react", url: "https://github.com/facebook/react" },
+              { label: "vercel/next.js", url: "https://github.com/vercel/next.js" },
+              { label: "vitejs/vite", url: "https://github.com/vitejs/vite" },
+              { label: "expressjs/express", url: "https://github.com/expressjs/express" }
+            ].map((repository) => (
+              <button
+                key={repository.url}
+                type="button"
+                className="graph-idle-state__repo-chip"
+                onClick={() => onAnalyzeExampleRepo(repository.url, repository.label)}
+              >
+                {repository.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="empty-state__or">or</div>
-        <div className="empty-state__title">Paste a GitHub repo URL to generate the architecture graph.</div>
-        <ol className="empty-state__steps" aria-label="How to put code in GitHub">
-          <li>
-            <strong>Make a GitHub repo</strong>
-            <span>Create a new repository on GitHub.</span>
-          </li>
-          <li>
-            <strong>Push your code</strong>
-            <span>Commit your files, then push them to that repo.</span>
-          </li>
-          <li>
-            <strong>Paste the repo link</strong>
-            <span>Copy the GitHub URL and paste it above.</span>
-          </li>
-        </ol>
       </div>
     );
   }

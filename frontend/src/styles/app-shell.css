@@ -16,6 +16,7 @@
   bottom: 0;
   height: 3px;
   overflow: hidden;
+  border-radius: 999px;
   background: rgba(15, 23, 42, 0.78);
   box-shadow:
     inset 0 0 0 1px rgba(45, 212, 191, 0.08),
@@ -26,6 +27,7 @@
   position: absolute;
   inset: 0;
   width: 38%;
+  border-radius: inherit;
   background:
     linear-gradient(90deg, transparent, rgba(45, 212, 191, 0.86), rgba(125, 211, 252, 0.7), transparent);
   filter: drop-shadow(0 0 8px rgba(45, 212, 191, 0.42));
@@ -38,6 +40,7 @@
   justify-self: center;
   gap: 8px;
   border: 1px solid rgba(45, 212, 191, 0.34);
+  border-radius: 6px;
   background: rgba(11, 20, 35, 0.9);
   padding: 2px 8px;
   color: #9fb0c8;
@@ -87,6 +90,7 @@
   height: 42px;
   flex: 0 0 auto;
   border: 1px solid #2dd4bf;
+  border-radius: 8px;
   background: #0f2f35;
   color: #9ff7ed;
   font-size: 13px;
@@ -115,6 +119,14 @@
   min-width: 0;
 }
 
+.repo-entry__primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+  min-width: 0;
+}
+
 .analyze-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -125,6 +137,7 @@
 .search-input {
   min-width: 0;
   border: 1px solid #293548;
+  border-radius: 8px;
   background: #101827;
   color: #e5eefb;
   outline: none;
@@ -152,6 +165,7 @@
   height: 42px;
   padding: 0 18px;
   border: 0;
+  border-radius: 8px;
   background: #2dd4bf;
   color: #042f2e;
   font-weight: 800;
@@ -164,7 +178,7 @@
 }
 
 .analyze-form.is-secondary input {
-  height: 34px;
+  height: 27px;
   border-color: #263244;
   background: rgba(16, 24, 39, 0.72);
   color: #8ba0ba;
@@ -176,20 +190,20 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   justify-content: stretch;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
 }
 
 .analyze-form.analyze-form--inline {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) auto;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   justify-self: end;
 }
 
 .analyze-form.analyze-form--inline input {
-  height: 34px;
+  height: 27px;
   border-color: #263244;
   background: rgba(16, 24, 39, 0.72);
   color: #8ba0ba;
@@ -203,8 +217,9 @@
 }
 
 .analyze-form.analyze-form--inline button {
-  height: 34px;
+  height: 27px;
   border: 1px solid #334155;
+  border-radius: 8px;
   background: #111b2e;
   padding: 0 12px;
   color: #9fb0c8;
@@ -213,12 +228,15 @@
 }
 
 .public-search-trigger {
-  height: 28px;
+  height: 100%;
+  justify-self: end;
+  align-self: stretch;
   border: 1px solid rgba(45, 212, 191, 0.42);
+  border-radius: 8px;
   background: rgba(13, 148, 136, 0.12);
-  padding: 0 10px;
+  padding: 0 12px;
   color: #99f6e4;
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 900;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -1109,18 +1127,23 @@
 }
 
 .github-connect-strip {
-  display: flex;
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  border: 1px solid rgba(45, 212, 191, 0.2);
+  border-radius: 8px;
+  background: rgba(11, 22, 38, 0.82);
+  padding: 12px;
+  text-align: center;
   align-items: center;
-  gap: 9px;
   min-width: 0;
-  color: #64748b;
-  font-size: 11px;
 }
 
 .github-connect-strip button,
 .github-repo-panel__header button {
   height: 26px;
   border: 1px solid rgba(45, 212, 191, 0.34);
+  border-radius: 7px;
   background: rgba(13, 148, 136, 0.12);
   padding: 0 10px;
   color: #99f6e4;
@@ -1137,10 +1160,12 @@
   opacity: 0.45;
 }
 
-.github-connect-strip span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.github-connect-strip button {
+  width: min(100%, 320px);
+  height: 52px;
+  padding: 0 18px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
 }
 
 .github-repo-panel {
@@ -1150,6 +1175,7 @@
   align-items: start;
   min-width: 0;
   border: 1px solid rgba(45, 212, 191, 0.2);
+  border-radius: 8px;
   background: rgba(11, 22, 38, 0.82);
   padding: 8px;
 }
@@ -1172,6 +1198,7 @@
   min-width: 0;
   height: 28px;
   border: 1px solid #293548;
+  border-radius: 7px;
   background: #101827;
   padding: 0 10px;
   color: #e5eefb;
@@ -1196,6 +1223,7 @@
   flex: 1 1 auto;
   height: 34px;
   border: 1px solid #293548;
+  border-radius: 8px;
   background: #101827;
   padding: 0 34px 0 10px;
   color: #e5eefb;
@@ -1214,6 +1242,7 @@
 .github-repo-panel__selector button {
   height: 34px;
   border: 1px solid rgba(45, 212, 191, 0.34);
+  border-radius: 8px;
   background: rgba(13, 148, 136, 0.12);
   padding: 0 12px;
   color: #99f6e4;
@@ -1306,6 +1335,7 @@
   overflow: hidden;
   padding: 3px;
   border: 1px solid rgba(45, 212, 191, 0.16);
+  border-radius: 8px;
   background:
     linear-gradient(135deg, rgba(15, 23, 42, 0.82), rgba(12, 20, 34, 0.62)),
     rgba(2, 6, 23, 0.42);
@@ -1316,6 +1346,7 @@
 .saved-map-controls select {
   height: 30px;
   border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 7px;
   background: rgba(15, 23, 42, 0.86);
   color: #bfdbfe;
   font-size: 11px;
@@ -1401,6 +1432,7 @@
   min-width: 0;
   overflow: hidden;
   border: 1px solid #293548;
+  border-radius: 8px;
   background: #101827;
 }
 
@@ -1458,6 +1490,7 @@
   gap: 5px;
   height: 28px;
   border: 1px solid rgba(56, 189, 248, 0.26);
+  border-radius: 8px;
   background: rgba(15, 23, 42, 0.7);
   padding: 0 9px;
   color: #7dd3fc;
