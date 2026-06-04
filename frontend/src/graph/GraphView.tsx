@@ -10,6 +10,7 @@ import {
   useRef,
   useState
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Background,
   BackgroundVariant,
@@ -22,7 +23,7 @@ import {
   type NodeMouseHandler,
   type ReactFlowInstance
 } from "@xyflow/react";
-import type { AtlasGraph, AtlasNode } from "../api";
+import type { AtlasEdge, AtlasGraph, AtlasNode } from "../api";
 import { historyBadgeFor } from "../history/historyUtils";
 import { extractArchitecturalLandmarks, snapToLandmark } from "../time/landmarkExtraction";
 import { RawHistoryInspector } from "../time/RawHistoryInspector";
@@ -40,6 +41,12 @@ import { inspectSource } from "./sourceInspection";
 import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
 import { minimapColorForFile } from "./filePalette";
+import { buildFileForecast, type ForecastModel } from "./forecastModel";
+import {
+  computeHealthDetails,
+  type GraphNode,
+  type HealthComponentId
+} from "./healthScore";
 import { layoutStructuralContext, type AtlasFlowEdge, type AtlasFlowNode } from "./layout";
 import { nodeTypes } from "./nodeTypes";
 
@@ -69,7 +76,32 @@ interface BudgetedRelationship {
   edge: AtlasFlowEdge;
   direction: "incoming" | "outgoing";
   otherNode: AtlasNode | null;
+  otherFlowId: string | null;
+  count: number;
   score: number;
+}
+
+interface RelationshipCollection {
+  relationships: BudgetedRelationship[];
+  totalIncoming: number;
+  totalOutgoing: number;
+}
+
+interface RelationshipTraceSet {
+  incoming: BudgetedRelationship[];
+  outgoing: BudgetedRelationship[];
+}
+
+interface PinnedTraceAnchor {
+  nodeId: string;
+  corridorIndex: number;
+}
+
+interface PinnedTraceGroup {
+  key: string;
+  edgeIds: string[];
+  folderRelationCounts: Record<string, number>;
+  anchor: PinnedTraceAnchor;
 }
 
 type ManualNodePositions = Record<string, { x: number; y: number }>;
@@ -80,6 +112,39 @@ interface LayoutBounds {
   maxX: number;
   minY: number;
   maxY: number;
+}
+
+type ForecastSignalSeverity = "danger" | "warn" | "info";
+
+function metadataForecastSignalSeverity(signal: string): ForecastSignalSeverity {
+  const normalizedSignal = signal.toLowerCase();
+
+  if (normalizedSignal.includes("health score")) {
+    return "danger";
+  }
+
+  if (
+    normalizedSignal.includes("connect") ||
+    normalizedSignal.includes("import") ||
+    normalizedSignal.includes("many files")
+  ) {
+    return "info";
+  }
+
+  return "warn";
+}
+
+function metadataForecastStayItem(forecast: ForecastModel): string | null {
+  const originBlock = forecast.suggested[0];
+
+  if (!originBlock || originBlock.title !== forecast.current.title) {
+    return null;
+  }
+
+  const originItems = originBlock.items.map((item) => item.toLowerCase());
+  const exactMatch = forecast.current.items.find((item) => originItems.includes(item.toLowerCase()));
+
+  return exactMatch ?? forecast.current.items[0] ?? null;
 }
 
 interface SelectionMarqueeGesture {
@@ -159,7 +224,7 @@ interface ConnectedFileGroupsByDirection {
 }
 
 type RelationshipFollowDirection = "imports" | "imported-by";
-type FileMetadataSectionId = "stats" | "role" | "connectivity" | "recent";
+type FileMetadataSectionId = "stats" | "role" | "recent";
 
 interface RelationshipFollowContext {
   direction: RelationshipFollowDirection;
@@ -272,6 +337,244 @@ function CollapsibleMetadataSection({
         </div>
       ) : null}
     </section>
+  );
+}
+
+const METADATA_HEALTH_COMPONENT_ORDER: HealthComponentId[] = [
+  "cyclomatic",
+  "cognitive",
+  "duplication",
+  "churn",
+  "ghostRatio"
+];
+
+interface ComponentHealthContext {
+  medianBadness: number;
+  worseThanPercent: number;
+}
+
+interface FileHealthRankContext {
+  rank: number;
+  total: number;
+  components: Partial<Record<HealthComponentId, ComponentHealthContext>>;
+}
+
+interface HealthMetricDisplayRow {
+  id: HealthComponentId;
+  label: string;
+  valueText: string;
+  contributionText: string;
+  explanation: string;
+  scale: {
+    markerPercent: number;
+    minLabel: string;
+    normalLabel: string;
+    highLabel: string;
+  };
+}
+
+interface HealthTooltipState {
+  kind: "label" | "scale";
+  row: HealthMetricDisplayRow;
+  left: number;
+  top: number;
+}
+
+function healthSummaryText(score: number): string {
+  if (score >= 70) {
+    return "No significant issues detected.";
+  }
+
+  if (score >= 40) {
+    return "Some complexity worth reviewing.";
+  }
+
+  return "High complexity. Recommend inspection.";
+}
+
+function healthScoreColor(score: number): string {
+  if (score >= 70) {
+    return "#06b6d4";
+  }
+
+  if (score >= 40) {
+    return "#d97706";
+  }
+
+  return "#ef4444";
+}
+
+function healthProblemColor(badness: number): string {
+  const fillPercent = badness * 100;
+
+  if (fillPercent < 40) {
+    return "#06b6d4";
+  }
+
+  if (fillPercent < 70) {
+    return "#d97706";
+  }
+
+  return "#ef4444";
+}
+
+function medianValue(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sortedValues = values.slice().sort((left, right) => left - right);
+  const middle = Math.floor(sortedValues.length / 2);
+
+  return sortedValues.length % 2 === 0
+    ? (sortedValues[middle - 1] + sortedValues[middle]) / 2
+    : sortedValues[middle];
+}
+
+function worseThanPercent(value: number, values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const healthierCount = values.filter((candidate) => candidate < value).length;
+  return Math.round((healthierCount / values.length) * 100);
+}
+
+function formatMetricNumber(value: number, maximumFractionDigits = 2): string {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits
+  }).format(value);
+}
+
+function formatPercent(value: number): string {
+  return `${formatMetricNumber(value * 100, 1)}%`;
+}
+
+function scaledMetricPercent(value: number, highValue: number): number {
+  if (highValue <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100, (value / highValue) * 100));
+}
+
+function tooltipPositionForElement(element: HTMLElement, width: number): { left: number; top: number } {
+  const gutter = 12;
+  const rect = element.getBoundingClientRect();
+  const leftOfElement = rect.left - width - gutter;
+  const rightOfElement = rect.right + gutter;
+  const left = leftOfElement >= gutter
+    ? leftOfElement
+    : Math.min(Math.max(gutter, rightOfElement), window.innerWidth - width - gutter);
+  const top = Math.min(Math.max(gutter, rect.top - 8), window.innerHeight - 140);
+
+  return { left, top };
+}
+
+function functionGlobalId(filePath: string, waypointId: string | undefined): string | null {
+  return waypointId ? `${filePath}:${waypointId}` : null;
+}
+
+function isExemptFromGhostPenalty(
+  waypoint: NonNullable<NonNullable<AtlasNode["metadata"]>["functionWaypoints"]>[number],
+  fileIsStaticEntrypoint: boolean
+): boolean {
+  if (waypoint.exported || (waypoint.exportNames?.length ?? 0) > 0) {
+    return true;
+  }
+
+  const frameworkPatterns = [
+    /^use[A-Z]/,
+    /^on[A-Z]/,
+    /^handle[A-Z]/,
+    /^render[A-Z]/,
+    /^get[A-Z]/,
+    /^set[A-Z]/,
+    /^(componentDidMount|componentDidUpdate|componentWillUnmount)$/,
+    /^(getServerSideProps|getStaticProps|getStaticPaths)$/,
+    /^(loader|action)$/
+  ];
+
+  return fileIsStaticEntrypoint || frameworkPatterns.some((pattern) => pattern.test(waypoint.name));
+}
+
+function resolveCallTargetId(
+  graph: NonNullable<GraphViewProps["graph"]>,
+  call: NonNullable<NonNullable<AtlasNode["metadata"]>["functionWaypoints"]>[number]["calls"][number]
+): string | null {
+  if (!call.definitionPath) {
+    return null;
+  }
+
+  const targetFile = graph.nodes.find((node) => node.type === "file" && node.path === call.definitionPath);
+  const waypoints = targetFile?.metadata?.functionWaypoints ?? [];
+
+  if (call.definitionWaypointId) {
+    const target = waypoints.find((waypoint) => waypoint.waypointId === call.definitionWaypointId);
+    if (target?.waypointId) {
+      return functionGlobalId(call.definitionPath, target.waypointId);
+    }
+  }
+
+  if (call.definitionStartLine !== undefined && call.definitionEndLine !== undefined) {
+    const target = waypoints.find(
+      (waypoint) =>
+        waypoint.startLine === call.definitionStartLine &&
+        waypoint.endLine === call.definitionEndLine
+    );
+    if (target?.waypointId) {
+      return functionGlobalId(call.definitionPath, target.waypointId);
+    }
+  }
+
+  if (call.definitionName) {
+    const namedTargets = waypoints.filter((waypoint) => waypoint.name === call.definitionName);
+    if (namedTargets.length === 1 && namedTargets[0].waypointId) {
+      return functionGlobalId(call.definitionPath, namedTargets[0].waypointId);
+    }
+  }
+
+  return null;
+}
+
+function calledFunctionIds(graph: NonNullable<GraphViewProps["graph"]>): Set<string> {
+  const ids = new Set<string>();
+
+  for (const node of graph.nodes) {
+    if (node.type !== "file") {
+      continue;
+    }
+
+    for (const waypoint of node.metadata?.functionWaypoints ?? []) {
+      for (const call of waypoint.calls) {
+        const targetId = resolveCallTargetId(graph, call);
+        if (targetId) {
+          ids.add(targetId);
+        }
+      }
+    }
+
+    for (const call of node.metadata?.moduleLinks ?? []) {
+      const targetId = resolveCallTargetId(graph, call);
+      if (targetId) {
+        ids.add(targetId);
+      }
+    }
+  }
+
+  return ids;
+}
+
+function hasDetectedCallSite(
+  filePath: string,
+  waypoint: NonNullable<NonNullable<AtlasNode["metadata"]>["functionWaypoints"]>[number],
+  detectedCallIds: Set<string>
+): boolean {
+  const id = functionGlobalId(filePath, waypoint.waypointId);
+  return (
+    (id !== null && detectedCallIds.has(id)) ||
+    waypoint.inputs.some((input) => (input.sources?.length ?? 0) > 0)
   );
 }
 
@@ -815,10 +1118,219 @@ function relationshipScore(activeNode: AtlasNode, otherNode: AtlasNode | null): 
   return 200;
 }
 
-function budgetRelationships(
-  allEdges: AtlasFlowEdge[],
-  visibleById: Map<string, AtlasNode>,
+function graphEndpointPath(endpointId: string, graphNodeById: Map<string, AtlasNode>): string {
+  return graphNodeById.get(endpointId)?.path ?? endpointId;
+}
+
+function endpointBelongsToNode(endpointId: string, owner: AtlasNode, graphNodeById: Map<string, AtlasNode>): boolean {
+  const endpointPath = graphEndpointPath(endpointId, graphNodeById);
+
+  return owner.id === endpointId || owner.path === endpointPath || ownsPath(owner, endpointPath);
+}
+
+function corridorIndexForFlowNode(flowNode: AtlasFlowNode): number {
+  return Number((flowNode.data as AtlasNode).corridorIndex ?? 0);
+}
+
+function preferredVisibleOwner(
+  candidates: Array<{ id: string; node: AtlasNode; corridorIndex: number; pathLength: number }>,
+  preferredCorridorIndex: number,
+  preferDeepestPath = false
+): { id: string; node: AtlasNode } | null {
+  const [preferred] = candidates.slice().sort((a, b) => {
+    if (preferDeepestPath && b.pathLength !== a.pathLength) {
+      return b.pathLength - a.pathLength;
+    }
+
+    const corridorPreference = Number(b.corridorIndex === preferredCorridorIndex) - Number(a.corridorIndex === preferredCorridorIndex);
+    if (corridorPreference !== 0) {
+      return corridorPreference;
+    }
+
+    if (!preferDeepestPath && b.pathLength !== a.pathLength) {
+      return b.pathLength - a.pathLength;
+    }
+
+    const corridorDistance = Math.abs(a.corridorIndex - preferredCorridorIndex) - Math.abs(b.corridorIndex - preferredCorridorIndex);
+    if (corridorDistance !== 0) {
+      return corridorDistance;
+    }
+
+    return a.id.localeCompare(b.id);
+  });
+
+  return preferred ? { id: preferred.id, node: preferred.node } : null;
+}
+
+function visibleOwnerForEndpoint(
+  endpointId: string,
+  graphNodeById: Map<string, AtlasNode>,
+  visibleNodes: AtlasFlowNode[],
+  preferredCorridorIndex: number
+): { id: string; node: AtlasNode } | null {
+  const endpointPath = graphEndpointPath(endpointId, graphNodeById);
+  const exactOwners: Array<{ id: string; node: AtlasNode; corridorIndex: number; pathLength: number }> = [];
+  const folderOwners: Array<{ id: string; node: AtlasNode; corridorIndex: number; pathLength: number }> = [];
+
+  for (const flowNode of visibleNodes) {
+    if (isLineageNode(flowNode)) {
+      continue;
+    }
+
+    const node = flowNode.data as AtlasNode;
+    const realNodeId = flowNodeRealId(flowNode);
+    const isExactNode = realNodeId === endpointId || node.id === endpointId || node.path === endpointPath;
+    const corridorIndex = corridorIndexForFlowNode(flowNode);
+
+    if (node.type === "file" && isExactNode) {
+      exactOwners.push({ id: flowNode.id, node, corridorIndex, pathLength: node.path.length });
+      continue;
+    }
+
+    if (node.type === "folder" && ownsPath(node, endpointPath)) {
+      folderOwners.push({ id: flowNode.id, node, corridorIndex, pathLength: node.path.length });
+    }
+  }
+
+  return preferredVisibleOwner(exactOwners, preferredCorridorIndex) ?? preferredVisibleOwner(folderOwners, preferredCorridorIndex, true);
+}
+
+function relationshipEdgeKey(sourceId: string, targetId: string): string {
+  return `${sourceId}->${targetId}`;
+}
+
+function parseRelationshipEdgeId(edgeId: string): { source: string; target: string } | null {
+  if (!edgeId.startsWith("context:")) {
+    return null;
+  }
+
+  const body = edgeId.slice("context:".length);
+  const separatorIndex = body.indexOf("->");
+
+  if (separatorIndex < 0) {
+    return null;
+  }
+
+  return {
+    source: body.slice(0, separatorIndex),
+    target: body.slice(separatorIndex + 2)
+  };
+}
+
+function syntheticRelationshipEdge(sourceId: string, targetId: string, count: number): AtlasFlowEdge {
+  return {
+    id: `context:${sourceId}->${targetId}`,
+    source: sourceId,
+    target: targetId,
+    type: "structural",
+    animated: false,
+    zIndex: 0,
+    data: {
+      kind: "context-import",
+      importCount: count
+    },
+    style: {}
+  };
+}
+
+function collectRelationships(
+  graphEdges: AtlasEdge[],
+  graphNodeById: Map<string, AtlasNode>,
+  visibleNodes: AtlasFlowNode[],
   activeNodeId: string,
+  activeCorridorIndex: number
+): RelationshipCollection {
+  const activeNode =
+    graphNodeById.get(activeNodeId) ??
+    visibleNodes.map((node) => node.data as AtlasNode).find((node) => node.id === activeNodeId);
+  const relatedByKey = new Map<string, BudgetedRelationship>();
+  let totalIncoming = 0;
+  let totalOutgoing = 0;
+
+  if (!activeNode) {
+    return {
+      relationships: [],
+      totalIncoming: 0,
+      totalOutgoing: 0
+    };
+  }
+
+  for (const graphEdge of graphEdges) {
+    const sourceInsideActive = endpointBelongsToNode(graphEdge.source, activeNode, graphNodeById);
+    const targetInsideActive = endpointBelongsToNode(graphEdge.target, activeNode, graphNodeById);
+
+    if (sourceInsideActive === targetInsideActive) {
+      continue;
+    }
+
+    const direction: "incoming" | "outgoing" = sourceInsideActive ? "outgoing" : "incoming";
+    if (direction === "outgoing") {
+      totalOutgoing += 1;
+    } else {
+      totalIncoming += 1;
+    }
+
+    const sourceOwner = visibleOwnerForEndpoint(
+      graphEdge.source,
+      graphNodeById,
+      visibleNodes,
+      activeCorridorIndex
+    );
+    const targetOwner = visibleOwnerForEndpoint(
+      graphEdge.target,
+      graphNodeById,
+      visibleNodes,
+      activeCorridorIndex
+    );
+
+    if (!sourceOwner || !targetOwner || sourceOwner.id === targetOwner.id) {
+      continue;
+    }
+
+    const edgeKey = relationshipEdgeKey(sourceOwner.id, targetOwner.id);
+    const otherOwner = direction === "outgoing" ? targetOwner : sourceOwner;
+    const existing = relatedByKey.get(edgeKey);
+    const count = (existing?.count ?? 0) + 1;
+    const renderedEdge = syntheticRelationshipEdge(sourceOwner.id, targetOwner.id, count);
+    const edge: AtlasFlowEdge = {
+      ...renderedEdge,
+      data: {
+        ...(renderedEdge.data ?? {}),
+        importCount: count
+      }
+    };
+
+    relatedByKey.set(edgeKey, {
+      edge,
+      direction,
+      otherNode: otherOwner.node,
+      otherFlowId: otherOwner.id,
+      count,
+      score: relationshipScore(activeNode, otherOwner.node) + count
+    });
+  }
+
+  const relationships = [...relatedByKey.values()].sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+
+    if (a.direction !== b.direction) {
+      return a.direction === "outgoing" ? -1 : 1;
+    }
+
+    return (a.otherNode?.path ?? a.edge.id).localeCompare(b.otherNode?.path ?? b.edge.id);
+  });
+
+  return {
+    relationships,
+    totalIncoming,
+    totalOutgoing
+  };
+}
+
+function budgetRelationships(
+  collection: RelationshipCollection,
   limit: number
 ): {
   visible: BudgetedRelationship[];
@@ -827,42 +1339,51 @@ function budgetRelationships(
   totalIncoming: number;
   totalOutgoing: number;
 } {
-  const activeNode = visibleById.get(activeNodeId);
-  const related = allEdges
-    .filter((edge) => edge.source === activeNodeId || edge.target === activeNodeId)
-    .map((edge) => {
-      const direction: "incoming" | "outgoing" = edge.source === activeNodeId ? "outgoing" : "incoming";
-      const otherNode = visibleById.get(direction === "outgoing" ? edge.target : edge.source) ?? null;
-      const importCount = Number(edge.data?.importCount ?? 1);
-
-      return {
-        edge,
-        direction,
-        otherNode,
-        score: (activeNode ? relationshipScore(activeNode, otherNode) : 0) + importCount
-      };
-    })
-    .sort((a, b) => {
-      if (b.score !== a.score) {
-        return b.score - a.score;
-      }
-
-      if (a.direction !== b.direction) {
-        return a.direction === "outgoing" ? -1 : 1;
-      }
-
-      return (a.otherNode?.path ?? a.edge.id).localeCompare(b.otherNode?.path ?? b.edge.id);
-    });
-  const visible = related.slice(0, limit);
-  const hidden = related.slice(limit);
+  const visible = collection.relationships.slice(0, limit);
+  const visibleIncoming = visible.reduce((count, relation) => count + (relation.direction === "incoming" ? relation.count : 0), 0);
+  const visibleOutgoing = visible.reduce((count, relation) => count + (relation.direction === "outgoing" ? relation.count : 0), 0);
 
   return {
     visible,
-    hiddenIncoming: hidden.filter((relation) => relation.direction === "incoming").length,
-    hiddenOutgoing: hidden.filter((relation) => relation.direction === "outgoing").length,
-    totalIncoming: related.filter((relation) => relation.direction === "incoming").length,
-    totalOutgoing: related.filter((relation) => relation.direction === "outgoing").length
+    hiddenIncoming: Math.max(0, collection.totalIncoming - visibleIncoming),
+    hiddenOutgoing: Math.max(0, collection.totalOutgoing - visibleOutgoing),
+    totalIncoming: collection.totalIncoming,
+    totalOutgoing: collection.totalOutgoing
   };
+}
+
+function traceRelationships(collection: RelationshipCollection): RelationshipTraceSet {
+  return {
+    incoming: collection.relationships.filter((relationship) => relationship.direction === "incoming"),
+    outgoing: collection.relationships.filter((relationship) => relationship.direction === "outgoing")
+  };
+}
+
+function folderTraceCountsForRelationships(relationships: BudgetedRelationship[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+
+  for (const relationship of relationships) {
+    if (relationship.otherNode?.type !== "folder") {
+      continue;
+    }
+
+    const countKey = relationship.otherFlowId ?? relationship.otherNode.id;
+    counts[countKey] = (counts[countKey] ?? 0) + relationship.count;
+  }
+
+  return counts;
+}
+
+function mergeRelationCountMaps(countMaps: Array<Record<string, number>>): Record<string, number> {
+  const merged: Record<string, number> = {};
+
+  for (const countMap of countMaps) {
+    for (const [nodeId, count] of Object.entries(countMap)) {
+      merged[nodeId] = (merged[nodeId] ?? 0) + count;
+    }
+  }
+
+  return merged;
 }
 
 export function GraphView({
@@ -875,10 +1396,14 @@ export function GraphView({
 }: GraphViewProps) {
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
   const [sourceModalFile, setSourceModalFile] = useState<AtlasNode | null>(null);
+  const [metadataForecastNodeId, setMetadataForecastNodeId] = useState<string | null>(null);
+  const [filePanelView, setFilePanelView] = useState<"metadata" | "wires">("metadata");
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [tracedEdgeIds, setTracedEdgeIds] = useState<string[]>([]);
+  const [tracedFolderRelationCounts, setTracedFolderRelationCounts] = useState<Record<string, number>>({});
+  const [pinnedTraceGroups, setPinnedTraceGroups] = useState<PinnedTraceGroup[]>([]);
   const [selectedRuntimeFileId, setSelectedRuntimeFileId] = useState<string | null>(null);
   const [expandedPanelRegion, setExpandedPanelRegion] = useState<{ nodeId: string | null; region: SecondaryPanelRegion | null }>({
     nodeId: null,
@@ -901,6 +1426,7 @@ export function GraphView({
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance<AtlasFlowNode, AtlasFlowEdge> | null>(null);
   const [runtimeState, setRuntimeState] = useState<RuntimeState>(inactiveRuntimeState);
   const [runtimePlaybackActive, setRuntimePlaybackActive] = useState(false);
+  const [healthTooltip, setHealthTooltip] = useState<HealthTooltipState | null>(null);
   const graphShellRef = useRef<HTMLDivElement | null>(null);
   const pendingContextCameraRef = useRef<PendingContextCamera | null>(null);
   const pendingPrimaryFocusNodeIdRef = useRef<string | null>(null);
@@ -912,6 +1438,24 @@ export function GraphView({
   });
   const selectionAutoPanFrameRef = useRef<number | null>(null);
   const structuralSelectionActive = selectionToolActive && !runtimeState.active;
+  const traceSignatureForIds = useCallback((edgeIds: string[]) => {
+    return [...new Set(edgeIds)].sort().join("|");
+  }, []);
+  const showHealthTooltip = useCallback((
+    event: ReactMouseEvent<HTMLElement>,
+    row: HealthMetricDisplayRow,
+    kind: HealthTooltipState["kind"]
+  ) => {
+    const width = kind === "scale" ? 260 : 220;
+    setHealthTooltip({
+      kind,
+      row,
+      ...tooltipPositionForElement(event.currentTarget, width)
+    });
+  }, []);
+  const hideHealthTooltip = useCallback(() => {
+    setHealthTooltip(null);
+  }, []);
   const laidOut = useMemo(
     () => (graph ? layoutStructuralContext(graph, currentContextId, pageIndex) : null),
     [currentContextId, graph, pageIndex]
@@ -923,12 +1467,43 @@ export function GraphView({
     [graph, linkedCorridors]
   );
   const normalizedSearch = searchTerm.trim().toLowerCase();
-  const handleTraceStart = useCallback((edgeIds: string[]) => {
+  const handleTraceStart = useCallback((edgeIds: string[], folderRelationCounts: Record<string, number> = {}) => {
     setTracedEdgeIds([...new Set(edgeIds)]);
+    setTracedFolderRelationCounts(folderRelationCounts);
   }, []);
   const handleTraceEnd = useCallback(() => {
     setTracedEdgeIds([]);
+    setTracedFolderRelationCounts({});
   }, []);
+  const handleTraceToggle = useCallback((edgeIds: string[], folderRelationCounts: Record<string, number> = {}) => {
+    if (!focusedNodeId) {
+      return;
+    }
+
+    const nextIds = [...new Set(edgeIds)];
+    const nextSignature = traceSignatureForIds(nextIds);
+    const nextAnchor: PinnedTraceAnchor = {
+      nodeId: focusedNodeId,
+      corridorIndex: selectedCorridorIndex
+    };
+    const groupKey = `${nextAnchor.corridorIndex}:${nextAnchor.nodeId}:${nextSignature}`;
+
+    setPinnedTraceGroups((current) => {
+      if (current.some((group) => group.key === groupKey)) {
+        return current.filter((group) => group.key !== groupKey);
+      }
+
+      return [
+        ...current,
+        {
+          key: groupKey,
+          edgeIds: nextIds,
+          folderRelationCounts,
+          anchor: nextAnchor
+        }
+      ];
+    });
+  }, [focusedNodeId, selectedCorridorIndex, traceSignatureForIds]);
   const recordNodeFocus = useCallback((nodeId: string) => {
     setInteractionResidueByNodeId((current) => {
       const residue = current[nodeId] ?? { focusCount: 0, runtimeActivationCount: 0 };
@@ -956,6 +1531,18 @@ export function GraphView({
     });
   }, []);
 
+  const activeTraceEdgeIds = useMemo(
+    () => [...new Set([...tracedEdgeIds, ...pinnedTraceGroups.flatMap((group) => group.edgeIds)])],
+    [pinnedTraceGroups, tracedEdgeIds]
+  );
+  const activeTraceFolderRelationCounts = useMemo(
+    () => mergeRelationCountMaps([
+      ...pinnedTraceGroups.map((group) => group.folderRelationCounts),
+      tracedFolderRelationCounts
+    ]),
+    [pinnedTraceGroups, tracedFolderRelationCounts]
+  );
+
   const structuralState = useMemo<StructuralState | null>(() => {
     if (!laidOut) {
       return null;
@@ -964,20 +1551,24 @@ export function GraphView({
     return {
       currentContextId,
       focusedNodeId,
-      tracedEdgeIds,
+      tracedEdgeIds: activeTraceEdgeIds,
       pageIndex: laidOut.currentPage,
       breadcrumbPath: laidOut.breadcrumbPath.map((item) => item.id ?? "root"),
       clusteringMode
     };
-  }, [clusteringMode, currentContextId, focusedNodeId, laidOut, tracedEdgeIds]);
+  }, [activeTraceEdgeIds, clusteringMode, currentContextId, focusedNodeId, laidOut]);
 
   useEffect(() => {
     setCurrentContextId(null);
     setHoveredNodeId(null);
     setFocusedNodeId(null);
     setTracedEdgeIds([]);
+    setTracedFolderRelationCounts({});
+    setPinnedTraceGroups([]);
     setSelectedRuntimeFileId(null);
     setSourceModalFile(null);
+    setMetadataForecastNodeId(null);
+    setFilePanelView("metadata");
     setExpandedPanelRegion({ nodeId: null, region: null });
     setInteractionResidueByNodeId({});
     setTemporalIndex(0);
@@ -1001,8 +1592,12 @@ export function GraphView({
     setFocusedNodeId(null);
     setHoveredNodeId(null);
     setTracedEdgeIds([]);
+    setTracedFolderRelationCounts({});
+    setPinnedTraceGroups([]);
     setSelectedRuntimeFileId(null);
     setSourceModalFile(null);
+    setMetadataForecastNodeId(null);
+    setFilePanelView("metadata");
     setExpandedPanelRegion({ nodeId: null, region: null });
     setSelectedNode(null);
     setPageIndex(0);
@@ -1024,8 +1619,12 @@ export function GraphView({
     setHoveredNodeId(null);
     setFocusedNodeId(null);
     setTracedEdgeIds([]);
+    setTracedFolderRelationCounts({});
+    setPinnedTraceGroups([]);
     setExpandedPanelRegion({ nodeId: null, region: null });
     setSelectedNode(null);
+    setMetadataForecastNodeId(null);
+    setFilePanelView("metadata");
   }, [selectionToolActive]);
 
   useEffect(() => {
@@ -1240,6 +1839,69 @@ export function GraphView({
   }, [displayedLayoutNodes]);
   const graphNodeById = useMemo(() => {
     return new Map((graph?.nodes ?? []).map((node) => [node.id, node]));
+  }, [graph]);
+  const healthRankContextById = useMemo(() => {
+    const contexts = new Map<string, FileHealthRankContext>();
+    if (!graph) {
+      return contexts;
+    }
+
+    const fileNodes = graph.nodes.filter(
+      (node): node is AtlasNode & { healthScore: number } =>
+        node.type === "file" &&
+        typeof node.healthScore === "number" &&
+        node.healthTier !== "unscored" &&
+        Boolean(node.healthComponents)
+    );
+    const detailsById = new Map(
+      fileNodes.map((node) => [node.id, computeHealthDetails(node as GraphNode)] as const)
+    );
+    const badnessValuesByComponent = new Map<HealthComponentId, number[]>();
+
+    for (const componentId of METADATA_HEALTH_COMPONENT_ORDER) {
+      badnessValuesByComponent.set(
+        componentId,
+        fileNodes
+          .map((node) => detailsById.get(node.id)?.components[componentId].badness)
+          .filter((value): value is number => typeof value === "number")
+      );
+    }
+
+    const medianBadnessByComponent = new Map<HealthComponentId, number>();
+    for (const [componentId, values] of badnessValuesByComponent.entries()) {
+      medianBadnessByComponent.set(componentId, medianValue(values));
+    }
+
+    const sortedByHealth = fileNodes
+      .slice()
+      .sort((left, right) =>
+        left.healthScore - right.healthScore ||
+        left.path.localeCompare(right.path)
+      );
+
+    sortedByHealth.forEach((node, index) => {
+      const details = detailsById.get(node.id);
+      const components: FileHealthRankContext["components"] = {};
+
+      if (details) {
+        for (const componentId of METADATA_HEALTH_COMPONENT_ORDER) {
+          const values = badnessValuesByComponent.get(componentId) ?? [];
+          const badness = details.components[componentId].badness;
+          components[componentId] = {
+            medianBadness: medianBadnessByComponent.get(componentId) ?? 0,
+            worseThanPercent: worseThanPercent(badness, values)
+          };
+        }
+      }
+
+      contexts.set(node.id, {
+        rank: index + 1,
+        total: sortedByHealth.length,
+        components
+      });
+    });
+
+    return contexts;
   }, [graph]);
   const collapsedFileSectionSet = useMemo(() => new Set(collapsedFileSections), [collapsedFileSections]);
   const collapsedFileConnectionSectionSet = useMemo(
@@ -1471,30 +2133,27 @@ export function GraphView({
   }, [runtimeLayout, runtimeState.active]);
   const activeNodeId = focusedNodeId;
   const activeMode = runtimeState.active ? "runtime" : focusedNodeId ? "focus" : null;
-  const relationshipBudget = useMemo(() => {
-    if (!laidOut || !activeNodeId || runtimeState.active) {
+  const relationshipCollection = useMemo(() => {
+    if (!graph || !laidOut || !activeNodeId || runtimeState.active) {
       return null;
     }
 
-    const activeLinkedLayout = selectedCorridorIndex > 0 ? linkedCorridorLayouts[selectedCorridorIndex - 1] : null;
-    if (activeLinkedLayout?.nodes.some((node) => node.id === activeNodeId)) {
-      const secondaryVisibleById = new Map(activeLinkedLayout.nodes.map((node) => [node.id, node.data as AtlasNode]));
-
-      return budgetRelationships(
-        activeLinkedLayout.edges.filter((edge) => secondaryVisibleById.has(edge.source) && secondaryVisibleById.has(edge.target)),
-        secondaryVisibleById,
-        activeNodeId,
-        6
-      );
-    }
-
-    return budgetRelationships(
-      laidOut.edges.filter((edge) => visibleById.has(edge.source) && visibleById.has(edge.target)),
-      visibleById,
+    return collectRelationships(
+      graph.edges,
+      graphNodeById,
+      displayedLayoutNodes,
       activeNodeId,
-      6
+      selectedCorridorIndex
     );
-  }, [activeMode, activeNodeId, laidOut, linkedCorridorLayouts, runtimeState.active, selectedCorridorIndex, visibleById]);
+  }, [activeMode, activeNodeId, displayedLayoutNodes, graph, graphNodeById, laidOut, runtimeState.active, selectedCorridorIndex]);
+  const relationshipBudget = useMemo(
+    () => relationshipCollection ? budgetRelationships(relationshipCollection, 6) : null,
+    [relationshipCollection]
+  );
+  const relationshipTrace = useMemo(
+    () => relationshipCollection ? traceRelationships(relationshipCollection) : null,
+    [relationshipCollection]
+  );
   const connectedNodeIds = useMemo(() => {
     const ids = new Set<string>();
 
@@ -1503,13 +2162,24 @@ export function GraphView({
     }
 
     ids.add(activeNodeId);
+    const visibleFlowNodeById = new Map(displayedLayoutNodes.map((node) => [node.id, node]));
     for (const relation of relationshipBudget.visible) {
       ids.add(relation.edge.source);
       ids.add(relation.edge.target);
+      const sourceNode = visibleFlowNodeById.get(relation.edge.source);
+      const targetNode = visibleFlowNodeById.get(relation.edge.target);
+
+      if (sourceNode) {
+        ids.add(flowNodeRealId(sourceNode));
+      }
+
+      if (targetNode) {
+        ids.add(flowNodeRealId(targetNode));
+      }
     }
 
     return ids;
-  }, [activeNodeId, relationshipBudget]);
+  }, [activeNodeId, displayedLayoutNodes, relationshipBudget]);
   const connectionPortsByNodeId = useMemo(() => {
     const ports = new Map<string, { input: boolean; export: boolean }>();
 
@@ -1540,6 +2210,7 @@ export function GraphView({
     if (!laidOut) {
       return [];
     }
+    const activeFolderRelationCounts = activeTraceFolderRelationCounts;
 
     const baseNodes = displayedLayoutNodes.map((node) => {
       const data = node.data as AtlasNode;
@@ -1582,16 +2253,20 @@ export function GraphView({
       const shouldShowStubs = !runtimeState.active && focusedNodeId === realNodeId;
       const outgoingCount = shouldShowStubs ? relationshipBudget?.totalOutgoing ?? 0 : 0;
       const incomingCount = shouldShowStubs ? relationshipBudget?.totalIncoming ?? 0 : 0;
-      const outgoingEdgeIds = shouldShowStubs
-        ? relationshipBudget?.visible
-            .filter((relation) => relation.direction === "outgoing")
-            .map((relation) => relation.edge.id) ?? []
+      const outgoingRelationships = shouldShowStubs
+        ? relationshipTrace?.outgoing ?? []
         : [];
-      const incomingEdgeIds = shouldShowStubs
-        ? relationshipBudget?.visible
-            .filter((relation) => relation.direction === "incoming")
-            .map((relation) => relation.edge.id) ?? []
+      const incomingRelationships = shouldShowStubs
+        ? relationshipTrace?.incoming ?? []
         : [];
+      const outgoingEdgeIds = outgoingRelationships.map((relation) => relation.edge.id);
+      const incomingEdgeIds = incomingRelationships.map((relation) => relation.edge.id);
+      const outgoingFolderRelationCounts = folderTraceCountsForRelationships(outgoingRelationships);
+      const incomingFolderRelationCounts = folderTraceCountsForRelationships(incomingRelationships);
+      const relationTraceCount =
+        data.type === "folder"
+          ? activeFolderRelationCounts[realNodeId] ?? activeFolderRelationCounts[node.id] ?? 0
+          : 0;
       const resolvedPosition =
         runtimeState.active && runtimeLayout?.revealedNodeIds.has(node.id)
           ? runtimeNodePositions[node.id] ?? runtimeLayout.positions.get(node.id) ?? node.position
@@ -1614,6 +2289,7 @@ export function GraphView({
           visualState: resolvedVisualState,
           connectionPorts: connectionPortsByNodeId.get(node.id) ?? connectionPortsByNodeId.get(realNodeId),
           runtimeStep: runtimeState.active ? runtimeState.chain?.nodes.find((runtimeNode) => runtimeNode.id === node.id)?.runtimeStep : undefined,
+          relationTraceCount: relationTraceCount > 0 ? relationTraceCount : undefined,
           relationStub:
             shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
               ? {
@@ -1621,7 +2297,10 @@ export function GraphView({
                   outgoingCount,
                   incomingEdgeIds,
                   outgoingEdgeIds,
+                  incomingFolderRelationCounts,
+                  outgoingFolderRelationCounts,
                   onTraceStart: handleTraceStart,
+                  onTraceToggle: handleTraceToggle,
                   onTraceEnd: handleTraceEnd
                 }
               : undefined
@@ -1666,11 +2345,14 @@ export function GraphView({
     connectedNodeIds,
     handleTraceEnd,
     handleTraceStart,
+    handleTraceToggle,
     displayedLayoutNodes,
     laidOut,
     manualNodePositions,
     normalizedSearch,
     relationshipBudget,
+    relationshipTrace,
+    activeTraceFolderRelationCounts,
     focusedNodeId,
     hoveredNodeId,
     activeTemporalState,
@@ -1776,43 +2458,70 @@ export function GraphView({
       return [...baseEdges, ...runtimeLayout.edges];
     }
 
-    if (!activeNodeId || tracedEdgeIds.length === 0) {
+    const traceRenderItems = [
+      ...(activeNodeId
+        ? tracedEdgeIds.map((edgeId) => ({
+            edgeId,
+            isPinnedTrace: false,
+            anchor: { nodeId: activeNodeId, corridorIndex: selectedCorridorIndex },
+            renderKey: `hover:${edgeId}`
+          }))
+        : []),
+      ...pinnedTraceGroups.flatMap((group) => (
+        group.edgeIds.map((edgeId) => ({
+          edgeId,
+          isPinnedTrace: true,
+          anchor: group.anchor,
+          renderKey: `${group.key}:${edgeId}`
+        }))
+      ))
+    ];
+
+    if (traceRenderItems.length === 0) {
       return baseEdges;
     }
 
-    const activeTraceEdges: AtlasFlowEdge[] = tracedEdgeIds.flatMap((tracedEdgeId): AtlasFlowEdge[] => {
-      const primaryTraceEdge = laidOut.edges.find((edge) => edge.id === tracedEdgeId);
-      const linkedTraceMatch = linkedCorridorLayouts
-        .map((layout, index) => ({ edge: layout.edges.find((edge) => edge.id === tracedEdgeId), corridorIndex: index + 1 }))
-        .find((match) => match.edge);
-      const tracedEdge = primaryTraceEdge ?? linkedTraceMatch?.edge;
-      const graphTraceEdge = graph?.edges.find((edge) => edge.id === tracedEdgeId);
-      if (graphTraceEdge) {
-        if (graphTraceEdge.source !== activeNodeId && graphTraceEdge.target !== activeNodeId) {
+    const visibleFlowNodeById = new Map(displayedLayoutNodes.map((node) => [node.id, node]));
+    const activeTraceEdges: AtlasFlowEdge[] = traceRenderItems.flatMap((traceItem): AtlasFlowEdge[] => {
+      const tracedEdgeId = traceItem.edgeId;
+      const isPinnedTrace = traceItem.isPinnedTrace;
+      const traceAnchor = traceItem.anchor;
+      const traceAnchorNode = graphNodeById.get(traceAnchor.nodeId) ?? null;
+      const parsedRelationshipEdge = parseRelationshipEdgeId(tracedEdgeId);
+      if (parsedRelationshipEdge) {
+        const sourceNode = visibleFlowNodeById.get(parsedRelationshipEdge.source);
+        const targetNode = visibleFlowNodeById.get(parsedRelationshipEdge.target);
+
+        if (!sourceNode || !targetNode || sourceNode.id === targetNode.id || !traceAnchorNode) {
           return [];
         }
 
-        const source = visibleFlowEndpointForPath(graphTraceEdge.source, displayedLayoutNodes, visibleFlowIdByRealId);
-        const target = visibleFlowEndpointForPath(graphTraceEdge.target, displayedLayoutNodes, visibleFlowIdByRealId);
-        if (!source || !target || source === target) {
+        const sourceData = sourceNode.data as AtlasNode;
+        const targetData = targetNode.data as AtlasNode;
+        const sourceIsActive = ownsPath(traceAnchorNode, sourceData.path);
+        const targetIsActive = ownsPath(traceAnchorNode, targetData.path);
+
+        if (sourceIsActive === targetIsActive) {
           return [];
         }
 
-        const isOutgoing = graphTraceEdge.source === activeNodeId;
+        const isOutgoing = sourceIsActive;
         return [{
-          id: `metadata-trace:${graphTraceEdge.id}`,
-          source,
-          target,
+          id: `metadata-trace:${traceItem.renderKey}`,
+          source: parsedRelationshipEdge.source,
+          target: parsedRelationshipEdge.target,
           type: "structural" as const,
           animated: false,
           className: undefined,
-          zIndex: 1,
+          zIndex: isPinnedTrace ? 2 : 1,
           data: {
-            kind: "context-import",
+            kind: isPinnedTrace ? "corridor-link" : "context-import",
             direction: isOutgoing ? "outgoing" : "incoming",
             laneOffset: 0,
             mode: "focus",
-            exactTrace: true
+            exactTrace: true,
+            corridor: isPinnedTrace ? "bridge" : undefined,
+            subdued: false
           },
           markerEnd: {
             type: MarkerType.ArrowClosed,
@@ -1821,22 +2530,79 @@ export function GraphView({
         }];
       }
 
-      if (!tracedEdge || (tracedEdge.source !== activeNodeId && tracedEdge.target !== activeNodeId)) {
+      const primaryTraceEdge = laidOut.edges.find((edge) => edge.id === tracedEdgeId);
+      const linkedTraceMatch = linkedCorridorLayouts
+        .map((layout, index) => ({ edge: layout.edges.find((edge) => edge.id === tracedEdgeId), corridorIndex: index + 1 }))
+        .find((match) => match.edge);
+      const tracedEdge = primaryTraceEdge ?? linkedTraceMatch?.edge;
+      const graphTraceEdge = graph?.edges.find((edge) => edge.id === tracedEdgeId);
+      if (graphTraceEdge) {
+        if (graphTraceEdge.source !== traceAnchor.nodeId && graphTraceEdge.target !== traceAnchor.nodeId) {
+          return [];
+        }
+
+        const source = visibleOwnerForEndpoint(
+          graphTraceEdge.source,
+          graphNodeById,
+          displayedLayoutNodes,
+          traceAnchor.corridorIndex
+        )?.id ?? visibleFlowEndpointForPath(graphTraceEdge.source, displayedLayoutNodes, visibleFlowIdByRealId);
+        const target = visibleOwnerForEndpoint(
+          graphTraceEdge.target,
+          graphNodeById,
+          displayedLayoutNodes,
+          traceAnchor.corridorIndex
+        )?.id ?? visibleFlowEndpointForPath(graphTraceEdge.target, displayedLayoutNodes, visibleFlowIdByRealId);
+        if (!source || !target || source === target) {
+          return [];
+        }
+
+        const isOutgoing = graphTraceEdge.source === traceAnchor.nodeId;
+        return [{
+          id: `metadata-trace:${traceItem.renderKey}`,
+          source,
+          target,
+          type: "structural" as const,
+          animated: false,
+          className: undefined,
+          zIndex: isPinnedTrace ? 2 : 1,
+          data: {
+            kind: isPinnedTrace ? "corridor-link" : "context-import",
+            direction: isOutgoing ? "outgoing" : "incoming",
+            laneOffset: 0,
+            mode: "focus",
+            exactTrace: true,
+            corridor: isPinnedTrace ? "bridge" : undefined,
+            subdued: false
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: isOutgoing ? "#2dd4bf" : "#facc15"
+          }
+        }];
+      }
+
+      if (!tracedEdge || (tracedEdge.source !== traceAnchor.nodeId && tracedEdge.target !== traceAnchor.nodeId)) {
         return [];
       }
 
-      const isOutgoing = tracedEdge.source === activeNodeId;
+      const isOutgoing = tracedEdge.source === traceAnchor.nodeId;
       const renderedTraceEdge = linkedTraceMatch?.edge ? remapCorridorEdge(tracedEdge, linkedTraceMatch.corridorIndex) : tracedEdge;
       return [{
         ...renderedTraceEdge,
+        id: `metadata-trace:${traceItem.renderKey}`,
         animated: false,
         className: undefined,
+        zIndex: isPinnedTrace ? 2 : renderedTraceEdge.zIndex ?? 1,
         data: {
           ...renderedTraceEdge.data,
           direction: isOutgoing ? "outgoing" : "incoming",
           laneOffset: 0,
           mode: "focus",
-          exactTrace: true
+          exactTrace: true,
+          kind: isPinnedTrace ? "corridor-link" : renderedTraceEdge.data?.kind,
+          corridor: isPinnedTrace ? "bridge" : renderedTraceEdge.data?.corridor,
+          subdued: false
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -1849,15 +2615,21 @@ export function GraphView({
       ...baseEdges,
       ...activeTraceEdges
     ];
-  }, [activeNodeId, corridorLinks, displayedLayoutNodes, graph?.edges, laidOut, linkedCorridorLayouts, runtimeLayout, runtimeState.active, tracedEdgeIds, visibleFlowIdByRealId]);
+  }, [activeNodeId, corridorLinks, displayedLayoutNodes, graph?.edges, graphNodeById, laidOut, linkedCorridorLayouts, pinnedTraceGroups, runtimeLayout, runtimeState.active, selectedCorridorIndex, tracedEdgeIds, visibleFlowIdByRealId]);
 
   function renderRelationTrace(edgeId: string): {
     onMouseEnter: () => void;
     onMouseLeave: () => void;
   } {
     return {
-      onMouseEnter: () => setTracedEdgeIds([edgeId]),
-      onMouseLeave: () => setTracedEdgeIds([])
+      onMouseEnter: () => {
+        setTracedEdgeIds([edgeId]);
+        setTracedFolderRelationCounts({});
+      },
+      onMouseLeave: () => {
+        setTracedEdgeIds([]);
+        setTracedFolderRelationCounts({});
+      }
     };
   }
 
@@ -1871,24 +2643,31 @@ export function GraphView({
   }
 
   const relationLens = useMemo(() => {
-    if (!laidOut || !selectedNode) {
+    if (!graph || !laidOut || !selectedNode) {
       return null;
     }
 
-    const budget = budgetRelationships(laidOut.edges, visibleById, selectedNode.id, 6);
+    const collection = collectRelationships(
+      graph.edges,
+      graphNodeById,
+      displayedLayoutNodes,
+      selectedNode.id,
+      selectedCorridorIndex
+    );
+    const budget = budgetRelationships(collection, 6);
     const visibleOutgoing = budget.visible
       .filter((relation) => relation.direction === "outgoing")
       .map((relation) => ({
         id: relation.edge.id,
         label: relation.otherNode?.label ?? relation.edge.target,
-        count: Number(relation.edge.data?.importCount ?? 1)
+        count: relation.count
       }));
     const visibleIncoming = budget.visible
       .filter((relation) => relation.direction === "incoming")
       .map((relation) => ({
         id: relation.edge.id,
         label: relation.otherNode?.label ?? relation.edge.source,
-        count: Number(relation.edge.data?.importCount ?? 1)
+        count: relation.count
       }));
     return {
       visibleOutgoing,
@@ -1896,7 +2675,7 @@ export function GraphView({
       hiddenVisibleOutgoing: budget.hiddenOutgoing,
       hiddenVisibleIncoming: budget.hiddenIncoming
     };
-  }, [laidOut, selectedNode, visibleById]);
+  }, [displayedLayoutNodes, graph, graphNodeById, laidOut, selectedCorridorIndex, selectedNode]);
 
   const importedByCount = useMemo(() => {
     if (!graph || !selectedNode || selectedNode.type !== "file") {
@@ -1905,6 +2684,18 @@ export function GraphView({
 
     return graph.edges.filter((edge) => edge.target === selectedNode.id).length;
   }, [graph, selectedNode]);
+  const selectedFileForecast = useMemo(
+    () => selectedNode?.type === "file"
+      ? buildFileForecast(selectedNode, { importedByCount })
+      : null,
+    [importedByCount, selectedNode]
+  );
+  const metadataForecastActive =
+    Boolean(selectedFileForecast?.available && selectedNode && metadataForecastNodeId === selectedNode.id);
+  const selectedFileForecastStayItem = useMemo(
+    () => selectedFileForecast ? metadataForecastStayItem(selectedFileForecast) : null,
+    [selectedFileForecast]
+  );
   const selectedFileFunctionCount = useMemo(() => {
     if (!selectedNode || selectedNode.type !== "file" || !hasFunctionMetadata(selectedNode)) {
       return 0;
@@ -1933,6 +2724,113 @@ export function GraphView({
 
     return graph?.fileHistory?.[selectedNode.path]?.recentCommits.slice(0, 3) ?? [];
   }, [graph?.fileHistory, selectedNode]);
+  const selectedFileHealthDetails = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "file") {
+      return null;
+    }
+
+    if (
+      selectedNode.healthTier === "unscored" ||
+      typeof selectedNode.healthScore !== "number" ||
+      !selectedNode.healthComponents
+    ) {
+      return null;
+    }
+
+    return computeHealthDetails(selectedNode as GraphNode);
+  }, [selectedNode]);
+  const selectedFileHealthRankContext = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "file") {
+      return null;
+    }
+
+    return healthRankContextById.get(selectedNode.id) ?? null;
+  }, [healthRankContextById, selectedNode]);
+  const selectedFileHealthMetricRows = useMemo<HealthMetricDisplayRow[] | null>(() => {
+    if (!graph || !selectedNode || selectedNode.type !== "file" || !selectedFileHealthDetails) {
+      return null;
+    }
+
+    const functions = selectedNode.metadata?.functionWaypoints ?? [];
+    const functionCount = functions.length;
+    const detectedCallIds = calledFunctionIds(graph);
+    const duplicatedFunctions = functions.filter((waypoint) => waypoint.duplicateOf !== null);
+    const duplicationRatio = functionCount > 0 ? duplicatedFunctions.length / functionCount : 0;
+    const eligibleGhostFunctions = functions.filter(
+      (waypoint) => !isExemptFromGhostPenalty(waypoint, selectedNode.metadata?.staticEntrypoint === true)
+    );
+    const ghostCount = eligibleGhostFunctions.filter(
+      (waypoint) => !hasDetectedCallSite(selectedNode.path, waypoint, detectedCallIds)
+    ).length;
+    const ghostRatio = eligibleGhostFunctions.length > 0 ? ghostCount / eligibleGhostFunctions.length : 0;
+    const history = graph.fileHistory?.[selectedNode.path];
+    const churnValue = history?.churnRate ?? history?.commitCount ?? 0;
+    const averageCyclomatic = functionCount > 0
+      ? functions.reduce((total, waypoint) => total + Number(waypoint.cyclomaticComplexity ?? 1), 0) / functionCount
+      : 0;
+    const averageCognitive = functionCount > 0
+      ? functions.reduce((total, waypoint) => total + Number(waypoint.cognitiveComplexity ?? 0), 0) / functionCount
+      : 0;
+
+    return METADATA_HEALTH_COMPONENT_ORDER.map((componentId) => {
+      const component = selectedFileHealthDetails.components[componentId];
+
+      let valueText = "";
+      let markerPercent = 0;
+      let minLabel = "Min 0";
+      let normalLabel = "";
+      let highLabel = "";
+      if (componentId === "cyclomatic") {
+        valueText = `avg ${formatMetricNumber(averageCyclomatic)}`;
+        markerPercent = scaledMetricPercent(averageCyclomatic, 15);
+        normalLabel = "Normal <=3";
+        highLabel = "High 15+";
+      } else if (componentId === "cognitive") {
+        valueText = `avg ${formatMetricNumber(averageCognitive)}`;
+        markerPercent = scaledMetricPercent(averageCognitive, 20);
+        normalLabel = "Normal <=5";
+        highLabel = "High 20+";
+      } else if (componentId === "duplication") {
+        valueText = `${duplicatedFunctions.length}/${functionCount} functions (${formatPercent(duplicationRatio)})`;
+        markerPercent = scaledMetricPercent(duplicationRatio, 0.25);
+        normalLabel = "Normal <=10%";
+        highLabel = "High 25%+";
+      } else if (componentId === "churn") {
+        valueText = `${formatMetricNumber(churnValue)} changes/month`;
+        markerPercent = scaledMetricPercent(churnValue, 5);
+        normalLabel = "Normal <=0.5";
+        highLabel = "High 5+";
+      } else {
+        valueText = `${ghostCount}/${eligibleGhostFunctions.length} eligible functions (${formatPercent(ghostRatio)})`;
+        markerPercent = scaledMetricPercent(ghostRatio, 0.6);
+        normalLabel = "Normal <=10%";
+        highLabel = "High 60%+";
+      }
+
+      return {
+        id: component.id,
+        label: component.label,
+        valueText,
+        contributionText: `+${component.points}/${component.weight}`,
+        explanation:
+          componentId === "cyclomatic"
+            ? "Average branching complexity per function. More decision paths means lower health contribution."
+            : componentId === "cognitive"
+              ? "Average mental overhead per function. More nesting and control-flow complexity lowers the contribution."
+              : componentId === "duplication"
+                ? "Share of functions flagged as duplicates. More duplicated functions reduces the contribution."
+                : componentId === "churn"
+                  ? "Recent change frequency from git history. Files changing more often are scored as less stable."
+                  : "Share of non-exempt functions with no detected static call site. More ghost functions lowers the contribution.",
+        scale: {
+          markerPercent,
+          minLabel,
+          normalLabel,
+          highLabel
+        }
+      };
+    });
+  }, [graph, selectedFileHealthDetails, selectedNode]);
   const selectedFileRole = useMemo(() => {
     if (!selectedNode || selectedNode.type !== "file" || !selectedFileInspection) {
       return null;
@@ -2221,6 +3119,7 @@ export function GraphView({
     recordRuntimeActivation(fileNode.id);
     setFocusedNodeId(fileNode.id);
     setTracedEdgeIds([]);
+    setTracedFolderRelationCounts({});
     setRuntimeNodePositions({});
     setRuntimeState({
       active: true,
@@ -2246,11 +3145,54 @@ export function GraphView({
     }
   }, [selectedNode, selectedRuntimeFileId, startRuntimeFromFile]);
 
+  const centerVisibleGraphNode = useCallback((node: AtlasNode) => {
+    if (!reactFlowInstance) {
+      return;
+    }
+
+    const flowNode = nodes.find((candidate) => (
+      flowNodeRealId(candidate) === node.id &&
+      Number((candidate.data as AtlasNode).corridorIndex ?? 0) === selectedCorridorIndex
+    )) ?? nodes.find((candidate) => flowNodeRealId(candidate) === node.id);
+
+    if (!flowNode) {
+      return;
+    }
+
+    const bounds = reactFlowInstance.getNodesBounds([flowNode]);
+    void reactFlowInstance.setCenter(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, {
+      zoom: Math.max(reactFlowInstance.getViewport().zoom, 1.12),
+      duration: 420
+    });
+  }, [nodes, reactFlowInstance, selectedCorridorIndex]);
+
+  const enterMetadataForecast = useCallback(() => {
+    if (!selectedNode || selectedNode.type !== "file") {
+      return;
+    }
+
+    setMetadataForecastNodeId(selectedNode.id);
+    setFilePanelView("metadata");
+    setFocusedNodeId(selectedNode.id);
+    centerVisibleGraphNode(selectedNode);
+  }, [centerVisibleGraphNode, selectedNode]);
+
+  const openWiresPanel = useCallback(() => {
+    setMetadataForecastNodeId(null);
+    setFilePanelView("wires");
+  }, []);
+
+  const openMetadataPanel = useCallback(() => {
+    setMetadataForecastNodeId(null);
+    setFilePanelView("metadata");
+  }, []);
+
   const focusGraphNode = useCallback((node: AtlasNode, relationshipContext?: RelationshipFollowContext) => {
     const originFileNode = selectedNode?.type === "file" ? selectedNode : null;
     const originCorridorIndex = selectedCorridorIndex;
     recordNodeFocus(node.id);
     setFocusedNodeId(node.id);
+    setFilePanelView("metadata");
     setExpandedPanelRegion({ nodeId: node.id, region: null });
     setSelectedNode(node);
 
@@ -2357,22 +3299,16 @@ export function GraphView({
     });
   }, [currentContextId, graph, linkedCorridors, nodes, reactFlowInstance, recordNodeFocus, selectedCorridorIndex, selectedNode]);
 
-  const handleSelectOnGraph = useCallback(() => {
-    if (!selectedNode) {
-      return;
-    }
-
-    focusGraphNode(selectedNode);
-  }, [focusGraphNode, selectedNode]);
-
   const handleResetCorridors = useCallback(() => {
     setLinkedCorridors([]);
     setCorridorLinks([]);
     setSelectedCorridorIndex(0);
     setFocusedNodeId(null);
     setTracedEdgeIds([]);
+    setTracedFolderRelationCounts({});
     setExpandedPanelRegion({ nodeId: null, region: null });
     setSelectedNode(null);
+    setFilePanelView("metadata");
     centeredSecondaryFocusKeyRef.current = null;
     pendingPrimaryFocusNodeIdRef.current = null;
   }, []);
@@ -2382,6 +3318,7 @@ export function GraphView({
     setRuntimePlaybackActive(false);
     setRuntimeNodePositions({});
     setTracedEdgeIds([]);
+    setTracedFolderRelationCounts({});
   }, []);
 
   const handleRuntimeScrub = useCallback((step: number) => {
@@ -2437,6 +3374,7 @@ export function GraphView({
     const corridorIndex = Number((node.data as AtlasNode).corridorIndex ?? 0);
 
     recordNodeFocus(realNodeId);
+    setFilePanelView("metadata");
     setExpandedPanelRegion({ nodeId: realNodeId, region: null });
     setFocusedNodeId(realNodeId);
     setSelectedNode(graphNode);
@@ -2471,6 +3409,7 @@ export function GraphView({
     }
 
     recordNodeFocus(realNodeId);
+    setFilePanelView("metadata");
     setExpandedPanelRegion({ nodeId: realNodeId, region: null });
     setFocusedNodeId(realNodeId);
     setSelectedNode(graphNode);
@@ -2520,8 +3459,10 @@ export function GraphView({
 
     setFocusedNodeId(null);
     setTracedEdgeIds([]);
+    setTracedFolderRelationCounts({});
     setSelectedObjectIds([]);
     setSelectedNode(null);
+    setFilePanelView("metadata");
     setPageIndex(Math.min(Math.max(0, nextPageIndex), laidOut.totalPages - 1));
   }
 
@@ -2655,8 +3596,10 @@ export function GraphView({
           setHoveredNodeId(null);
           setFocusedNodeId(null);
           setTracedEdgeIds([]);
+          setTracedFolderRelationCounts({});
           setExpandedPanelRegion({ nodeId: null, region: null });
           setSelectedNode(null);
+          setFilePanelView("metadata");
         }}
       >
         <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="#263244" />
@@ -2752,7 +3695,205 @@ export function GraphView({
         />
       ) : selectedNode ? (
         selectedNode.type === "file" ? (
-          <aside className="metadata-panel metadata-panel--file">
+          <aside className={`metadata-panel metadata-panel--file ${metadataForecastActive ? "metadata-panel--forecast" : filePanelView === "wires" ? "metadata-panel--wires" : ""}`.trim()}>
+            {metadataForecastActive && selectedFileForecast ? (
+              <>
+                <header className="metadata-panel__forecast-header" aria-label="Forecast">
+                  <div className="metadata-panel__forecast-title-group">
+                    <div>
+                      <div className="metadata-panel__forecast-eyebrow">Refactor Forecast</div>
+                      <h2>Under pressure</h2>
+                      <div className="metadata-panel__forecast-path">{selectedNode.path}</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="metadata-panel__forecast-return"
+                      onClick={() => setMetadataForecastNodeId(null)}
+                    >
+                      ← Return
+                    </button>
+                  </div>
+                </header>
+
+                <section className="metadata-panel__forecast-summary" aria-label="Forecast summary">
+                  <p>
+                    This file is carrying <strong>{selectedFileForecast.current.items.length} responsibilities</strong> that would be cleaner as <strong>{selectedFileForecast.suggested.length} separate modules</strong>. Splitting it reduces <strong>risk</strong> and makes each <strong>concern</strong> easier to review.
+                  </p>
+                </section>
+
+                <section className="metadata-panel__forecast-signals" aria-label="Pressure signals">
+                  <div className="metadata-panel__forecast-section-label">Pressure signals</div>
+                  <div className="metadata-panel__forecast-signal-list">
+                    {selectedFileForecast.pressureSignals.map((signal) => (
+                      <div
+                        className={`metadata-panel__forecast-signal metadata-panel__forecast-signal--${metadataForecastSignalSeverity(signal)}`}
+                        key={signal}
+                      >
+                        <span className="metadata-panel__forecast-signal-dot" aria-hidden="true" />
+                        <span>{signal}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <div className="metadata-panel__forecast-body" aria-label="Forecast structure comparison">
+                  <section className="metadata-panel__forecast-column metadata-panel__forecast-column--now" aria-label="Current structure">
+                    <div className="metadata-panel__forecast-column-label">Now</div>
+                    <article className="metadata-panel__forecast-file-block">
+                      <strong className="metadata-panel__forecast-file-name">{selectedFileForecast.current.title}</strong>
+                      <div className="metadata-panel__forecast-responsibility-list">
+                        {selectedFileForecast.current.items.map((item) => (
+                          <div
+                            className={`metadata-panel__forecast-responsibility ${item === selectedFileForecastStayItem ? "is-staying" : "is-moving"}`.trim()}
+                            key={item}
+                          >
+                            <span className="metadata-panel__forecast-responsibility-dash" aria-hidden="true" />
+                            <span>{item}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  </section>
+
+                  <section className="metadata-panel__forecast-column metadata-panel__forecast-column--suggested" aria-label="Suggested structure">
+                    <div className="metadata-panel__forecast-column-label">Suggested</div>
+                    {selectedFileForecast.suggested.map((block, blockIndex) => (
+                      <article
+                        className={`metadata-panel__forecast-file-block ${blockIndex === 0 ? "metadata-panel__forecast-file-block--origin" : "metadata-panel__forecast-file-block--split"}`.trim()}
+                        key={block.title}
+                      >
+                        <strong className="metadata-panel__forecast-file-name">{block.title}</strong>
+                        <div className="metadata-panel__forecast-responsibility-list">
+                          {block.items.map((item) => (
+                            <div className="metadata-panel__forecast-responsibility" key={`${block.title}:${item}`}>
+                              <span className="metadata-panel__forecast-responsibility-dash" aria-hidden="true" />
+                              <span>{item}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                  </section>
+                </div>
+              </>
+            ) : filePanelView === "wires" ? (
+              <>
+                <section className="metadata-panel__section metadata-panel__header-section metadata-panel__wires-header" aria-label="Wires header">
+                  <div className="metadata-panel__switch-title-row">
+                    <div>
+                      <div className="metadata-panel__eyebrow">Wires</div>
+                      <div className="metadata-panel__filename">Wires</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="metadata-panel__switch-button"
+                      onClick={openMetadataPanel}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 5h14v14H5z" />
+                        <path d="M8 9h8" />
+                        <path d="M8 13h5" />
+                      </svg>
+                      <span>Details</span>
+                    </button>
+                  </div>
+                  <div className="metadata-panel__path">{selectedNode.label}</div>
+                  <div className="metadata-panel__wires-summary">
+                    <span><strong>{selectedNode.metadata?.importCount ?? 0}</strong> out</span>
+                    <span><strong>{importedByCount}</strong> in</span>
+                  </div>
+                </section>
+
+                <section className="metadata-panel__section metadata-panel__wires-section" aria-label="File wires">
+                  <div className="metadata-panel__import-list" aria-label="Connected files">
+                    {selectedFileConnectionGroups.imports.length > 0 ? (
+                      <div className={`metadata-panel__connection-section ${collapsedFileConnectionSectionSet.has("imports") ? "is-collapsed" : "is-expanded"}`.trim()}>
+                        <button
+                          type="button"
+                          className="metadata-panel__connection-heading"
+                          aria-expanded={!collapsedFileConnectionSectionSet.has("imports")}
+                          onClick={() => toggleFileConnectionSection("imports")}
+                        >
+                          <span>Imports</span>
+                          <strong>{selectedNode.metadata?.importCount ?? 0}</strong>
+                          <span className="metadata-panel__connection-heading-chevron" aria-hidden="true" />
+                        </button>
+                        {!collapsedFileConnectionSectionSet.has("imports") ? (
+                          selectedFileConnectionGroups.imports.map((group) => (
+                            <div className="metadata-panel__import-group" key={`imports:${group.folderPath || "root"}`}>
+                              <div className="metadata-panel__import-group-title">
+                                <span>{group.label}</span>
+                                <small>{group.depthDelta === 0 ? "same depth" : group.depthDelta > 0 ? "nested" : "parent"}</small>
+                              </div>
+                              {group.targets.map(({ node, line, edgeIds }) => (
+                                <button
+                                  key={`imports:${node.id}`}
+                                  type="button"
+                                  className="metadata-panel__import-row metadata-panel__import-row--imports"
+                                  onClick={() => focusGraphNode(node, { direction: "imports" })}
+                                  onFocus={() => handleTraceStart(edgeIds)}
+                                  onBlur={handleTraceEnd}
+                                  onPointerEnter={() => handleTraceStart(edgeIds)}
+                                  onPointerLeave={handleTraceEnd}
+                                >
+                                  <span className="metadata-panel__import-name">{node.label}</span>
+                                  <span className="metadata-panel__import-line">{line ? `:${line}` : "import"}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ))
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {selectedFileConnectionGroups.importedBy.length > 0 ? (
+                      <div className={`metadata-panel__connection-section ${collapsedFileConnectionSectionSet.has("imported-by") ? "is-collapsed" : "is-expanded"}`.trim()}>
+                        <button
+                          type="button"
+                          className="metadata-panel__connection-heading"
+                          aria-expanded={!collapsedFileConnectionSectionSet.has("imported-by")}
+                          onClick={() => toggleFileConnectionSection("imported-by")}
+                        >
+                          <span>Imported by</span>
+                          <strong>{importedByCount}</strong>
+                          <span className="metadata-panel__connection-heading-chevron" aria-hidden="true" />
+                        </button>
+                        {!collapsedFileConnectionSectionSet.has("imported-by") ? (
+                          selectedFileConnectionGroups.importedBy.map((group) => (
+                            <div className="metadata-panel__import-group" key={`imported-by:${group.folderPath || "root"}`}>
+                              <div className="metadata-panel__import-group-title">
+                                <span>{group.label}</span>
+                                <small>{group.depthDelta === 0 ? "same depth" : group.depthDelta > 0 ? "nested" : "parent"}</small>
+                              </div>
+                              {group.targets.map(({ node, edgeIds }) => (
+                                <button
+                                  key={`imported-by:${node.id}`}
+                                  type="button"
+                                  className="metadata-panel__import-row metadata-panel__import-row--imported-by"
+                                  onClick={() => focusGraphNode(node, { direction: "imported-by" })}
+                                  onFocus={() => handleTraceStart(edgeIds)}
+                                  onBlur={handleTraceEnd}
+                                  onPointerEnter={() => handleTraceStart(edgeIds)}
+                                  onPointerLeave={handleTraceEnd}
+                                >
+                                  <span className="metadata-panel__import-name">{node.label}</span>
+                                  <span className="metadata-panel__import-line">in</span>
+                                </button>
+                              ))}
+                            </div>
+                          ))
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {selectedFileConnectionGroups.imports.length === 0 && selectedFileConnectionGroups.importedBy.length === 0 ? (
+                      <div className="metadata-panel__empty-line">No wires found.</div>
+                    ) : null}
+                  </div>
+                </section>
+              </>
+            ) : (
+              <>
             <section className="metadata-panel__section metadata-panel__header-section" aria-label="File header">
               <div className="metadata-panel__eyebrow">File</div>
               <div className="metadata-panel__file-title-row">
@@ -2778,18 +3919,18 @@ export function GraphView({
                 </button>
                 <button
                   type="button"
-                  className="metadata-panel__icon-button"
-                  aria-label={`Select ${selectedNode.label} on graph`}
-                  title="Select on graph"
-                  onClick={handleSelectOnGraph}
+                  className="metadata-panel__switch-button metadata-panel__switch-button--wires"
+                  onClick={openWiresPanel}
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="12" cy="12" r="3.5" />
-                    <path d="M12 3v3" />
-                    <path d="M12 18v3" />
-                    <path d="M3 12h3" />
-                    <path d="M18 12h3" />
+                    <path d="M4 7c5 0 5 10 10 10h6" />
+                    <path d="M4 17c4 0 5-10 10-10h6" />
+                    <circle cx="4" cy="7" r="1.5" />
+                    <circle cx="4" cy="17" r="1.5" />
+                    <circle cx="20" cy="7" r="1.5" />
+                    <circle cx="20" cy="17" r="1.5" />
                   </svg>
+                  <span>Wires</span>
                 </button>
               </div>
             </section>
@@ -2828,6 +3969,77 @@ export function GraphView({
               </div>
             </CollapsibleMetadataSection>
 
+            {selectedNode?.type === "file" ? (
+              <section className="metadata-panel__section metadata-panel__health-section" aria-label="File health">
+                <div className="metadata-panel__section-title">Health</div>
+                {selectedNode.healthTier === "unscored" ? (
+                  <>
+                    <p className="metadata-panel__health-summary">Health scoring not applicable</p>
+                    <p className="metadata-panel__health-rank">No analyzable functions in this file.</p>
+                  </>
+                ) : selectedFileHealthDetails ? (
+                  <>
+                    <div className="metadata-panel__health-score">
+                      <strong style={{ color: healthScoreColor(selectedFileHealthDetails.score) }}>
+                        {Math.round(selectedFileHealthDetails.score)}
+                      </strong>
+                      <span>/ 100</span>
+                    </div>
+                    <div className="metadata-panel__health-bars">
+                      {selectedFileHealthMetricRows?.map((row) => (
+                        <div
+                          className="metadata-panel__health-bar-row"
+                          key={row.id}
+                        >
+                          <span
+                            className="metadata-panel__health-label"
+                            onMouseEnter={(event) => showHealthTooltip(event, row, "label")}
+                            onMouseLeave={hideHealthTooltip}
+                          >
+                            {row.label}
+                          </span>
+                          <span className="metadata-panel__health-metric">
+                            <span
+                              className="metadata-panel__health-metric-value"
+                              onMouseEnter={(event) => showHealthTooltip(event, row, "scale")}
+                              onMouseLeave={hideHealthTooltip}
+                            >
+                              {row.valueText}
+                            </span>
+                            <span
+                              className="metadata-panel__health-metric-score"
+                              style={{ color: healthProblemColor(1 - selectedFileHealthDetails.components[row.id].points / selectedFileHealthDetails.components[row.id].weight) }}
+                            >
+                              {row.contributionText}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="metadata-panel__health-summary">
+                      {healthSummaryText(selectedFileHealthDetails.score)}
+                    </p>
+                    {selectedFileHealthRankContext ? (
+                      <p className="metadata-panel__health-rank">
+                        Ranked {selectedFileHealthRankContext.rank} of {selectedFileHealthRankContext.total} files in this repo
+                      </p>
+                    ) : null}
+                    {selectedFileForecast?.available ? (
+                      <div className="metadata-panel__forecast-entry" aria-label="Forecast available">
+                        <span>Forecast Available</span>
+                        <button
+                          type="button"
+                          onClick={enterMetadataForecast}
+                        >
+                          Forecast
+                        </button>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </section>
+            ) : null}
+
             <CollapsibleMetadataSection
               id="role"
               title="Role in codebase"
@@ -2841,99 +4053,6 @@ export function GraphView({
               <p className="metadata-panel__body-text">
                 {selectedFileRole?.description ?? "This file keeps a modest dependency surface and mostly supports nearby nodes."}
               </p>
-            </CollapsibleMetadataSection>
-
-            <CollapsibleMetadataSection
-              id="connectivity"
-              title="Connectivity"
-              isCollapsed={collapsedFileSectionSet.has("connectivity")}
-              onToggle={toggleFileMetadataSection}
-            >
-              <div className="metadata-panel__import-list" aria-label="Connected files">
-                {selectedFileConnectionGroups.imports.length > 0 ? (
-                  <div className={`metadata-panel__connection-section ${collapsedFileConnectionSectionSet.has("imports") ? "is-collapsed" : "is-expanded"}`.trim()}>
-                    <button
-                      type="button"
-                      className="metadata-panel__connection-heading"
-                      aria-expanded={!collapsedFileConnectionSectionSet.has("imports")}
-                      onClick={() => toggleFileConnectionSection("imports")}
-                    >
-                      <span>Imports</span>
-                      <strong>{selectedNode.metadata?.importCount ?? 0}</strong>
-                      <span className="metadata-panel__connection-heading-chevron" aria-hidden="true" />
-                    </button>
-                    {!collapsedFileConnectionSectionSet.has("imports") ? (
-                      selectedFileConnectionGroups.imports.map((group) => (
-                        <div className="metadata-panel__import-group" key={`imports:${group.folderPath || "root"}`}>
-                          <div className="metadata-panel__import-group-title">
-                            <span>{group.label}</span>
-                            <small>{group.depthDelta === 0 ? "same depth" : group.depthDelta > 0 ? "nested" : "parent"}</small>
-                          </div>
-                          {group.targets.map(({ node, line, edgeIds }) => (
-                            <button
-                              key={`imports:${node.id}`}
-                              type="button"
-                              className="metadata-panel__import-row metadata-panel__import-row--imports"
-                              onClick={() => focusGraphNode(node, { direction: "imports" })}
-                              onFocus={() => handleTraceStart(edgeIds)}
-                              onBlur={handleTraceEnd}
-                              onPointerEnter={() => handleTraceStart(edgeIds)}
-                              onPointerLeave={handleTraceEnd}
-                            >
-                              <span className="metadata-panel__import-name">{node.label}</span>
-                              <span className="metadata-panel__import-line">{line ? `:${line}` : "import"}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ))
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {selectedFileConnectionGroups.importedBy.length > 0 ? (
-                  <div className={`metadata-panel__connection-section ${collapsedFileConnectionSectionSet.has("imported-by") ? "is-collapsed" : "is-expanded"}`.trim()}>
-                    <button
-                      type="button"
-                      className="metadata-panel__connection-heading"
-                      aria-expanded={!collapsedFileConnectionSectionSet.has("imported-by")}
-                      onClick={() => toggleFileConnectionSection("imported-by")}
-                    >
-                      <span>Imported by</span>
-                      <strong>{importedByCount}</strong>
-                      <span className="metadata-panel__connection-heading-chevron" aria-hidden="true" />
-                    </button>
-                    {!collapsedFileConnectionSectionSet.has("imported-by") ? (
-                      selectedFileConnectionGroups.importedBy.map((group) => (
-                        <div className="metadata-panel__import-group" key={`imported-by:${group.folderPath || "root"}`}>
-                          <div className="metadata-panel__import-group-title">
-                            <span>{group.label}</span>
-                            <small>{group.depthDelta === 0 ? "same depth" : group.depthDelta > 0 ? "nested" : "parent"}</small>
-                          </div>
-                          {group.targets.map(({ node, edgeIds }) => (
-                            <button
-                              key={`imported-by:${node.id}`}
-                              type="button"
-                              className="metadata-panel__import-row metadata-panel__import-row--imported-by"
-                              onClick={() => focusGraphNode(node, { direction: "imported-by" })}
-                              onFocus={() => handleTraceStart(edgeIds)}
-                              onBlur={handleTraceEnd}
-                              onPointerEnter={() => handleTraceStart(edgeIds)}
-                              onPointerLeave={handleTraceEnd}
-                            >
-                              <span className="metadata-panel__import-name">{node.label}</span>
-                              <span className="metadata-panel__import-line">in</span>
-                            </button>
-                          ))}
-                        </div>
-                      ))
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {selectedFileConnectionGroups.imports.length === 0 && selectedFileConnectionGroups.importedBy.length === 0 ? (
-                  <div className="metadata-panel__empty-line">No connected files resolved.</div>
-                ) : null}
-              </div>
             </CollapsibleMetadataSection>
 
             <CollapsibleMetadataSection
@@ -2957,6 +4076,8 @@ export function GraphView({
                 )}
               </div>
             </CollapsibleMetadataSection>
+              </>
+            )}
           </aside>
         ) : selectedRegionSummary ? (
           <aside className="metadata-panel operational-panel">
@@ -3006,6 +4127,45 @@ export function GraphView({
           </aside>
         ) : null
       ) : null}
+      {healthTooltip && typeof document !== "undefined"
+        ? createPortal(
+          healthTooltip.kind === "label" ? (
+            <div
+              className="metadata-panel__health-bubble metadata-panel__health-bubble--portal"
+              role="tooltip"
+              style={{ left: healthTooltip.left, top: healthTooltip.top }}
+            >
+              {healthTooltip.row.explanation}
+            </div>
+          ) : (
+            <div
+              className="metadata-panel__health-scale-bubble metadata-panel__health-scale-bubble--portal"
+              role="tooltip"
+              style={{ left: healthTooltip.left, top: healthTooltip.top }}
+            >
+              <span className="metadata-panel__health-scale-head">
+                <strong>{healthTooltip.row.valueText}</strong>
+                <span>{healthTooltip.row.contributionText}</span>
+              </span>
+              <span className="metadata-panel__health-scale-track" aria-hidden="true">
+                <span className="metadata-panel__health-scale-segment metadata-panel__health-scale-segment--normal" />
+                <span className="metadata-panel__health-scale-segment metadata-panel__health-scale-segment--warning" />
+                <span className="metadata-panel__health-scale-segment metadata-panel__health-scale-segment--high" />
+                <span
+                  className="metadata-panel__health-scale-marker"
+                  style={{ left: `${healthTooltip.row.scale.markerPercent}%` }}
+                />
+              </span>
+              <span className="metadata-panel__health-scale-labels">
+                <span>{healthTooltip.row.scale.minLabel}</span>
+                <span>{healthTooltip.row.scale.normalLabel}</span>
+                <span>{healthTooltip.row.scale.highLabel}</span>
+              </span>
+            </div>
+          ),
+          document.body
+        )
+        : null}
       {sourceModalFile ? (
         <Suspense fallback={<div className="source-modal__backdrop"><div className="source-modal__loading">Loading Raw Source</div></div>}>
           <SourceCodeModal

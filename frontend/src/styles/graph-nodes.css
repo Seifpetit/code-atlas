@@ -44,6 +44,24 @@
   background: #333;
 }
 
+.atlas-node__health-dot {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.atlas-node__health-dot--warning {
+  background: #d97706;
+}
+
+.atlas-node__health-dot--critical {
+  background: #ef4444;
+}
+
 .atlas-node--palette-javascript .atlas-node__shape {
   --atlas-file-border: #facc15;
   --atlas-file-fold-border: rgba(250, 204, 21, 0.76);
@@ -359,6 +377,28 @@
   font-size: calc(12px * var(--atlas-node-scale, 1));
   font-variant-numeric: tabular-nums;
   font-weight: 700;
+}
+
+.atlas-node__relation-trace-count {
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  z-index: 5;
+  min-width: 26px;
+  padding: 5px 8px;
+  border: 1px solid rgba(45, 212, 191, 0.8);
+  border-radius: 999px;
+  background: rgba(8, 47, 73, 0.96);
+  color: #99f6e4;
+  font-size: calc(12px * var(--atlas-node-scale, 1));
+  font-weight: 950;
+  line-height: 1;
+  text-align: center;
+  box-shadow:
+    0 0 0 1px rgba(45, 212, 191, 0.14),
+    0 12px 28px rgba(0, 0, 0, 0.32);
+  transform: translate(-100%, -50%);
+  pointer-events: none;
 }
 
 .atlas-node__metric-separator {

@@ -18,6 +18,7 @@ import {
   type SourceVariableWaypoint
 } from "./sourceInspection";
 import { highlightSource, sourceLanguageLabel, type HighlightedSource } from "./sourceSyntaxHighlighting";
+import { buildFileForecast, buildFunctionForecast } from "./forecastModel";
 
 const RenderedMarkdown = lazy(() =>
   import("./RenderedMarkdown").then((module) => ({ default: module.RenderedMarkdown }))
@@ -43,6 +44,13 @@ interface SourceCodeModalProps {
   sourceFiles?: AtlasNode[];
   runtimeContext?: SourceRuntimeContext;
   fileContext?: SourceFileContext;
+  embedded?: boolean;
+  functionOnly?: boolean;
+  initialFunctionId?: string | null;
+  inventoryRuntimeFunctionIds?: Set<string>;
+  inventoryFunctionCounts?: InventoryFunctionCount[];
+  inventorySortExplanation?: string;
+  inventorySortMode?: InventoryFunctionSortMode;
   onClose: () => void;
 }
 
@@ -53,6 +61,32 @@ interface LineRange {
 
 type SourceStyle = CSSProperties & Record<`--${string}`, string | number>;
 type MarkdownDisplayMode = "rendered" | "raw";
+type InventoryFoldMode = "collapsed" | "expanded" | "runtime" | "ghost" | "custom";
+type InventoryFunctionCountKind = "raw" | "runtime" | "ghost" | "complex";
+type InventoryFunctionSortMode = InventoryFunctionCountKind;
+
+const FUNCTION_CLASSIFICATION_EXPLANATIONS: Record<InventoryFunctionCountKind, string> = {
+  raw: "All functions detected in source. Includes confirmed, ghost, and unresolved.",
+  runtime: "Confirmed active in at least one recorded execution trace.",
+  ghost: "No call site found statically. May be dynamic, string-referenced, or unused. Signal, not verdict.",
+  complex: "Sorted by cyclomatic and cognitive complexity. Highest risk functions first."
+};
+
+interface InventoryFunctionCount {
+  id: InventoryFunctionCountKind;
+  label: string;
+  value: number;
+}
+
+type CodeFoldBlockKind = "import" | "variable" | "structure";
+
+interface CodeFoldBlock {
+  id: string;
+  kind: CodeFoldBlockKind;
+  startLine: number;
+  endLine: number;
+  label: string;
+}
 
 type CirculationRegion = "inputs" | "outputs" | "state-updates" | "calls";
 
@@ -81,6 +115,10 @@ interface SourceOutlineItem {
   detail?: string;
   tags?: string[];
   active?: boolean;
+  cyclomaticComplexity?: number;
+  cognitiveComplexity?: number;
+  duplicateOf?: string[] | null;
+  combinedComplexity?: number;
 }
 
 interface SourceOutlineGroup {
@@ -227,6 +265,160 @@ function splitCommaList(value: string): string[] {
     .filter(Boolean);
 }
 
+function sourceLineIndentation(line: string): number {
+  return line.match(/^\s*/)?.[0].length ?? 0;
+}
+
+function sourceBlockKind(trimmedLine: string, extension?: string): CodeFoldBlockKind | null {
+  const normalized = trimmedLine.replace(/^export\s+(?=(?:const|let|var|class|interface|type|enum|namespace|import)\b)/, "");
+
+  if (isPythonSource(extension)) {
+    if (/^(?:from\s+[\w.]+\s+import\b|import\b)/.test(normalized)) {
+      return "import";
+    }
+
+    if (/^(?:class|def|async\s+def)\b/.test(normalized)) {
+      return "structure";
+    }
+
+    if (/^[A-Za-z_]\w*\s*=\s*.+/.test(normalized)) {
+      return "variable";
+    }
+
+    return null;
+  }
+
+  if (/^import\b/.test(normalized)) {
+    return "import";
+  }
+
+  if (/^(?:const|let|var)\b/.test(normalized)) {
+    return "variable";
+  }
+
+  if (/^(?:class|interface|type|enum|namespace)\b/.test(normalized)) {
+    return "structure";
+  }
+
+  return null;
+}
+
+function sourceBlockContinuationHint(trimmedLine: string): boolean {
+  if (trimmedLine.length === 0) {
+    return false;
+  }
+
+  return /(?:[([{,=:+\-*/\\.?]|=>|&&|\|\|)$/.test(trimmedLine);
+}
+
+function sourceBlockDelta(line: string): number {
+  const stripped = line.replace(/\/\/.*$/, "");
+  const opens = (stripped.match(/[({\[]/g)?.length ?? 0);
+  const closes = (stripped.match(/[)}\]]/g)?.length ?? 0);
+  return opens - closes;
+}
+
+function sourceBlockLabel(kind: CodeFoldBlockKind): string {
+  switch (kind) {
+    case "import":
+      return "Import block";
+    case "variable":
+      return "Variable block";
+    default:
+      return "Structure block";
+  }
+}
+
+function sourceBlockSpan(lines: string[], startIndex: number, extension?: string): number {
+  const startLine = lines[startIndex] ?? "";
+  const startTrimmed = startLine.trim();
+  const kind = sourceBlockKind(startTrimmed, extension);
+  const startIndent = sourceLineIndentation(startLine);
+
+  if (!kind) {
+    return 1;
+  }
+
+  let balance = sourceBlockDelta(startLine);
+  let endIndex = startIndex;
+  let previousContinues = sourceBlockContinuationHint(startTrimmed) || balance > 0;
+  let hasNonEmptyContinuation = false;
+
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const rawLine = lines[index];
+    const trimmedLine = rawLine.trim();
+
+    if (trimmedLine.length === 0) {
+      if (!previousContinues && balance <= 0) {
+        break;
+      }
+
+      previousContinues = true;
+      endIndex = index;
+      continue;
+    }
+
+    const candidateKind = sourceBlockKind(trimmedLine, extension);
+    const candidateIndent = sourceLineIndentation(rawLine);
+
+    if (candidateKind && candidateIndent <= startIndent) {
+      break;
+    }
+
+    const canContinue = previousContinues || balance > 0;
+    if (!canContinue) {
+      break;
+    }
+
+    balance += sourceBlockDelta(rawLine);
+    endIndex = index;
+    hasNonEmptyContinuation = true;
+
+    const continues = sourceBlockContinuationHint(trimmedLine);
+    if (balance <= 0 && !continues) {
+      break;
+    }
+
+    previousContinues = continues || balance > 0;
+  }
+
+  return endIndex > startIndex && hasNonEmptyContinuation ? endIndex - startIndex + 1 : 1;
+}
+
+function detectFoldableBlocks(lines: string[], extension?: string): CodeFoldBlock[] {
+  const blocks: CodeFoldBlock[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+
+    const kind = sourceBlockKind(trimmed, extension);
+    if (!kind) {
+      continue;
+    }
+
+    const span = sourceBlockSpan(lines, index, extension);
+    if (span <= 1) {
+      continue;
+    }
+
+    const startLine = index + 1;
+    const endLine = Math.min(lines.length, startLine + span - 1);
+
+    blocks.push({
+      id: `${kind}:${startLine}:${endLine}`,
+      kind,
+      startLine,
+      endLine,
+      label: trimmed.replace(/\s+/g, " ")
+    });
+  }
+
+  return blocks;
+}
+
 function parseImportNames(sourceText: string, extension?: string): Array<{ name: string; line: number; detail?: string }> {
   const rows: Array<{ name: string; line: number; detail?: string }> = [];
   const lines = sourceText.split(/\r?\n/);
@@ -325,6 +517,26 @@ function sourceOutlineMatchesQuery(item: Pick<SourceOutlineItem, "name" | "label
   }
 
   return outlineSearchText(item).includes(query);
+}
+
+function numericComplexity(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function combinedFunctionComplexity(waypoint: Pick<SourceFunctionWaypoint, "cyclomaticComplexity" | "cognitiveComplexity">): number {
+  return numericComplexity(waypoint.cyclomaticComplexity) + numericComplexity(waypoint.cognitiveComplexity) * 0.5;
+}
+
+function complexitySeverity(value: number, warningThreshold: number, criticalThreshold: number): "muted" | "warning" | "critical" {
+  if (value > criticalThreshold) {
+    return "critical";
+  }
+
+  if (value > warningThreshold) {
+    return "warning";
+  }
+
+  return "muted";
 }
 
 function compareRuntimePlacementRelations(left: RuntimePlacementRelation, right: RuntimePlacementRelation): number {
@@ -501,14 +713,27 @@ function CirculationSection({ title, summary, isExpanded, onToggle, children }: 
   );
 }
 
-export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileContext, onClose }: SourceCodeModalProps) {
+export function SourceCodeModal({
+  file,
+  sourceFiles = [],
+  runtimeContext,
+  fileContext,
+  embedded = false,
+  functionOnly = false,
+  initialFunctionId = null,
+  inventoryRuntimeFunctionIds,
+  inventoryFunctionCounts,
+  inventorySortExplanation,
+  inventorySortMode,
+  onClose
+}: SourceCodeModalProps) {
   const sourceText = typeof file.sourceText === "string" ? file.sourceText : null;
   const sourceLines = useMemo(() => (sourceText === null ? [] : sourceText.split(/\r?\n/)), [sourceText]);
   const inspection = useMemo(() => inspectSource(file), [file]);
   const isMarkdownFile = String(file.metadata?.extension ?? "").toLowerCase() === ".md";
   const [highlightedSource, setHighlightedSource] = useState<HighlightedSource | null>(null);
   const [markdownDisplayMode, setMarkdownDisplayMode] = useState<MarkdownDisplayMode>("rendered");
-  const [activeFunctionId, setActiveFunctionId] = useState<string | null>(null);
+  const [activeFunctionId, setActiveFunctionId] = useState<string | null>(() => initialFunctionId);
   const [selectedRange, setSelectedRange] = useState<LineRange | null>(null);
   const [areImportsExpanded, setAreImportsExpanded] = useState(true);
   const [areFunctionWaypointsExpanded, setAreFunctionWaypointsExpanded] = useState(true);
@@ -520,9 +745,12 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
   const [outlineQuery, setOutlineQuery] = useState("");
   const [expandedCirculationRegion, setExpandedCirculationRegion] = useState<CirculationRegion | null>("inputs");
   const [foldedFunctionIds, setFoldedFunctionIds] = useState<Set<string>>(() => new Set());
+  const [foldedBlockIds, setFoldedBlockIds] = useState<Set<string>>(() => new Set());
+  const [inventoryFoldMode, setInventoryFoldMode] = useState<InventoryFoldMode>("custom");
   const [runtimePlacementFunctionId, setRuntimePlacementFunctionId] = useState<string | null>(null);
   const [activeVariableId, setActiveVariableId] = useState<string | null>(null);
   const [activeVariableOccurrenceLine, setActiveVariableOccurrenceLine] = useState<number | null>(null);
+  const [forecastModeActive, setForecastModeActive] = useState(false);
   const [railWidth, setRailWidth] = useState(SOURCE_RAIL_INITIAL_WIDTH);
   const [isResizingRail, setIsResizingRail] = useState(false);
   const lineRefs = useRef(new Map<number, HTMLSpanElement>());
@@ -534,6 +762,15 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     [file.metadata?.extension, sourceText]
   );
   const activeFunction = inspection.functions.find((waypoint) => waypoint.id === activeFunctionId) ?? null;
+  const fileForecast = useMemo(
+    () => buildFileForecast(file, { importedByCount: fileContext?.importedByCount }),
+    [file, fileContext?.importedByCount]
+  );
+  const activeFunctionForecast = useMemo(
+    () => buildFunctionForecast(file, activeFunction),
+    [activeFunction, file]
+  );
+  const sourceForecast = activeFunctionForecast.available ? activeFunctionForecast : fileForecast;
   const activeVariable = [...inspection.operationalVariables, ...inspection.localVariables]
     .find((variable) => variable.id === activeVariableId) ?? null;
   const activeVariableOccurrences = useMemo(
@@ -564,21 +801,56 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
       .filter((item) => sourceOutlineMatchesQuery(item, normalizedOutlineQuery)),
     [importRows, normalizedOutlineQuery]
   );
+  const foldableBlocks = useMemo(
+    () => detectFoldableBlocks(sourceLines, file.metadata?.extension),
+    [file.metadata?.extension, sourceLines]
+  );
+  const foldableBlockByStartLine = useMemo(() => {
+    const blocksByLine = new Map<number, CodeFoldBlock>();
+
+    for (const block of foldableBlocks) {
+      const existing = blocksByLine.get(block.startLine);
+      const span = block.endLine - block.startLine;
+      const existingSpan = existing ? existing.endLine - existing.startLine : Number.POSITIVE_INFINITY;
+
+      if (!existing || span > 1 && (span < existingSpan || (span === existingSpan && block.kind === existing.kind))) {
+        blocksByLine.set(block.startLine, block);
+      }
+    }
+
+    return blocksByLine;
+  }, [foldableBlocks]);
   const outlineFunctions = useMemo(
-    () => inspection.functions
-      .map((waypoint) => ({
-        id: waypoint.id,
-        name: waypoint.name,
-        line: waypoint.startLine,
-        iconLabel: waypoint.group,
-        detail: `${waypoint.lineCount}L`,
-        tags: [
-          ...(waypoint.exported ? ["export"] : []),
-          ...(waypoint.outputs.some((output) => output.async) ? ["async"] : [])
-        ]
-      }))
-      .filter((item) => sourceOutlineMatchesQuery(item, normalizedOutlineQuery)),
-    [inspection.functions, normalizedOutlineQuery]
+    () => {
+      const items = inspection.functions
+        .map((waypoint) => ({
+          id: waypoint.id,
+          name: waypoint.name,
+          line: waypoint.startLine,
+          iconLabel: waypoint.group,
+          detail: `${waypoint.lineCount}L`,
+          tags: [
+            ...(waypoint.exported ? ["export"] : []),
+            ...(waypoint.outputs.some((output) => output.async) ? ["async"] : [])
+          ],
+          cyclomaticComplexity: waypoint.cyclomaticComplexity,
+          cognitiveComplexity: waypoint.cognitiveComplexity,
+          duplicateOf: waypoint.duplicateOf,
+          combinedComplexity: combinedFunctionComplexity(waypoint)
+        }))
+        .filter((item) => sourceOutlineMatchesQuery(item, normalizedOutlineQuery));
+
+      if (inventorySortMode !== "complex") {
+        return items;
+      }
+
+      return items.slice().sort((left, right) =>
+        (right.combinedComplexity ?? 0) - (left.combinedComplexity ?? 0) ||
+        left.line - right.line ||
+        String(left.name ?? "").localeCompare(String(right.name ?? ""))
+      );
+    },
+    [inspection.functions, inventorySortMode, normalizedOutlineQuery]
   );
   const outlineVariables = useMemo(() => {
     const declarationSourceLine = (line: number): string => sourceLines[line - 1] ?? "";
@@ -689,6 +961,105 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
 
     return functionsByLine;
   }, [inspection.functions]);
+  const foldableFunctionIds = useMemo(
+    () => inspection.functions
+      .filter((waypoint) => waypoint.endLine > waypoint.startLine)
+      .map((waypoint) => waypoint.id),
+    [inspection.functions]
+  );
+  const inferredRuntimeFunctionIds = useMemo(() => {
+    const ids = new Set<string>();
+    const idsByWaypointId = new Map(
+      inspection.functions.flatMap((waypoint) => (
+        waypoint.waypointId ? [[waypoint.waypointId, waypoint.id] as const] : []
+      ))
+    );
+    const idsBySpan = new Map(
+      inspection.functions.map((waypoint) => [`${waypoint.startLine}:${waypoint.endLine}`, waypoint.id] as const)
+    );
+    const idsByName = new Map<string, string[]>();
+
+    for (const waypoint of inspection.functions) {
+      const entries = idsByName.get(waypoint.name) ?? [];
+      entries.push(waypoint.id);
+      idsByName.set(waypoint.name, entries);
+    }
+
+    const markLocalTarget = (call: SourceFunctionWaypoint["calls"][number]) => {
+      if (call.definitionPath !== file.path) {
+        return;
+      }
+
+      if (call.definitionWaypointId) {
+        const targetId = idsByWaypointId.get(call.definitionWaypointId);
+        if (targetId) {
+          ids.add(targetId);
+          return;
+        }
+      }
+
+      if (call.definitionStartLine !== undefined && call.definitionEndLine !== undefined) {
+        const targetId = idsBySpan.get(`${call.definitionStartLine}:${call.definitionEndLine}`);
+        if (targetId) {
+          ids.add(targetId);
+          return;
+        }
+      }
+
+      if (call.definitionName) {
+        const namedTargets = idsByName.get(call.definitionName) ?? [];
+        if (namedTargets.length === 1) {
+          ids.add(namedTargets[0]);
+        }
+      }
+    };
+
+    for (const waypoint of inspection.functions) {
+      if (waypoint.calls.some((call) => Boolean(call.definitionPath))) {
+        ids.add(waypoint.id);
+      }
+
+      if (waypoint.inputs.some((input) => input.sources?.length)) {
+        ids.add(waypoint.id);
+      }
+
+      waypoint.calls.forEach(markLocalTarget);
+    }
+
+    file.metadata?.moduleLinks?.forEach(markLocalTarget);
+
+    return ids;
+  }, [file.metadata?.moduleLinks, file.path, inspection.functions]);
+  const resolvedRuntimeFunctionIds = inventoryRuntimeFunctionIds ?? inferredRuntimeFunctionIds;
+  const innermostFunctionByLine = useMemo(() => {
+    const functionsByLine = new Map<number, SourceFunctionWaypoint>();
+
+    for (const waypoint of inspection.functions) {
+      const span = waypoint.endLine - waypoint.startLine;
+
+      if (span <= 0) {
+        continue;
+      }
+
+      for (let line = waypoint.startLine + 1; line <= Math.min(waypoint.endLine, sourceLines.length); line += 1) {
+        const existing = functionsByLine.get(line);
+        const existingSpan = existing ? existing.endLine - existing.startLine : Number.POSITIVE_INFINITY;
+
+        if (!existing || span < existingSpan || (span === existingSpan && waypoint.startLine > existing.startLine)) {
+          functionsByLine.set(line, waypoint);
+        }
+      }
+    }
+
+    return functionsByLine;
+  }, [inspection.functions, sourceLines.length]);
+  const inventoryModeActive = Boolean(inventoryRuntimeFunctionIds);
+  const allInventoryFunctionsCollapsed =
+    foldableFunctionIds.length > 0 && foldableFunctionIds.every((id) => foldedFunctionIds.has(id));
+  const showFunctionFoldTools = foldableFunctionIds.length > 0 && !runtimePlacementFunction && !functionOnly;
+  const activeExplanationKey: InventoryFunctionCountKind =
+    inventoryFoldMode === "runtime" ? "runtime" : inventoryFoldMode === "ghost" ? "ghost" : "raw";
+  const functionFoldExplanation = inventorySortExplanation ?? FUNCTION_CLASSIFICATION_EXPLANATIONS[activeExplanationKey];
   const traceLines = useMemo(() => {
     const callLines = new Set<number>();
     const stateUpdateLines = new Set<number>();
@@ -758,6 +1129,10 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
   }, [activeVariable, activeVariableOccurrenceLine]);
 
   useEffect(() => {
+    if (embedded) {
+      return;
+    }
+
     const previousOverflow = document.body.style.overflow;
 
     function handleKeyDown(event: KeyboardEvent): void {
@@ -773,7 +1148,7 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [onClose]);
+  }, [embedded, onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -801,20 +1176,29 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
   }, [file.metadata?.extension, isMarkdownFile, markdownDisplayMode, sourceText]);
 
   useEffect(() => {
-    setActiveFunctionId(null);
-    setSelectedRange(null);
+    const initialFunction = initialFunctionId
+      ? inspection.functions.find((waypoint) => waypoint.id === initialFunctionId) ?? null
+      : null;
+    setActiveFunctionId(initialFunction?.id ?? null);
+    setSelectedRange(initialFunction
+      ? { startLine: initialFunction.startLine, endLine: initialFunction.endLine }
+      : null
+    );
     setMarkdownDisplayMode("rendered");
     setAreImportsExpanded(true);
     setAreFunctionWaypointsExpanded(true);
     setAreVariablesExpanded(true);
     setAreSectionsExpanded(false);
     setExpandedCirculationRegion("inputs");
-    setFoldedFunctionIds(new Set());
+    setFoldedFunctionIds(inventoryModeActive && !functionOnly ? new Set(foldableFunctionIds) : new Set());
+    setFoldedBlockIds(new Set());
+    setInventoryFoldMode(inventoryModeActive ? "collapsed" : "custom");
     setRuntimePlacementFunctionId(null);
     setActiveVariableId(null);
     setActiveVariableOccurrenceLine(null);
+    setForecastModeActive(false);
     lineRefs.current.clear();
-  }, [file.id]);
+  }, [file.id, foldableFunctionIds, functionOnly, initialFunctionId, inspection.functions, inventoryModeActive]);
 
   useEffect(() => {
     if (!isResizingRail) {
@@ -1025,6 +1409,10 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
   }
 
   function toggleFunctionFold(waypoint: SourceFunctionWaypoint): void {
+    if (inventoryFoldMode !== "custom") {
+      setInventoryFoldMode("custom");
+    }
+
     setFoldedFunctionIds((current) => {
       const next = new Set(current);
 
@@ -1036,6 +1424,48 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
 
       return next;
     });
+  }
+
+  function toggleBlockFold(block: CodeFoldBlock): void {
+    setFoldedBlockIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(block.id)) {
+        next.delete(block.id);
+      } else {
+        next.add(block.id);
+      }
+
+      return next;
+    });
+  }
+
+  function toggleInventoryFoldAll(): void {
+    if (allInventoryFunctionsCollapsed) {
+      setFoldedFunctionIds(new Set());
+      setInventoryFoldMode("expanded");
+    } else {
+      setFoldedFunctionIds(new Set(foldableFunctionIds));
+      setInventoryFoldMode("collapsed");
+    }
+  }
+
+  function collapseGhostFunctions(): void {
+    setFoldedFunctionIds(new Set(
+      inspection.functions
+        .filter((waypoint) => waypoint.endLine > waypoint.startLine && !resolvedRuntimeFunctionIds.has(waypoint.id))
+        .map((waypoint) => waypoint.id)
+    ));
+    setInventoryFoldMode("runtime");
+  }
+
+  function collapseRuntimeFunctions(): void {
+    setFoldedFunctionIds(new Set(
+      inspection.functions
+        .filter((waypoint) => waypoint.endLine > waypoint.startLine && resolvedRuntimeFunctionIds.has(waypoint.id))
+        .map((waypoint) => waypoint.id)
+    ));
+    setInventoryFoldMode("ghost");
   }
 
   function enterRuntimePlacement(waypoint: SourceFunctionWaypoint): void {
@@ -1104,12 +1534,21 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
 
   function renderCodeLine(line: string, lineIndex: number) {
     const lineNumber = lineIndex + 1;
-    const hiddenByFold = inspection.functions.some(
-      (waypoint) =>
-        foldedFunctionIds.has(waypoint.id) &&
-        lineNumber > waypoint.startLine &&
-        lineNumber <= waypoint.endLine
-    );
+    const isFunctionStartLine = foldableFunctionByStartLine.has(lineNumber);
+    const innermostContainingFunction = innermostFunctionByLine.get(lineNumber);
+    const hiddenByFold =
+      inspection.functions.some(
+        (candidate) =>
+          foldedFunctionIds.has(candidate.id) &&
+          lineNumber > candidate.startLine &&
+          lineNumber <= candidate.endLine
+      ) ||
+      foldableBlocks.some(
+        (candidate) =>
+          foldedBlockIds.has(candidate.id) &&
+          lineNumber > candidate.startLine &&
+          lineNumber <= candidate.endLine
+      );
 
     if (hiddenByFold) {
       return null;
@@ -1117,6 +1556,22 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
 
     const foldableFunction = foldableFunctionByStartLine.get(lineNumber);
     const isFolded = Boolean(foldableFunction && foldedFunctionIds.has(foldableFunction.id));
+    const foldableBlock = foldableBlockByStartLine.get(lineNumber);
+    const isBlockFolded = Boolean(foldableBlock && foldedBlockIds.has(foldableBlock.id));
+    const lineFunction = foldableFunction ?? innermostContainingFunction;
+    const foldableFunctionIsRuntime = Boolean(foldableFunction && resolvedRuntimeFunctionIds.has(foldableFunction.id));
+    const lineFunctionIsRuntime = Boolean(lineFunction && resolvedRuntimeFunctionIds.has(lineFunction.id));
+    const isRuntimeModeCollapsedGhost = Boolean(
+      inventoryFoldMode === "runtime" &&
+      foldableFunction &&
+      !foldableFunctionIsRuntime &&
+      isFolded
+    );
+    const isGhostModeGhostLine = Boolean(
+      inventoryFoldMode === "ghost" &&
+      lineFunction &&
+      !lineFunctionIsRuntime
+    );
     const tokens = highlightedSource?.tokens[lineIndex];
     const isFocused = Boolean(selectedRange && lineNumber >= selectedRange.startLine && lineNumber <= selectedRange.endLine);
     const isSelectedStart = inspection.functions.some(
@@ -1126,6 +1581,10 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
       "source-modal__line",
       foldableFunction ? "is-foldable" : "",
       isFolded ? "is-folded" : "",
+      foldableBlock ? "is-block-foldable" : "",
+      isBlockFolded ? "is-block-folded" : "",
+      isRuntimeModeCollapsedGhost ? "is-inventory-runtime-ghost-folded" : "",
+      isGhostModeGhostLine ? "is-inventory-ghost-line" : "",
       isFocused ? "is-focused" : "",
       isSelectedStart ? "is-selected-start" : "",
       traceLines.callLines.has(lineNumber) ? "is-call-site" : "",
@@ -1162,6 +1621,17 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
             >
               <span aria-hidden="true" />
             </button>
+          ) : foldableBlock ? (
+            <button
+              type="button"
+              className="source-modal__fold-toggle"
+              aria-label={`${isBlockFolded ? "Expand" : "Collapse"} ${sourceBlockLabel(foldableBlock.kind)}`}
+              aria-expanded={!isBlockFolded}
+              title={`${isBlockFolded ? "Expand" : "Collapse"} ${sourceBlockLabel(foldableBlock.kind)}`}
+              onClick={() => toggleBlockFold(foldableBlock)}
+            >
+              <span aria-hidden="true" />
+            </button>
           ) : <span className="source-modal__fold-spacer" aria-hidden="true" />}
           <span className="source-modal__line-number" aria-hidden="true">{lineNumber}</span>
         </span>
@@ -1183,6 +1653,24 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
               {"  "}... {foldableFunction.endLine - foldableFunction.startLine} lines folded
             </span>
           </button>
+        ) : isBlockFolded && foldableBlock ? (
+          <button
+            type="button"
+            className="source-modal__line-code source-modal__folded-block-focus"
+            aria-label={`${isBlockFolded ? "Expand" : "Collapse"} ${sourceBlockLabel(foldableBlock.kind)}`}
+            onClick={() => toggleBlockFold(foldableBlock)}
+          >
+            {tokens
+              ? tokens.map((token, tokenIndex) => (
+                  <span key={tokenIndex} style={tokenStyle(token)}>
+                    {renderVariableAwareText(token.content, lineNumber, `block-folded-${tokenIndex}`)}
+                  </span>
+                ))
+              : renderVariableAwareText(line || " ", lineNumber, "block-folded-raw")}
+            <span className="source-modal__fold-summary">
+              {"  "}... {foldableBlock.endLine - foldableBlock.startLine} lines folded
+            </span>
+          </button>
         ) : (
           <span className="source-modal__line-code">
             {tokens
@@ -1198,30 +1686,23 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
     );
   }
 
-  return (
-    <div
-      className="source-modal__backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
+  const modal = (
       <section
-        className="source-modal"
-        role="dialog"
-        aria-modal="true"
+        className={`source-modal ${embedded ? "source-modal--embedded" : ""} ${functionOnly ? "source-modal--function-only" : ""} ${forecastModeActive && sourceForecast.available ? "source-modal--forecast" : ""}`.trim()}
+        role={embedded ? "region" : "dialog"}
+        aria-modal={embedded ? undefined : true}
         aria-labelledby="source-modal-title"
         aria-describedby="source-modal-path"
         onMouseDownCapture={(event) => {
           const target = event.target;
 
-          if (
-            target instanceof Element &&
-            !target.closest(".source-modal__function-card, .source-modal__fold-toggle")
-          ) {
-            clearWaypointSelection();
-          }
+      if (
+        !functionOnly &&
+        target instanceof Element &&
+        !target.closest(".source-modal__function-card, .source-modal__fold-toggle, .source-modal__folded-function-focus, .source-modal__folded-block-focus, .source-modal__forecast")
+      ) {
+        clearWaypointSelection();
+      }
 
           if (target instanceof Element && !target.closest(".source-modal__variable, .source-modal__variable-navigation")) {
             setActiveVariableId(null);
@@ -1243,7 +1724,105 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
               {runtimeContext?.inActiveCorridor ? <span className="is-runtime">Runtime Corridor</span> : null}
             </div>
           </div>
-          <button type="button" className="source-modal__close" aria-label="Close source inspection" onClick={onClose} autoFocus>
+          <div className="source-modal__header-tools">
+            {sourceForecast.available ? (
+              <button
+                type="button"
+                className={`source-modal__forecast-toggle ${forecastModeActive ? "is-active" : ""}`.trim()}
+                aria-pressed={forecastModeActive}
+                onClick={() => setForecastModeActive((active) => !active)}
+              >
+                {forecastModeActive ? "Return" : "Forecast"}
+              </button>
+            ) : null}
+            {inventoryFunctionCounts?.length ? (
+              <div className="source-modal__inventory-counts" aria-label="Selected file function counts">
+                {inventoryFunctionCounts.map((entry) => (
+                  <span className={`source-modal__inventory-count source-modal__inventory-count--${entry.id}`} key={entry.id}>
+                    <b>{entry.label}</b>
+                    <strong>{entry.value}</strong>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {showFunctionFoldTools ? (
+              <div className="source-modal__inventory-fold-tools" aria-label="Inventory function folds">
+                <button
+                  type="button"
+                  className={`source-modal__inventory-fold-tools-toggle ${inventoryFoldMode === "collapsed" || inventoryFoldMode === "expanded" ? "is-active" : ""}`.trim()}
+                  onClick={toggleInventoryFoldAll}
+                >
+                  {allInventoryFunctionsCollapsed ? "Expand" : "Collapse"}
+                </button>
+                <button
+                  type="button"
+                  className={inventoryFoldMode === "runtime" ? "is-active" : ""}
+                  onClick={collapseGhostFunctions}
+                >
+                  Runtime
+                </button>
+                <button
+                  type="button"
+                  className={inventoryFoldMode === "ghost" ? "is-active" : ""}
+                  onClick={collapseRuntimeFunctions}
+                >
+                  Ghost
+                </button>
+              </div>
+            ) : null}
+            {showFunctionFoldTools || inventorySortExplanation ? (
+              <span
+                className="function-modal__sort-explanation source-modal__function-explanation"
+                title={functionFoldExplanation}
+              >
+                {functionFoldExplanation}
+              </span>
+            ) : null}
+            {runtimePlacementFunction ? (
+              <button type="button" className="source-modal__placement-return" onClick={exitRuntimePlacement}>
+                Return to Implementation
+              </button>
+            ) : activeVariable && activeVariableOccurrences.length > 0 ? (
+              <div className="source-modal__variable-navigation" role="group" aria-label={`Navigate ${activeVariable.name} occurrences`}>
+                <code>{activeVariable.name}</code>
+                <span>{focusedVariableOccurrenceIndex + 1} / {activeVariableOccurrences.length}</span>
+                <button
+                  type="button"
+                  disabled={focusedVariableOccurrenceIndex === 0}
+                  onClick={() => navigateVariableOccurrence(-1)}
+                >
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  disabled={focusedVariableOccurrenceIndex >= activeVariableOccurrences.length - 1}
+                  onClick={() => navigateVariableOccurrence(1)}
+                >
+                  Next
+                </button>
+              </div>
+            ) : isMarkdownFile ? (
+              <div className="source-modal__view-switch" role="group" aria-label="Markdown display mode">
+                <button
+                  type="button"
+                  className={markdownDisplayMode === "rendered" ? "is-active" : ""}
+                  aria-pressed={markdownDisplayMode === "rendered"}
+                  onClick={() => setMarkdownDisplayMode("rendered")}
+                >
+                  Rendered
+                </button>
+                <button
+                  type="button"
+                  className={markdownDisplayMode === "raw" ? "is-active" : ""}
+                  aria-pressed={markdownDisplayMode === "raw"}
+                  onClick={() => setMarkdownDisplayMode("raw")}
+                >
+                  Raw
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <button type="button" className="source-modal__close" aria-label="Close source inspection" onClick={onClose} autoFocus={!embedded}>
             <span />
             <span />
           </button>
@@ -1342,12 +1921,18 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
                   <div className="source-modal__outline-rows">
                     {outlineFunctions.map((item) => {
                       const isActive = activeFunctionId === item.id;
+                      const cyclomaticComplexity = numericComplexity(item.cyclomaticComplexity);
+                      const cognitiveComplexity = numericComplexity(item.cognitiveComplexity);
+                      const cyclomaticSeverity = complexitySeverity(cyclomaticComplexity, 7, 15);
+                      const cognitiveSeverity = complexitySeverity(cognitiveComplexity, 10, 20);
+                      const isCriticalComplexity = cyclomaticSeverity === "critical" || cognitiveSeverity === "critical";
+                      const duplicateCount = item.duplicateOf?.length ?? 0;
 
                       return (
                         <button
                           key={item.id}
                           type="button"
-                          className={`source-modal__outline-row ${isActive ? "is-active" : ""}`.trim()}
+                          className={`source-modal__outline-row ${isActive ? "is-active" : ""} ${isCriticalComplexity ? "is-complex-critical" : ""}`.trim()}
                           onClick={() => {
                             const waypoint = inspection.functions.find((candidate) => candidate.id === item.id);
                             if (waypoint) {
@@ -1358,6 +1943,36 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
                           <span className="source-modal__outline-row-left">
                             <span className="source-modal__outline-row-icon source-modal__outline-row-icon--functions">&#402;</span>
                             <span className="source-modal__outline-row-name">{item.name}</span>
+                            {inventoryModeActive ? (
+                              <>
+                                {cyclomaticComplexity > 0 ? (
+                                  <span className={`source-modal__inventory-complexity source-modal__inventory-complexity--${cyclomaticSeverity}`}>
+                                    cc {cyclomaticComplexity}
+                                  </span>
+                                ) : null}
+                                {item.duplicateOf !== null && item.duplicateOf !== undefined ? (
+                                  <span
+                                    className="source-modal__duplicate-pill"
+                                    title={`Duplicate of ${duplicateCount} other function${duplicateCount === 1 ? "" : "s"} in this codebase`}
+                                  >
+                                    DUP
+                                  </span>
+                                ) : null}
+                              </>
+                            ) : (
+                              <>
+                                {cyclomaticComplexity > 7 ? (
+                                  <span className={`source-modal__complexity-pill source-modal__complexity-pill--${cyclomaticSeverity}`}>
+                                    cc {cyclomaticComplexity}
+                                  </span>
+                                ) : null}
+                                {cognitiveComplexity > 10 ? (
+                                  <span className={`source-modal__complexity-pill source-modal__complexity-pill--${cognitiveSeverity}`}>
+                                    cog {cognitiveComplexity}
+                                  </span>
+                                ) : null}
+                              </>
+                            )}
                           </span>
                           <span className="source-modal__outline-row-right">
                             {item.tags?.length ? (
@@ -1528,62 +2143,53 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
           </aside>
           <section
             className="source-modal__implementation"
-            aria-label={runtimePlacementFunction ? "Runtime placement" : "Source implementation"}
+            aria-label={forecastModeActive && sourceForecast.available ? "Forecast" : runtimePlacementFunction ? "Runtime placement" : "Source implementation"}
           >
-            <div className="source-modal__implementation-header">
-              <div className="source-modal__pane-label">
-                {runtimePlacementFunction
-                  ? "Runtime Placement"
-                  : isMarkdownFile && markdownDisplayMode === "rendered"
-                    ? "Rendered Document"
-                    : "Implementation Field"}
-              </div>
-              {runtimePlacementFunction ? (
-                <button type="button" className="source-modal__placement-return" onClick={exitRuntimePlacement}>
-                  Return to Implementation
-                </button>
-              ) : activeVariable && activeVariableOccurrences.length > 0 ? (
-                <div className="source-modal__variable-navigation" role="group" aria-label={`Navigate ${activeVariable.name} occurrences`}>
-                  <code>{activeVariable.name}</code>
-                  <span>{focusedVariableOccurrenceIndex + 1} / {activeVariableOccurrences.length}</span>
-                  <button
-                    type="button"
-                    disabled={focusedVariableOccurrenceIndex === 0}
-                    onClick={() => navigateVariableOccurrence(-1)}
-                  >
-                    Prev
-                  </button>
-                  <button
-                    type="button"
-                    disabled={focusedVariableOccurrenceIndex >= activeVariableOccurrences.length - 1}
-                    onClick={() => navigateVariableOccurrence(1)}
-                  >
-                    Next
-                  </button>
-                </div>
-              ) : isMarkdownFile ? (
-                <div className="source-modal__view-switch" role="group" aria-label="Markdown display mode">
-                  <button
-                    type="button"
-                    className={markdownDisplayMode === "rendered" ? "is-active" : ""}
-                    aria-pressed={markdownDisplayMode === "rendered"}
-                    onClick={() => setMarkdownDisplayMode("rendered")}
-                  >
-                    Rendered
-                  </button>
-                  <button
-                    type="button"
-                    className={markdownDisplayMode === "raw" ? "is-active" : ""}
-                    aria-pressed={markdownDisplayMode === "raw"}
-                    onClick={() => setMarkdownDisplayMode("raw")}
-                  >
-                    Raw
-                  </button>
-                </div>
-              ) : null}
-            </div>
             <div className="source-modal__code-frame">
-              {runtimePlacementFunction && runtimePlacement ? (
+              {forecastModeActive && sourceForecast.available ? (
+                <div className="source-modal__forecast" aria-label={`Forecast for ${sourceForecast.subject}`}>
+                  <header className="source-modal__forecast-header">
+                    <div>
+                      <span>Forecast</span>
+                      <h3>{sourceForecast.subject}</h3>
+                    </div>
+                    <p>{sourceForecast.subtext}</p>
+                  </header>
+                  <section className="source-modal__forecast-signals" aria-label="Pressure signals">
+                    {sourceForecast.pressureSignals.map((signal) => (
+                      <span key={signal}>{signal}</span>
+                    ))}
+                  </section>
+                  <div className="source-modal__forecast-grid">
+                    <section className="source-modal__forecast-column source-modal__forecast-column--current">
+                      <div className="source-modal__forecast-label">Current Structure</div>
+                      <article className="source-modal__forecast-block">
+                        <strong>{sourceForecast.current.title}</strong>
+                        <ul>
+                          {sourceForecast.current.items.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </article>
+                    </section>
+                    <section className="source-modal__forecast-column source-modal__forecast-column--suggested">
+                      <div className="source-modal__forecast-label">Suggested Structure</div>
+                      <div className="source-modal__forecast-stack">
+                        {sourceForecast.suggested.map((block) => (
+                          <article className="source-modal__forecast-block" key={block.title}>
+                            <strong>{block.title}</strong>
+                            <ul>
+                              {block.items.map((item) => (
+                                <li key={`${block.title}:${item}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  </div>
+                </div>
+              ) : runtimePlacementFunction && runtimePlacement ? (
                 <div
                   className="source-modal__placement"
                   aria-label={`Runtime placement for ${runtimePlacementFunction.name}`}
@@ -1661,7 +2267,13 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
                       </Suspense>
                     ) : (
                       <pre style={{ color: highlightedSource?.foreground }}>
-                        <code>{sourceLines.map(renderCodeLine)}</code>
+                        <code>
+                          {functionOnly && activeFunction
+                            ? sourceLines
+                              .slice(activeFunction.startLine - 1, activeFunction.endLine)
+                              .map((line, offset) => renderCodeLine(line, activeFunction.startLine - 1 + offset))
+                            : sourceLines.map(renderCodeLine)}
+                        </code>
                       </pre>
                     )}
                 </div>
@@ -1685,6 +2297,18 @@ export function SourceCodeModal({ file, sourceFiles = [], runtimeContext, fileCo
           </div>
         </div>
       </section>
+  );
+
+  return embedded ? modal : (
+    <div
+      className="source-modal__backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      {modal}
     </div>
   );
 }

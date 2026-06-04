@@ -5,6 +5,8 @@ const COMMIT_LIMIT = 80;
 const FILE_RECENT_COMMIT_LIMIT = 5;
 const FIELD_SEPARATOR = "\x1f";
 const RECORD_SEPARATOR = "\x1e";
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const DAYS_PER_MONTH = 30;
 
 function normalizeGitPath(filePath: string): string {
   return filePath.trim().replaceAll("\\", "/");
@@ -43,6 +45,19 @@ function parseLogOutput(output: string): CommitInfo[] {
     .filter((commit) => commit.hash.length > 0);
 }
 
+function sampledHistoryWindowMonths(commits: CommitInfo[]): number {
+  const timestamps = commits
+    .map((commit) => Date.parse(commit.date))
+    .filter((timestamp) => Number.isFinite(timestamp));
+
+  if (timestamps.length < 2) {
+    return 1;
+  }
+
+  const spanDays = (Math.max(...timestamps) - Math.min(...timestamps)) / MS_PER_DAY;
+  return Math.max(1, spanDays / DAYS_PER_MONTH);
+}
+
 export async function extractGitHistory(repoRoot: string): Promise<{
   commits: CommitInfo[];
   fileHistory: Record<string, FileHistoryInfo>;
@@ -59,12 +74,14 @@ export async function extractGitHistory(repoRoot: string): Promise<{
     ]);
     const commits = parseLogOutput(output);
     const fileHistory = new Map<string, FileHistoryInfo>();
+    const historyWindowMonths = sampledHistoryWindowMonths(commits);
 
     for (const commit of commits) {
       for (const changedFile of commit.changedFiles) {
         const existing = fileHistory.get(changedFile) ?? {
           path: changedFile,
           commitCount: 0,
+          churnRate: 0,
           lastModified: commit.date,
           authors: [],
           recentCommits: []
@@ -86,6 +103,10 @@ export async function extractGitHistory(repoRoot: string): Promise<{
 
         fileHistory.set(changedFile, existing);
       }
+    }
+
+    for (const history of fileHistory.values()) {
+      history.churnRate = Number((history.commitCount / historyWindowMonths).toFixed(2));
     }
 
     return {

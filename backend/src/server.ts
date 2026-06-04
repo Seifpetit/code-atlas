@@ -16,6 +16,13 @@ import {
   searchPublicRepositories,
   startGitHubOAuth
 } from "./githubAuth.js";
+import {
+  ensureSavedGraphStore,
+  listSavedGraphsForSession,
+  loadSavedGraphForSession,
+  saveGraphForSession,
+  type SavedGraphPayload
+} from "./savedGraphs.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -61,7 +68,7 @@ app.use(cors({
     callback(new Error("Origin is not allowed by Code Atlas CORS policy."));
   }
 }));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "50mb" }));
 
 app.get("/health", (_request, response) => {
   response.json({ ok: true });
@@ -107,6 +114,87 @@ app.get("/github/public-repos", async (request, response) => {
   }
 });
 
+app.get("/graphs", async (request, response) => {
+  const session = githubSessionFor(request);
+
+  if (!session) {
+    response.status(401).json({ error: "Connect GitHub before loading saved maps." });
+    return;
+  }
+
+  try {
+    response.json({ graphs: await listSavedGraphsForSession(session) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load saved maps.";
+    response.status(500).json({ error: message });
+  }
+});
+
+app.get("/graphs/:id", async (request, response) => {
+  const session = githubSessionFor(request);
+
+  if (!session) {
+    response.status(401).json({ error: "Connect GitHub before opening saved maps." });
+    return;
+  }
+
+  try {
+    const savedGraph = await loadSavedGraphForSession(session, request.params.id);
+
+    if (!savedGraph) {
+      response.status(404).json({ error: "Saved map not found." });
+      return;
+    }
+
+    response.json({
+      savedGraph: {
+        id: savedGraph.id,
+        repoUrl: savedGraph.repoUrl,
+        repoLabel: savedGraph.repoLabel,
+        commitSha: savedGraph.commitSha,
+        nodeCount: savedGraph.nodeCount,
+        edgeCount: savedGraph.edgeCount,
+        createdAt: savedGraph.createdAt,
+        updatedAt: savedGraph.updatedAt
+      },
+      graph: savedGraph.graph
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to open saved map.";
+    response.status(500).json({ error: message });
+  }
+});
+
+app.post("/graphs", async (request, response) => {
+  const session = githubSessionFor(request);
+
+  if (!session) {
+    response.status(401).json({ error: "Connect GitHub before saving maps." });
+    return;
+  }
+
+  const repoUrl = request.body?.repoUrl;
+  const graph = request.body?.graph as SavedGraphPayload | undefined;
+
+  if (typeof repoUrl !== "string" || repoUrl.trim().length === 0) {
+    response.status(400).json({ error: "repoUrl is required." });
+    return;
+  }
+
+  if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+    response.status(400).json({ error: "A valid graph payload is required." });
+    return;
+  }
+
+  try {
+    const savedGraph = await saveGraphForSession(session, repoUrl.trim(), graph);
+    response.json({ savedGraph });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to save map.";
+    response.status(500).json({ error: message });
+  }
+});
+
 app.post("/analyze", async (request, response) => {
   const repoUrl = request.body?.repoUrl;
 
@@ -125,12 +213,12 @@ app.post("/analyze", async (request, response) => {
       githubToken: githubSessionFor(request)?.accessToken
     });
     const cloneMs = Date.now() - cloneStartedAt;
-    const graphStartedAt = Date.now();
-    const graph = await extractGraph(repoPath);
-    const extractGraphMs = Date.now() - graphStartedAt;
     const historyStartedAt = Date.now();
     const history = await extractGitHistory(repoPath);
     const extractHistoryMs = Date.now() - historyStartedAt;
+    const graphStartedAt = Date.now();
+    const graph = await extractGraph(repoPath, history.fileHistory);
+    const extractGraphMs = Date.now() - graphStartedAt;
     response.json({
       ...graph,
       commits: history.commits,
@@ -193,6 +281,11 @@ if (existsSync(frontendIndexPath)) {
 
 app.listen(port, () => {
   console.log(`Code Atlas backend listening on http://localhost:${port}`);
+});
+
+void ensureSavedGraphStore().catch((error) => {
+  const message = error instanceof Error ? error.message : "Saved graph store initialization failed.";
+  console.error(message);
 });
 
 function loadEnvFile(filePath: string): void {

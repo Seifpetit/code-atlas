@@ -62,7 +62,36 @@ interface PythonVariableDeclaration {
   owner?: PythonSyntaxNode;
 }
 
+interface PythonFunctionComplexity {
+  cyclomaticComplexity: number;
+  cognitiveComplexity: number;
+}
+
 const OPERATIONAL_VARIABLE_NAME_PATTERN = /(?:runtime|graph|node|focus|selected|context|corridor|xray|x-ray|position)/i;
+const PYTHON_CYCLOMATIC_NODE_NAMES = new Set([
+  "IfStatement",
+  "ForStatement",
+  "WhileStatement",
+  "ExceptClause",
+  "ConditionalExpression",
+  "MatchClause"
+]);
+const PYTHON_COGNITIVE_FLAT_NODE_NAMES = new Set([
+  "IfStatement",
+  "ForStatement",
+  "WhileStatement",
+  "ExceptClause",
+  "ConditionalExpression",
+  "MatchStatement",
+  "MatchClause"
+]);
+const PYTHON_COGNITIVE_NESTING_NODE_NAMES = new Set([
+  "IfStatement",
+  "ForStatement",
+  "WhileStatement",
+  "ExceptClause",
+  "MatchStatement"
+]);
 
 function nodeText(source: string, node: PythonSyntaxNode): string {
   return source.slice(node.from, node.to);
@@ -90,6 +119,81 @@ function descendantNodes(node: PythonSyntaxNode, name: string): PythonSyntaxNode
   }
 
   return descendants;
+}
+
+function pythonLogicalOperatorFor(node: PythonSyntaxNode | null): string | null {
+  if (!node || node.name !== "BinaryExpression") {
+    return null;
+  }
+
+  const operator = childNodes(node).find((child) => child.name === "and" || child.name === "or");
+  return operator?.name ?? null;
+}
+
+function isPythonLogicalSequenceRoot(node: PythonSyntaxNode): boolean {
+  const operator = pythonLogicalOperatorFor(node);
+  if (!operator) {
+    return false;
+  }
+
+  return pythonLogicalOperatorFor(node.parent) !== operator;
+}
+
+function hasPythonJumpTarget(node: PythonSyntaxNode): boolean {
+  return (
+    (node.name === "BreakStatement" || node.name === "ContinueStatement") &&
+    childNodes(node).length > 1
+  );
+}
+
+function functionComplexityFor(root: PythonSyntaxNode): PythonFunctionComplexity {
+  let cyclomaticComplexity = 1;
+  let cognitiveComplexity = 0;
+
+  function addCognitiveIncrement(depth: number): void {
+    cognitiveComplexity += 1 + depth;
+  }
+
+  function visit(node: PythonSyntaxNode, nestingDepth: number): void {
+    if (node !== root && (node.name === "FunctionDefinition" || node.name === "ClassDefinition")) {
+      return;
+    }
+
+    if (PYTHON_CYCLOMATIC_NODE_NAMES.has(node.name) || pythonLogicalOperatorFor(node)) {
+      cyclomaticComplexity += 1;
+    }
+
+    if (
+      PYTHON_COGNITIVE_FLAT_NODE_NAMES.has(node.name) ||
+      isPythonLogicalSequenceRoot(node) ||
+      hasPythonJumpTarget(node)
+    ) {
+      addCognitiveIncrement(nestingDepth);
+    }
+
+    if (node.name === "IfStatement") {
+      for (const child of childNodes(node)) {
+        if (child.name === "elif" || child.name === "else") {
+          addCognitiveIncrement(nestingDepth);
+        }
+      }
+    }
+
+    const childNestingDepth = PYTHON_COGNITIVE_NESTING_NODE_NAMES.has(node.name)
+      ? nestingDepth + 1
+      : nestingDepth;
+
+    for (const child of childNodes(node)) {
+      visit(child, childNestingDepth);
+    }
+  }
+
+  visit(root, 0);
+
+  return {
+    cyclomaticComplexity,
+    cognitiveComplexity
+  };
 }
 
 function directChild(node: PythonSyntaxNode, name: string): PythonSyntaxNode | undefined {
@@ -697,20 +801,28 @@ export function extractPython(
       }])
   );
   const functionWaypoints = nodes
-    .map((waypoint) => ({
-      waypointId: waypoint.waypointId,
-      name: waypoint.name,
-      kind: waypoint.kind,
-      startLine: waypoint.startLine,
-      endLine: waypoint.endLine,
-      exported: false,
-      public: waypoint.isPublic,
-      exportNames: waypoint.isModuleLevel ? [waypoint.name] : [],
-      inputs: inputsFor(source, waypoint.node, starts),
-      outputs: outputsFor(source, waypoint.node, starts, waypoint.isAsync),
-      calls: callsFor(source, sourcePath, waypoint, starts, resolvedImports.bindings, localTargets, methodTargets),
-      stateUpdates: []
-    }))
+    .map((waypoint) => {
+      const complexity = functionComplexityFor(waypoint.node);
+
+      return {
+        waypointId: waypoint.waypointId,
+        name: waypoint.name,
+        kind: waypoint.kind,
+        startLine: waypoint.startLine,
+        endLine: waypoint.endLine,
+        exported: false,
+        public: waypoint.isPublic,
+        exportNames: waypoint.isModuleLevel ? [waypoint.name] : [],
+        cyclomaticComplexity: complexity.cyclomaticComplexity,
+        cognitiveComplexity: complexity.cognitiveComplexity,
+        duplicateOf: null,
+        duplicateGroup: null,
+        inputs: inputsFor(source, waypoint.node, starts),
+        outputs: outputsFor(source, waypoint.node, starts, waypoint.isAsync),
+        calls: callsFor(source, sourcePath, waypoint, starts, resolvedImports.bindings, localTargets, methodTargets),
+        stateUpdates: []
+      };
+    })
     .sort((left, right) => left.startLine - right.startLine || left.name.localeCompare(right.name));
 
   return {

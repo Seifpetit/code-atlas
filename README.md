@@ -152,7 +152,78 @@ code-atlas/
 ## Run it yourself
 
 ```bash
-git clone https://github.com/your-username/code-atlas
+git clone https://github.com/Seifpetit/code-atlas.git
 cd code-atlas
-# add instructions here
+```
+
+Install dependencies:
+
+```bash
+cd backend
+npm install
+
+cd ../frontend
+npm install
+```
+
+Start the backend in one terminal:
+
+```bash
+cd backend
+npm run dev
+```
+
+The API runs on:
+
+```text
+http://localhost:4000
+```
+
+Start the frontend in a second terminal:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open the Vite URL:
+
+```text
+http://localhost:5173
+```
+
+You can analyze public GitHub repositories without any OAuth setup. Paste a repo URL such as:
+
+```text
+https://github.com/vitejs/vite
+```
+
+To enable connected GitHub repositories locally, copy the backend env example and fill in your GitHub OAuth app values:
+
+```bash
+cd backend
+cp .env.example .env
+```
+
+```text
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+GITHUB_OAUTH_CALLBACK_URL=http://localhost:4000/auth/github/callback
+FRONTEND_URL=http://localhost:5173
+```
+
+Register this callback URL in the GitHub OAuth app:
+
+```text
+http://localhost:4000/auth/github/callback
+```
+
+Build checks:
+
+```bash
+cd backend
+npm run build
+
+cd ../frontend
+npm run build
 ```

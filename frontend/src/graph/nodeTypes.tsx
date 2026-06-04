@@ -4,6 +4,7 @@ import { Handle, Position } from "@xyflow/react";
 import type { AtlasNode } from "../api";
 import type { NodeVisualState } from "./attention/attentionTypes";
 import { filePaletteForExtension } from "./filePalette";
+import { getHealthTier, type GraphNode } from "./healthScore";
 
 type StructuralKind = "folder" | "file";
 const FUNCTION_METADATA_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
@@ -13,7 +14,10 @@ interface RelationStubData {
   outgoingCount: number;
   incomingEdgeIds: string[];
   outgoingEdgeIds: string[];
-  onTraceStart?: (edgeIds: string[]) => void;
+  incomingFolderRelationCounts?: Record<string, number>;
+  outgoingFolderRelationCounts?: Record<string, number>;
+  onTraceStart?: (edgeIds: string[], folderRelationCounts?: Record<string, number>) => void;
+  onTraceToggle?: (edgeIds: string[], folderRelationCounts?: Record<string, number>) => void;
   onTraceEnd?: () => void;
 }
 
@@ -86,9 +90,18 @@ function NodeContent({
   const shouldShowFunctionCount = hasFunctionMetadata(data) && typeof functionCount === "number";
   const path = displayedPath(data, structuralKind);
   const fileLabel = structuralKind === "file" ? fileLabelParts(data) : null;
+  const relationTraceCount = structuralKind === "folder" ? Number(data.relationTraceCount ?? 0) : 0;
 
   return (
     <>
+      {relationTraceCount > 0 ? (
+        <div
+          className="atlas-node__relation-trace-count"
+          title={`${relationTraceCount} relationship${relationTraceCount === 1 ? "" : "s"} handled by this folder`}
+        >
+          {relationTraceCount}
+        </div>
+      ) : null}
       <div className="atlas-node__kind">{structuralKind}</div>
       {fileLabel ? (
         <div className="atlas-node__label atlas-node__label--file">
@@ -149,8 +162,13 @@ function FolderShape(props: NodeChromeProps) {
 }
 
 function FileShape(props: NodeChromeProps) {
+  const healthTier = getHealthTier(props.data as GraphNode);
+
   return (
     <div className="atlas-node__shape atlas-node__shape--file">
+      {healthTier === "warning" || healthTier === "critical" ? (
+        <span className={`atlas-node__health-dot atlas-node__health-dot--${healthTier}`} aria-hidden="true" />
+      ) : null}
       <svg
         className="atlas-node__file-frame"
         viewBox="0 0 130 180"
@@ -204,6 +222,12 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
     "--atlas-node-height": `${Number(data.layoutHeight ?? 92)}px`,
     "--atlas-node-scale": Number(data.layoutScale ?? 1)
   } as CSSProperties;
+  const incomingHasTrace =
+    Boolean(relationStub?.incomingEdgeIds.length) ||
+    Object.keys(relationStub?.incomingFolderRelationCounts ?? {}).length > 0;
+  const outgoingHasTrace =
+    Boolean(relationStub?.outgoingEdgeIds.length) ||
+    Object.keys(relationStub?.outgoingFolderRelationCounts ?? {}).length > 0;
 
   return (
     <div
@@ -214,16 +238,16 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
       <Handle
         type="target"
         position={Position.Left}
-        className={`atlas-handle atlas-handle--input ${connectionPorts?.input ? "is-connected" : ""} ${relationStub?.incomingEdgeIds.length ? "is-traceable" : ""}`.trim()}
+        className={`atlas-handle atlas-handle--input ${connectionPorts?.input ? "is-connected" : ""} ${incomingHasTrace ? "is-traceable" : ""}`.trim()}
         data-port={connectionPorts?.input ? "I" : undefined}
         title={connectionPorts?.input ? "Incoming connection" : undefined}
         onPointerEnter={() => {
-          if (relationStub?.incomingEdgeIds.length) {
-            relationStub.onTraceStart?.(relationStub.incomingEdgeIds);
+          if (relationStub && incomingHasTrace) {
+            relationStub.onTraceStart?.(relationStub.incomingEdgeIds, relationStub.incomingFolderRelationCounts);
           }
         }}
         onPointerLeave={() => {
-          if (relationStub?.incomingEdgeIds.length) {
+          if (relationStub && incomingHasTrace) {
             relationStub.onTraceEnd?.();
           }
         }}
@@ -232,9 +256,14 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
         <button
           type="button"
           className="relation-stub relation-stub--incoming"
+          onClick={() => {
+            if (incomingHasTrace) {
+              relationStub.onTraceToggle?.(relationStub.incomingEdgeIds, relationStub.incomingFolderRelationCounts);
+            }
+          }}
           onPointerEnter={() => {
-            if (relationStub.incomingEdgeIds.length) {
-              relationStub.onTraceStart?.(relationStub.incomingEdgeIds);
+            if (incomingHasTrace) {
+              relationStub.onTraceStart?.(relationStub.incomingEdgeIds, relationStub.incomingFolderRelationCounts);
             }
           }}
           onPointerLeave={() => relationStub.onTraceEnd?.()}
@@ -265,9 +294,14 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
         <button
           type="button"
           className="relation-stub relation-stub--outgoing"
+          onClick={() => {
+            if (outgoingHasTrace) {
+              relationStub.onTraceToggle?.(relationStub.outgoingEdgeIds, relationStub.outgoingFolderRelationCounts);
+            }
+          }}
           onPointerEnter={() => {
-            if (relationStub.outgoingEdgeIds.length) {
-              relationStub.onTraceStart?.(relationStub.outgoingEdgeIds);
+            if (outgoingHasTrace) {
+              relationStub.onTraceStart?.(relationStub.outgoingEdgeIds, relationStub.outgoingFolderRelationCounts);
             }
           }}
           onPointerLeave={() => relationStub.onTraceEnd?.()}
@@ -280,16 +314,16 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
       <Handle
         type="source"
         position={Position.Right}
-        className={`atlas-handle atlas-handle--export ${connectionPorts?.export ? "is-connected" : ""} ${relationStub?.outgoingEdgeIds.length ? "is-traceable" : ""}`.trim()}
+        className={`atlas-handle atlas-handle--export ${connectionPorts?.export ? "is-connected" : ""} ${outgoingHasTrace ? "is-traceable" : ""}`.trim()}
         data-port={connectionPorts?.export ? "O" : undefined}
         title={connectionPorts?.export ? "Outgoing connection" : undefined}
         onPointerEnter={() => {
-          if (relationStub?.outgoingEdgeIds.length) {
-            relationStub.onTraceStart?.(relationStub.outgoingEdgeIds);
+          if (relationStub && outgoingHasTrace) {
+            relationStub.onTraceStart?.(relationStub.outgoingEdgeIds, relationStub.outgoingFolderRelationCounts);
           }
         }}
         onPointerLeave={() => {
-          if (relationStub?.outgoingEdgeIds.length) {
+          if (relationStub && outgoingHasTrace) {
             relationStub.onTraceEnd?.();
           }
         }}

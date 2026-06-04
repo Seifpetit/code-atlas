@@ -1,12 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Node, Project, SourceFile, SyntaxKind, type Node as MorphNode } from "ts-morph";
-import { buildGraph } from "./buildGraph.js";
+import { buildGraph, detectDuplicates } from "./buildGraph.js";
 import { extractPython, type PythonExtraction } from "./extractPython.js";
 import type {
   CompressionReason,
   ExtractedFileMetadata,
   ExtractedStructure,
+  FileHistoryInfo,
   FunctionCall,
   FunctionInput,
   FunctionOutput,
@@ -106,6 +107,39 @@ const FUNCTION_LIKE_KINDS = [
   SyntaxKind.SetAccessor,
   SyntaxKind.Constructor
 ];
+const CYCLOMATIC_BRANCH_KINDS = new Set<SyntaxKind>([
+  SyntaxKind.IfStatement,
+  SyntaxKind.ForStatement,
+  SyntaxKind.ForInStatement,
+  SyntaxKind.ForOfStatement,
+  SyntaxKind.WhileStatement,
+  SyntaxKind.DoStatement,
+  SyntaxKind.CaseClause,
+  SyntaxKind.CatchClause,
+  SyntaxKind.ConditionalExpression
+]);
+const COGNITIVE_FLAT_KINDS = new Set<SyntaxKind>([
+  SyntaxKind.IfStatement,
+  SyntaxKind.ForStatement,
+  SyntaxKind.ForInStatement,
+  SyntaxKind.ForOfStatement,
+  SyntaxKind.WhileStatement,
+  SyntaxKind.DoStatement,
+  SyntaxKind.CaseClause,
+  SyntaxKind.DefaultClause,
+  SyntaxKind.CatchClause,
+  SyntaxKind.ConditionalExpression
+]);
+const COGNITIVE_NESTING_KINDS = new Set<SyntaxKind>([
+  SyntaxKind.IfStatement,
+  SyntaxKind.ForStatement,
+  SyntaxKind.ForInStatement,
+  SyntaxKind.ForOfStatement,
+  SyntaxKind.WhileStatement,
+  SyntaxKind.DoStatement,
+  SyntaxKind.CatchClause,
+  SyntaxKind.SwitchStatement
+]);
 
 interface CallTarget {
   definitionPath: string;
@@ -130,6 +164,11 @@ interface WaypointNode {
   };
 }
 
+interface FunctionComplexity {
+  cyclomaticComplexity: number;
+  cognitiveComplexity: number;
+}
+
 function countLinesOfCode(contents: string): number {
   return contents.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
 }
@@ -139,6 +178,82 @@ function countFunctions(sourceFile: SourceFile): number {
     (total, kind) => total + sourceFile.getDescendantsOfKind(kind).length,
     0
   );
+}
+
+function logicalOperatorFor(node: MorphNode | undefined): string | null {
+  if (!Node.isBinaryExpression(node)) {
+    return null;
+  }
+
+  const operator = node.getOperatorToken().getText();
+  return operator === "&&" || operator === "||" ? operator : null;
+}
+
+function isLogicalSequenceRoot(node: MorphNode): boolean {
+  const operator = logicalOperatorFor(node);
+  if (!operator) {
+    return false;
+  }
+
+  return logicalOperatorFor(node.getParent()) !== operator;
+}
+
+function isLabelledJump(node: MorphNode): boolean {
+  const kind = node.getKind();
+  if (kind !== SyntaxKind.BreakStatement && kind !== SyntaxKind.ContinueStatement) {
+    return false;
+  }
+
+  return /^(?:break|continue)\s+[A-Za-z_$][\w$]*\s*;?$/.test(node.getText().trim());
+}
+
+function functionComplexityFor(root: MorphNode): FunctionComplexity {
+  let cyclomaticComplexity = 1;
+  let cognitiveComplexity = 0;
+
+  function addCognitiveIncrement(depth: number): void {
+    cognitiveComplexity += 1 + depth;
+  }
+
+  function visit(node: MorphNode, nestingDepth: number): void {
+    if (node !== root && FUNCTION_LIKE_KINDS.includes(node.getKind())) {
+      return;
+    }
+
+    const kind = node.getKind();
+
+    if (CYCLOMATIC_BRANCH_KINDS.has(kind)) {
+      cyclomaticComplexity += 1;
+    } else if (Node.isBinaryExpression(node)) {
+      const operator = node.getOperatorToken().getText();
+      if (operator === "&&" || operator === "||" || operator === "??") {
+        cyclomaticComplexity += 1;
+      }
+    }
+
+    if (COGNITIVE_FLAT_KINDS.has(kind) || isLogicalSequenceRoot(node) || isLabelledJump(node)) {
+      addCognitiveIncrement(nestingDepth);
+    }
+
+    if (Node.isIfStatement(node) && node.getElseStatement()) {
+      addCognitiveIncrement(nestingDepth);
+    }
+
+    const childNestingDepth = COGNITIVE_NESTING_KINDS.has(kind)
+      ? nestingDepth + 1
+      : nestingDepth;
+
+    for (const child of node.getChildren()) {
+      visit(child, childNestingDepth);
+    }
+  }
+
+  visit(root, 0);
+
+  return {
+    cyclomaticComplexity,
+    cognitiveComplexity
+  };
 }
 
 function contextualFunctionName(
@@ -867,6 +982,7 @@ function functionWaypoints(
   return waypointNodes
     .map((waypoint) => {
       const exportNames = exportNamesForWaypoint(sourceFile, waypoint.node, waypoint.identity);
+      const complexity = functionComplexityFor(waypoint.node);
 
       return {
         waypointId: waypoint.waypointId,
@@ -876,6 +992,10 @@ function functionWaypoints(
         endLine: waypoint.node.getEndLineNumber(),
         exported: isExportedWaypoint(waypoint.node) || exportNames.length > 0,
         exportNames,
+        cyclomaticComplexity: complexity.cyclomaticComplexity,
+        cognitiveComplexity: complexity.cognitiveComplexity,
+        duplicateOf: null,
+        duplicateGroup: null,
         inputs: inputsFor(waypoint.node),
         outputs: outputsFor(waypoint.node),
         calls: [...callsFor(waypoint, sourcePath, imports, waypointNodes), ...renderedComponentsFor(waypoint, sourcePath, imports, waypointNodes)]
@@ -1345,7 +1465,10 @@ function connectInputSources(structure: ExtractedStructure): void {
   }
 }
 
-export async function extractGraph(repoRoot: string): Promise<GraphJson> {
+export async function extractGraph(
+  repoRoot: string,
+  fileHistory: Record<string, FileHistoryInfo> = {}
+): Promise<GraphJson> {
   const structure: ExtractedStructure = {
     folders: new Set(),
     files: new Set(),
@@ -1443,6 +1566,7 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
 
   resolveCallWaypointReferences(structure);
   connectInputSources(structure);
+  detectDuplicates(structure);
 
   for (const filePath of structure.files) {
     const metadata = structure.fileMetadata.get(filePath);
@@ -1456,5 +1580,5 @@ export async function extractGraph(repoRoot: string): Promise<GraphJson> {
     }
   }
 
-  return buildGraph(structure);
+  return buildGraph(structure, fileHistory);
 }

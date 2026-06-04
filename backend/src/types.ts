@@ -7,6 +7,16 @@ export type CompressionReason =
   | "pass-through-export"
   | "package-gateway";
 export type FunctionWaypointKind = "function" | "arrow" | "method" | "accessor" | "constructor" | "effect";
+export type HealthTier = "healthy" | "warning" | "critical" | "unscored";
+export type UnscoredHealthReason = "no-functions";
+
+export interface HealthComponents {
+  cyclomatic: number;
+  cognitive: number;
+  duplication: number;
+  churn: number;
+  ghostRatio: number;
+}
 
 export interface FunctionInputSource {
   filePath: string;
@@ -72,6 +82,10 @@ export interface FunctionWaypoint {
   exported: boolean;
   public?: boolean;
   exportNames?: string[];
+  cyclomaticComplexity?: number;
+  cognitiveComplexity: number;
+  duplicateOf: string[] | null;
+  duplicateGroup: string | null;
   inputs: FunctionInput[];
   outputs: FunctionOutput[];
   calls: FunctionCall[];
@@ -85,6 +99,10 @@ export interface GraphNode {
   path: string;
   parent?: string;
   sourceText?: string;
+  healthScore?: number | null;
+  healthTier?: HealthTier;
+  healthComponents?: HealthComponents | null;
+  unscoredReason?: UnscoredHealthReason;
   metadata?: {
     extension?: string;
     importCount?: number;
@@ -149,6 +167,7 @@ export interface CommitInfo {
 export interface FileHistoryInfo {
   path: string;
   commitCount: number;
+  churnRate?: number;
   lastModified: string;
   authors: string[];
   recentCommits: Array<{

@@ -5,6 +5,16 @@ export interface AtlasNode extends Record<string, unknown> {
   path: string;
   parent?: string;
   sourceText?: string;
+  healthScore?: number | null;
+  healthTier?: "healthy" | "warning" | "critical" | "unscored";
+  healthComponents?: {
+    cyclomatic: number;
+    cognitive: number;
+    duplication: number;
+    churn: number;
+    ghostRatio: number;
+  } | null;
+  unscoredReason?: "no-functions";
   metadata?: {
     extension?: string;
     importCount?: number;
@@ -22,6 +32,10 @@ export interface AtlasNode extends Record<string, unknown> {
       exported: boolean;
       public?: boolean;
       exportNames?: string[];
+      cyclomaticComplexity?: number;
+      cognitiveComplexity?: number;
+      duplicateOf?: string[] | null;
+      duplicateGroup?: string | null;
       inputs: Array<{
         name: string;
         line: number;
@@ -106,6 +120,7 @@ export interface CommitInfo {
 export interface FileHistoryInfo {
   path: string;
   commitCount: number;
+  churnRate?: number;
   lastModified: string;
   authors: string[];
   recentCommits: Array<{
@@ -158,6 +173,17 @@ export interface GitHubRepository {
   stargazersCount?: number;
   language?: string | null;
   topics?: string[];
+}
+
+export interface SavedGraphSummary {
+  id: string;
+  repoUrl: string;
+  repoLabel: string;
+  commitSha: string | null;
+  nodeCount: number;
+  edgeCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -217,6 +243,50 @@ export async function loadGitHubRepositories(query: string): Promise<GitHubRepos
   }
 
   return payload.repositories as GitHubRepository[];
+}
+
+export async function listSavedGraphs(): Promise<SavedGraphSummary[]> {
+  const response = await fetch(`${API_BASE_URL}/graphs`, {
+    credentials: "include"
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to load saved maps.");
+  }
+
+  return payload.graphs as SavedGraphSummary[];
+}
+
+export async function loadSavedGraph(id: string): Promise<{ savedGraph: SavedGraphSummary; graph: AtlasGraph }> {
+  const response = await fetch(`${API_BASE_URL}/graphs/${encodeURIComponent(id)}`, {
+    credentials: "include"
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to open saved map.");
+  }
+
+  return payload as { savedGraph: SavedGraphSummary; graph: AtlasGraph };
+}
+
+export async function saveGraph(repoUrl: string, graph: AtlasGraph): Promise<SavedGraphSummary> {
+  const response = await fetch(`${API_BASE_URL}/graphs`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ repoUrl, graph })
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to save map.");
+  }
+
+  return payload.savedGraph as SavedGraphSummary;
 }
 
 export async function logoutGitHub(): Promise<void> {
