@@ -720,3 +720,42 @@ Rationale:
   manual context switching for users with connected GitHub accounts.
 - Keeping tokens out of frontend state prevents the repo picker from becoming a
   browser-side credential surface.
+
+## 30. Risk X-Ray Shows Deterministic Refactor Pressure
+
+Status:
+- Accepted
+
+Decision:
+- A green `Risk` graph tool sits directly to the left of the structural
+  `Select` tool.
+- Activating it runs a fast left-to-right scanline across the atlas and then
+  keeps file chrome in a deterministic refactor pressure palette.
+- Risk categories are labeled `Start Here`, `Foundation`, `Needs Isolation`,
+  `High-Leverage Risk`, `Critical Surface`, and `Stable`.
+- The pressure tiers are computed from existing static graph facts only:
+  file size, function count, import fan-in/fan-out, health score, duplicate
+  markers, and source-pattern ownership of state/effects/events/async,
+  persistence/auth, or React Flow viewport behavior.
+- Risk X-Ray changes only file outline, folded-corner colors, and a restrained
+  behind-node glow. It does not change layout, focus, relationship traces,
+  runtime state, hierarchy, saved view state, file bodies, folders, or lineage
+  anchors.
+
+Rationale:
+- Users need a quick way to see where refactoring is likely safe, worthwhile,
+  or behaviorally dangerous before opening files one by one.
+- Refactor safety can be surfaced as deterministic pressure with reasons
+  without implying AI advice or semantic certainty.
+- A scan transition makes the mode feel like an intentional diagnostic pass
+  rather than unexplained recoloring.
+- The glow is a scanning aid for zoomed-out use. It reinforces the decision
+  model without becoming the primary source of information.
+
+Implications:
+- New pressure rules must remain inspectable and based on deterministic
+  repository evidence.
+- The palette communicates refactor risk and payoff, not code quality or
+  severity.
+- Future sound or richer diagnostics should remain optional and must not
+  interfere with the structural graph interaction model.

@@ -11,6 +11,7 @@
 
 .atlas-node__shape {
   position: relative;
+  z-index: 1;
   width: 100%;
   min-height: var(--atlas-node-height, 92px);
   border: 1px solid #334155;
@@ -42,6 +43,24 @@
   height: var(--atlas-node-height, 180px);
   border: 0;
   background: #333;
+}
+
+.atlas-node__risk-glow {
+  position: absolute;
+  inset: -8px;
+  z-index: 0;
+  height: calc(var(--atlas-node-height, 180px) + 16px);
+  pointer-events: none;
+  clip-path: path("M 18 8 H 109 Q 114 8 118 12 L 134 28 Q 138 32 138 37 V 178 Q 138 188 128 188 H 18 Q 8 188 8 178 V 18 Q 8 8 18 8 Z");
+  background:
+    radial-gradient(circle at 52% 44%, var(--risk-glow-core), var(--risk-glow-mid) 48%, transparent 74%),
+    linear-gradient(135deg, var(--risk-glow-start), var(--risk-glow-end));
+  filter: blur(var(--risk-glow-blur, 12px));
+  opacity: 0;
+  transform: scale(var(--risk-glow-scale, 1.02));
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease;
 }
 
 .atlas-node__health-dot {
@@ -226,6 +245,123 @@
   stroke-linejoin: round;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
+}
+
+.atlas-node__file-outline,
+.atlas-node__file-fold {
+  transition:
+    fill 220ms ease,
+    opacity 220ms ease,
+    stroke 220ms ease;
+}
+
+.graph-shell.is-refactor-risk-scanning .atlas-node--file .atlas-node__file-outline,
+.graph-shell.is-refactor-risk-scanning .atlas-node--file .atlas-node__file-fold {
+  transition-delay: var(--risk-scan-delay, 0ms);
+}
+
+.graph-shell.is-refactor-risk-scanning .atlas-node--file .atlas-node__risk-glow {
+  transition-delay: var(--risk-scan-delay, 0ms);
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-safe .atlas-node__shape {
+  --atlas-file-border: #22c55e;
+  --atlas-file-fold-border: rgba(34, 197, 94, 0.86);
+  --atlas-file-fold-background: rgba(34, 197, 94, 0.14);
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-foundation .atlas-node__shape {
+  --atlas-file-border: #3b82f6;
+  --atlas-file-fold-border: rgba(59, 130, 246, 0.84);
+  --atlas-file-fold-background: rgba(37, 99, 235, 0.13);
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-careful .atlas-node__shape {
+  --atlas-file-border: #eab308;
+  --atlas-file-fold-border: rgba(234, 179, 8, 0.86);
+  --atlas-file-fold-background: rgba(202, 138, 4, 0.15);
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-danger .atlas-node__shape {
+  --atlas-file-border: #ef4444;
+  --atlas-file-fold-border: rgba(239, 68, 68, 0.9);
+  --atlas-file-fold-background: rgba(220, 38, 38, 0.15);
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-mixed .atlas-node__shape {
+  --atlas-file-border: #d946ef;
+  --atlas-file-fold-border: rgba(217, 70, 239, 0.88);
+  --atlas-file-fold-background: rgba(192, 38, 211, 0.16);
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-quiet .atlas-node__shape {
+  --atlas-file-border: #64748b;
+  --atlas-file-fold-border: rgba(100, 116, 139, 0.7);
+  --atlas-file-fold-background: rgba(100, 116, 139, 0.08);
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-safe .atlas-node__risk-glow {
+  --risk-glow-core: rgba(34, 197, 94, 0.28);
+  --risk-glow-mid: rgba(16, 185, 129, 0.16);
+  --risk-glow-start: rgba(34, 197, 94, 0.22);
+  --risk-glow-end: rgba(20, 184, 166, 0.08);
+  --risk-glow-blur: 12px;
+  --risk-glow-scale: 1.02;
+  opacity: 0.42;
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-foundation .atlas-node__risk-glow {
+  --risk-glow-core: rgba(59, 130, 246, 0.24);
+  --risk-glow-mid: rgba(14, 165, 233, 0.13);
+  --risk-glow-start: rgba(59, 130, 246, 0.19);
+  --risk-glow-end: rgba(6, 182, 212, 0.07);
+  --risk-glow-blur: 11px;
+  --risk-glow-scale: 1.018;
+  opacity: 0.34;
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-careful .atlas-node__risk-glow {
+  --risk-glow-core: rgba(234, 179, 8, 0.28);
+  --risk-glow-mid: rgba(245, 158, 11, 0.15);
+  --risk-glow-start: rgba(234, 179, 8, 0.21);
+  --risk-glow-end: rgba(217, 119, 6, 0.08);
+  --risk-glow-blur: 12px;
+  --risk-glow-scale: 1.02;
+  opacity: 0.4;
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-mixed .atlas-node__risk-glow {
+  --risk-glow-core: rgba(217, 70, 239, 0.32);
+  --risk-glow-mid: rgba(192, 38, 211, 0.17);
+  --risk-glow-start: rgba(217, 70, 239, 0.24);
+  --risk-glow-end: rgba(236, 72, 153, 0.09);
+  --risk-glow-blur: 13px;
+  --risk-glow-scale: 1.022;
+  opacity: 0.42;
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-danger .atlas-node__risk-glow {
+  --risk-glow-core: rgba(239, 68, 68, 0.34);
+  --risk-glow-mid: rgba(220, 38, 38, 0.18);
+  --risk-glow-start: rgba(239, 68, 68, 0.25);
+  --risk-glow-end: rgba(251, 113, 133, 0.08);
+  --risk-glow-blur: 14px;
+  --risk-glow-scale: 1.024;
+  opacity: 0.46;
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file.atlas-node--risk-quiet .atlas-node__risk-glow {
+  --risk-glow-core: rgba(100, 116, 139, 0.18);
+  --risk-glow-mid: rgba(71, 85, 105, 0.1);
+  --risk-glow-start: rgba(100, 116, 139, 0.13);
+  --risk-glow-end: rgba(148, 163, 184, 0.04);
+  --risk-glow-blur: 9px;
+  --risk-glow-scale: 1.012;
+  opacity: 0.22;
+}
+
+.graph-shell.is-refactor-risk-mode .atlas-node--file .atlas-node__file-outline {
+  opacity: 0.96;
 }
 
 .atlas-node--lineage-anchor .atlas-node__shape {

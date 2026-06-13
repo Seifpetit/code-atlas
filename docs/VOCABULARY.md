@@ -209,6 +209,35 @@ Rule:
 - While active, ordinary object focus and folder entry are suspended.
 - Path anchors and Runtime X-Ray corridor manipulation are outside its scope.
 
+**Risk X-Ray Mode**
+An explicit graph tool that temporarily scans the current atlas and recolors
+file chrome by deterministic refactor pressure.
+
+Purpose:
+- Helps users distinguish safe extraction candidates from high-risk behavior
+  surfaces before starting a refactor.
+- Shows refactor risk as inspectable pressure, not as an automated
+  recommendation.
+
+Rule:
+- The mode does not alter layout, graph state, hierarchy, focus, relationships,
+  runtime, or saved view state.
+- File bodies stay neutral; only outline, folded-corner chrome, and a restrained
+  behind-node glow switch to the refactor pressure palette.
+- Folder nodes and lineage anchors keep their structural color language.
+
+Current pressure colors:
+- Green: Start Here.
+- Blue: Foundation.
+- Gold: Needs Isolation.
+- Magenta: High-Leverage Risk.
+- Red: Critical Surface.
+- Slate: Stable.
+
+Technical name:
+- `refactorRiskMode`
+- `refactorRiskTier`
+
 ## UI Objects
 
 **Object**

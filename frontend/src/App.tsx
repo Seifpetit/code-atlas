@@ -698,6 +698,8 @@ export default function App() {
   const [restoreGraphViewState, setRestoreGraphViewState] = useState<SavedMapViewState | null>(null);
   const [restoreGraphViewStateKey, setRestoreGraphViewStateKey] = useState<string | null>(null);
   const [functionModalOpen, setFunctionModalOpen] = useState(false);
+  const [functionSummaryExpanded, setFunctionSummaryExpanded] = useState(false);
+  const [saveLoadExpanded, setSaveLoadExpanded] = useState(false);
   const [functionSortMode, setFunctionSortMode] = useState<FunctionSortMode>("category");
   const [selectedFunctionId, setSelectedFunctionId] = useState<string | null>(null);
   const [collapsedFunctionInventoryGroups, setCollapsedFunctionInventoryGroups] = useState<string[]>([]);
@@ -987,6 +989,16 @@ export default function App() {
   function handleAnalyzeExampleRepo(targetRepoUrl: string, label: string) {
     setRepoUrl(targetRepoUrl);
     void runAnalysis(targetRepoUrl, label);
+  }
+
+  function handleAnalyzeRepoUrl(targetRepoUrl: string) {
+    const trimmed = targetRepoUrl.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setRepoUrl(trimmed);
+    void runAnalysis(trimmed);
   }
 
   useEffect(() => {
@@ -1397,93 +1409,144 @@ export default function App() {
       {showWorkflowChrome ? (
         <section className="toolbar">
           <div className="status">
-            <span className={error ? "status__dot status__dot--error" : "status__dot"} />
-            <span className="status__text">{error ?? status}</span>
             {!error && functionStatusSummary ? (
               <button
                 type="button"
-                className="status__functions-button"
-                onClick={openFunctionInventory}
+                className={functionSummaryExpanded ? "status__functions-button is-expanded" : "status__functions-button"}
+                aria-expanded={functionSummaryExpanded}
+                title={functionSummaryExpanded ? "Collapse function counts" : "Show function counts"}
+                onClick={() => setFunctionSummaryExpanded((expanded) => !expanded)}
               >
-                <span>| FUNCTIONS:</span>
-                <strong>{functionStatusSummary.raw}</strong>
-                <span>raw /</span>
-                <strong>{functionStatusSummary.runtime}</strong>
-                <span>runtime /</span>
-                <strong>{functionStatusSummary.ghost}</strong>
-                <span>ghost</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 4 4 12l5 8" />
+                  <path d="m15 4 5 8-5 8" />
+                  <path d="M13 7 11 17" />
+                </svg>
+                <span>Functions</span>
+                {functionSummaryExpanded ? (
+                  <>
+                    <strong>{functionStatusSummary.raw}</strong>
+                    <span>raw /</span>
+                    <strong>{functionStatusSummary.runtime}</strong>
+                    <span>runtime /</span>
+                    <strong>{functionStatusSummary.ghost}</strong>
+                    <span>ghost</span>
+                    <span
+                      className="status__functions-open"
+                      role="button"
+                      tabIndex={0}
+                      title="Open function inventory"
+                      aria-label="Open function inventory"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openFunctionInventory();
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          openFunctionInventory();
+                        }
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M7 17 17 7" />
+                        <path d="M9 7h8v8" />
+                      </svg>
+                    </span>
+                  </>
+                ) : (
+                  <strong>{functionStatusSummary.raw}</strong>
+                )}
               </button>
             ) : null}
           </div>
           <div className="toolbar__controls">
-            <div className="saved-map-controls" aria-label="Saved maps">
-              <input
-                className="saved-map-controls__name"
-                value={saveMapName}
-                onChange={(event) => setSaveMapName(event.target.value)}
-                placeholder="Save name"
-                aria-label="Saved map name"
-                disabled={!githubStatus.connected || !graph || isSavingGraph || isLoadingSharedGraph}
-                required
-              />
+            <div className={saveLoadExpanded ? "saved-map-controls is-expanded" : "saved-map-controls"} aria-label="Saved maps">
               <button
                 type="button"
-                className="saved-map-controls__save"
-                disabled={
-                  !githubStatus.connected ||
-                  !graph ||
-                  !currentGraphRepoUrl ||
-                  !currentGraphViewState ||
-                  saveMapName.trim().length === 0 ||
-                  isLoadingSharedGraph ||
-                  isSavingGraph
-                }
-                title={githubStatus.connected ? "Save the current graph map" : "Connect GitHub to save maps"}
-                onClick={() => void handleSaveCurrentGraph()}
+                className="saved-map-controls__toggle"
+                aria-expanded={saveLoadExpanded}
+                title={saveLoadExpanded ? "Collapse save and load controls" : "Open save and load controls"}
+                onClick={() => setSaveLoadExpanded((expanded) => !expanded)}
               >
-                {isSavingGraph ? "Saving" : "Save Map"}
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 4h11l3 3v13H5z" />
+                  <path d="M8 4v6h8V4" />
+                  <path d="M8 16h8" />
+                </svg>
               </button>
-              {githubStatus.connected ? (
+              {saveLoadExpanded ? (
                 <>
-                  <div className="saved-map-controls__select">
-                    <select
-                      aria-label="Saved map selector"
-                      value={selectedSavedGraphId}
-                      disabled={savedGraphsLoading || savedGraphs.length === 0 || isLoadingSavedGraph}
-                      onChange={(event) => setSelectedSavedGraphId(event.target.value)}
-                    >
-                      {savedGraphs.length === 0 ? (
-                        <option value="">{savedGraphsLoading ? "Loading saved maps" : "No saved maps"}</option>
-                      ) : null}
-                      {savedGraphs.map((savedGraph) => (
-                        <option key={savedGraph.id} value={savedGraph.id}>
-                          {savedGraph.saveName} - {savedGraph.repoLabel} - {savedGraph.nodeCount} nodes - {compactUpdatedAt(savedGraph.updatedAt)}
-                        </option>
-                      ))}
-                    </select>
-                    <span aria-hidden="true" />
-                  </div>
+                  <input
+                    className="saved-map-controls__name"
+                    value={saveMapName}
+                    onChange={(event) => setSaveMapName(event.target.value)}
+                    placeholder="Save name"
+                    aria-label="Saved map name"
+                    disabled={!githubStatus.connected || !graph || isSavingGraph || isLoadingSharedGraph}
+                    required
+                  />
                   <button
                     type="button"
-                    className="saved-map-controls__open"
-                    disabled={!selectedSavedGraphId || savedGraphsLoading || isLoadingSavedGraph}
-                    onClick={() => void handleOpenSavedGraph()}
+                    className="saved-map-controls__save"
+                    disabled={
+                      !githubStatus.connected ||
+                      !graph ||
+                      !currentGraphRepoUrl ||
+                      !currentGraphViewState ||
+                      saveMapName.trim().length === 0 ||
+                      isLoadingSharedGraph ||
+                      isSavingGraph
+                    }
+                    title={githubStatus.connected ? "Save the current graph map" : "Connect GitHub to save maps"}
+                    onClick={() => void handleSaveCurrentGraph()}
                   >
-                    {isLoadingSavedGraph ? "Opening" : "Open"}
+                    {isSavingGraph ? "Saving" : "Save Map"}
                   </button>
-                  <button
-                    type="button"
-                    className="saved-map-controls__share"
-                    disabled={!selectedSavedGraphId || savedGraphsLoading || isLoadingSavedGraph || isSharingGraph}
-                    title="Copy a read-only share link for the selected saved map"
-                    onClick={() => void handleCopyShareLink()}
-                  >
-                    {isSharingGraph ? "Copying" : "Link"}
-                  </button>
+                  {githubStatus.connected ? (
+                    <>
+                      <div className="saved-map-controls__select">
+                        <select
+                          aria-label="Saved map selector"
+                          value={selectedSavedGraphId}
+                          disabled={savedGraphsLoading || savedGraphs.length === 0 || isLoadingSavedGraph}
+                          onChange={(event) => setSelectedSavedGraphId(event.target.value)}
+                        >
+                          {savedGraphs.length === 0 ? (
+                            <option value="">{savedGraphsLoading ? "Loading saved maps" : "No saved maps"}</option>
+                          ) : null}
+                          {savedGraphs.map((savedGraph) => (
+                            <option key={savedGraph.id} value={savedGraph.id}>
+                              {savedGraph.saveName} - {savedGraph.repoLabel} - {savedGraph.nodeCount} nodes - {compactUpdatedAt(savedGraph.updatedAt)}
+                            </option>
+                          ))}
+                        </select>
+                        <span aria-hidden="true" />
+                      </div>
+                      <button
+                        type="button"
+                        className="saved-map-controls__open"
+                        disabled={!selectedSavedGraphId || savedGraphsLoading || isLoadingSavedGraph}
+                        onClick={() => void handleOpenSavedGraph()}
+                      >
+                        {isLoadingSavedGraph ? "Opening" : "Open"}
+                      </button>
+                      <button
+                        type="button"
+                        className="saved-map-controls__share"
+                        disabled={!selectedSavedGraphId || savedGraphsLoading || isLoadingSavedGraph || isSharingGraph}
+                        title="Copy a read-only share link for the selected saved map"
+                        onClick={() => void handleCopyShareLink()}
+                      >
+                        {isSharingGraph ? "Copying" : "Link"}
+                      </button>
+                    </>
+                  ) : null}
+                  {savedGraphsError ? (
+                    <span className="saved-map-controls__error" title={savedGraphsError}>Save error</span>
+                  ) : null}
                 </>
-              ) : null}
-              {savedGraphsError ? (
-                <span className="saved-map-controls__error" title={savedGraphsError}>Save error</span>
               ) : null}
             </div>
             <div className="cluster-switch" aria-label="Clustering mode">
@@ -1517,7 +1580,7 @@ export default function App() {
         clusteringMode={clusteringMode}
         repoUrl={repoUrl}
         onRepoUrlChange={setRepoUrl}
-        onAnalyzeRepo={handleSubmit}
+        onAnalyzeRepoUrl={handleAnalyzeRepoUrl}
         onAnalyzeExampleRepo={handleAnalyzeExampleRepo}
         initialViewState={restoreGraphViewState}
         viewStateKey={restoreGraphViewStateKey}

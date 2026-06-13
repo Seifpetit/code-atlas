@@ -165,28 +165,31 @@ function FileShape(props: NodeChromeProps) {
   const healthTier = getHealthTier(props.data as GraphNode);
 
   return (
-    <div className="atlas-node__shape atlas-node__shape--file">
-      {healthTier === "warning" || healthTier === "critical" ? (
-        <span className={`atlas-node__health-dot atlas-node__health-dot--${healthTier}`} aria-hidden="true" />
-      ) : null}
-      <svg
-        className="atlas-node__file-frame"
-        viewBox="0 0 130 180"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <path
-          className="atlas-node__file-fold"
-          d="M 104 2 V 16 Q 104 25 113 25 H 128 Z"
-        />
-        <path
-          className="atlas-node__file-outline"
-          d="M 11 2 H 101 Q 105 2 108 5 L 125 22 Q 128 25 128 29 V 169 Q 128 178 119 178 H 11 Q 2 178 2 169 V 11 Q 2 2 11 2 Z"
-        />
-      </svg>
-      <NodeContent {...props} />
-    </div>
+    <>
+      <div className="atlas-node__risk-glow" aria-hidden="true" />
+      <div className="atlas-node__shape atlas-node__shape--file">
+        {healthTier === "warning" || healthTier === "critical" ? (
+          <span className={`atlas-node__health-dot atlas-node__health-dot--${healthTier}`} aria-hidden="true" />
+        ) : null}
+        <svg
+          className="atlas-node__file-frame"
+          viewBox="0 0 130 180"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            className="atlas-node__file-fold"
+            d="M 104 2 V 16 Q 104 25 113 25 H 128 Z"
+          />
+          <path
+            className="atlas-node__file-outline"
+            d="M 11 2 H 101 Q 105 2 108 5 L 125 22 Q 128 25 128 29 V 169 Q 128 178 119 178 H 11 Q 2 178 2 169 V 11 Q 2 2 11 2 Z"
+          />
+        </svg>
+        <NodeContent {...props} />
+      </div>
+    </>
   );
 }
 
@@ -201,6 +204,14 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
   const filePalette = structuralKind === "file"
     ? filePaletteForExtension(data.metadata?.extension)
     : null;
+  const refactorRiskTier =
+    structuralKind === "file" && typeof data.refactorRiskTier === "string"
+      ? data.refactorRiskTier
+      : "";
+  const refactorRiskLabel = typeof data.refactorRiskLabel === "string" ? data.refactorRiskLabel : "";
+  const refactorRiskReasons = Array.isArray(data.refactorRiskReasons)
+    ? data.refactorRiskReasons.filter((reason): reason is string => typeof reason === "string")
+    : [];
   const showFolderResidue =
     structuralKind === "folder" &&
     (
@@ -213,6 +224,7 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
     `atlas-node--${structuralKind}`,
     `atlas-node--${viewVariant}`,
     filePalette ? `atlas-node--palette-${filePalette}` : "",
+    refactorRiskTier ? `atlas-node--risk-${refactorRiskTier}` : "",
     isVeryClose ? "atlas-node--very-close" : ""
   ]
     .filter(Boolean)
@@ -220,7 +232,8 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
   const style = {
     "--atlas-node-width": `${Number(data.layoutWidth ?? 210)}px`,
     "--atlas-node-height": `${Number(data.layoutHeight ?? 92)}px`,
-    "--atlas-node-scale": Number(data.layoutScale ?? 1)
+    "--atlas-node-scale": Number(data.layoutScale ?? 1),
+    "--risk-scan-delay": `${Number(data.refactorRiskScanDelay ?? 0)}ms`
   } as CSSProperties;
   const incomingHasTrace =
     Boolean(relationStub?.incomingEdgeIds.length) ||
@@ -232,7 +245,12 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
   return (
     <div
       className={className}
-      title={data.path}
+      title={[
+        data.path,
+        refactorRiskLabel
+          ? `${refactorRiskLabel}: ${refactorRiskReasons.join(", ")}`
+          : ""
+      ].filter(Boolean).join("\n")}
       style={style}
     >
       <Handle

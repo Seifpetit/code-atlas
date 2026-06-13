@@ -1,6 +1,5 @@
 import {
   lazy,
-  type FormEventHandler,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -61,7 +60,7 @@ interface GraphViewProps {
   clusteringMode: ClusteringMode;
   repoUrl: string;
   onRepoUrlChange: (value: string) => void;
-  onAnalyzeRepo: FormEventHandler<HTMLFormElement>;
+  onAnalyzeRepoUrl: (repoUrl: string) => void;
   onAnalyzeExampleRepo: (repoUrl: string, label: string) => void;
   initialViewState?: SavedMapViewState | null;
   viewStateKey?: string | null;
@@ -180,6 +179,7 @@ const RELATIONSHIP_BRIDGE_COLORS: Record<RelationshipFollowDirection, string> = 
 };
 const FUNCTION_METADATA_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
 type ArchitecturalWeight = "LOW" | "MEDIUM" | "HIGH";
+type RefactorRiskTier = "safe" | "foundation" | "careful" | "danger" | "mixed" | "quiet";
 type SecondaryPanelRegion = "role" | "file-types" | "actions" | "memory";
 type OperationalRoleKind =
   | "low-signal"
@@ -197,6 +197,32 @@ interface OperationalRole {
   kind: OperationalRoleKind;
   label: string;
 }
+
+interface RefactorRiskPressure {
+  tier: RefactorRiskTier;
+  label: string;
+  reasons: string[];
+  payoffScore: number;
+  riskScore: number;
+}
+
+const REFACTOR_RISK_LABELS: Record<RefactorRiskTier, string> = {
+  safe: "Start Here",
+  foundation: "Foundation",
+  careful: "Needs Isolation",
+  danger: "Critical Surface",
+  mixed: "High-Leverage Risk",
+  quiet: "Stable"
+};
+
+const REFACTOR_RISK_LEGEND_TIERS: RefactorRiskTier[] = [
+  "safe",
+  "foundation",
+  "careful",
+  "mixed",
+  "danger",
+  "quiet"
+];
 
 interface RegionalFileTypeCount {
   label: string;
@@ -584,6 +610,120 @@ function hasDetectedCallSite(
     (id !== null && detectedCallIds.has(id)) ||
     waypoint.inputs.some((input) => (input.sources?.length ?? 0) > 0)
   );
+}
+
+function refactorRiskPressureFor(node: AtlasNode, importedByCount: number): RefactorRiskPressure {
+  const linesOfCode = Number(node.metadata?.linesOfCode ?? 0);
+  const functionCount = Number(node.metadata?.functionCount ?? 0);
+  const importCount = Number(node.metadata?.importCount ?? 0);
+  const functions = node.metadata?.functionWaypoints ?? [];
+  const sourceText = node.sourceText ?? "";
+  let payoffScore = 0;
+  let riskScore = 0;
+  const reasons: string[] = [];
+
+  if (node.metadata?.compressionLevel === "low-signal") {
+    payoffScore -= 2;
+    reasons.push("low-signal support file");
+  }
+
+  if (linesOfCode >= 420) {
+    payoffScore += 3;
+    reasons.push("large file");
+  } else if (linesOfCode >= 180) {
+    payoffScore += 2;
+    reasons.push("medium-large file");
+  } else if (linesOfCode >= 80) {
+    payoffScore += 1;
+  }
+
+  if (functionCount >= 16) {
+    payoffScore += 3;
+    reasons.push("many functions");
+  } else if (functionCount >= 8) {
+    payoffScore += 2;
+    reasons.push("several functions");
+  } else if (functionCount >= 3) {
+    payoffScore += 1;
+  }
+
+  if (typeof node.healthScore === "number" && node.healthScore < 40) {
+    payoffScore += 2;
+    reasons.push("low health score");
+  }
+
+  if (functions.some((waypoint) => (waypoint.duplicateOf?.length ?? 0) > 0)) {
+    payoffScore += 2;
+    reasons.push("duplicate function body");
+  }
+
+  if (importCount + importedByCount >= 10) {
+    payoffScore += 2;
+    riskScore += 1;
+    reasons.push("high dependency surface");
+  } else if (importCount + importedByCount >= 5) {
+    payoffScore += 1;
+  }
+
+  if (importedByCount >= 6) {
+    riskScore += 3;
+    reasons.push("widely imported");
+  } else if (importedByCount >= 3) {
+    riskScore += 2;
+    reasons.push("shared dependency");
+  } else if (importedByCount > 0) {
+    riskScore += 1;
+  }
+
+  if (/\b(?:useEffect|useLayoutEffect|useReducer|useRef|useState)\b/.test(sourceText)) {
+    riskScore += 2;
+    reasons.push("owns React state/effects");
+  }
+
+  if (/\b(?:onClick|onPointer|onMouse|onKey|onSubmit|onChange|onDrag|NodeMouseHandler|PointerEvent|MouseEvent)\b/.test(sourceText)) {
+    riskScore += 2;
+    reasons.push("owns interaction handlers");
+  }
+
+  if (/\b(?:async|await|Promise|fetch|setTimeout|setInterval|requestAnimationFrame)\b/.test(sourceText)) {
+    riskScore += 1;
+    reasons.push("async or timed behavior");
+  }
+
+  if (/\b(?:localStorage|sessionStorage|viewState|saveGraph|loadSavedGraph|shareSavedGraph|cookie|auth|OAuth)\b/i.test(`${node.path}\n${sourceText}`)) {
+    riskScore += 2;
+    reasons.push("persistence or auth surface");
+  }
+
+  if (/\b(?:ReactFlow|useReactFlow|setViewport|fitView|setCenter)\b/.test(sourceText)) {
+    riskScore += 3;
+    reasons.push("graph viewport/control surface");
+  }
+
+  if (node.metadata?.staticEntrypoint) {
+    riskScore += 2;
+    reasons.push("static entrypoint");
+  }
+
+  const tier: RefactorRiskTier =
+    payoffScore <= 0 && riskScore <= 1
+      ? "quiet"
+      : payoffScore >= 5 && riskScore >= 4
+        ? "mixed"
+        : riskScore >= 4
+          ? "danger"
+          : riskScore >= 2
+            ? "careful"
+            : payoffScore >= 3
+              ? "safe"
+              : "foundation";
+  return {
+    tier,
+    label: REFACTOR_RISK_LABELS[tier],
+    reasons: reasons.length > 0 ? reasons : ["low coupling and modest size"],
+    payoffScore: Math.max(0, payoffScore),
+    riskScore
+  };
 }
 
 function compressionDescription(node: AtlasNode): string {
@@ -1400,7 +1540,7 @@ export function GraphView({
   clusteringMode,
   repoUrl,
   onRepoUrlChange,
-  onAnalyzeRepo,
+  onAnalyzeRepoUrl,
   onAnalyzeExampleRepo,
   initialViewState = null,
   viewStateKey = null,
@@ -1429,6 +1569,8 @@ export function GraphView({
   const [focusedLandmarkId, setFocusedLandmarkId] = useState<string | null>(null);
   const [timelineCollapsed, setTimelineCollapsed] = useState(true);
   const [selectionToolActive, setSelectionToolActive] = useState(false);
+  const [refactorRiskMode, setRefactorRiskMode] = useState(false);
+  const [refactorRiskScanActive, setRefactorRiskScanActive] = useState(false);
   const [collapsedFileSections, setCollapsedFileSections] = useState<FileMetadataSectionId[]>([]);
   const [collapsedFileConnectionSections, setCollapsedFileConnectionSections] = useState<RelationshipFollowDirection[]>([]);
   const [pageIndex, setPageIndex] = useState(0);
@@ -1523,6 +1665,9 @@ export function GraphView({
       ];
     });
   }, [focusedNodeId, selectedCorridorIndex, traceSignatureForIds]);
+  const handleRefactorRiskToggle = useCallback(() => {
+    setRefactorRiskMode((active) => !active);
+  }, []);
   const recordNodeFocus = useCallback((nodeId: string) => {
     setInteractionResidueByNodeId((current) => {
       const residue = current[nodeId] ?? { focusCount: 0, runtimeActivationCount: 0 };
@@ -1592,6 +1737,8 @@ export function GraphView({
     setInteractionResidueByNodeId({});
     setTemporalIndex(0);
     setFocusedLandmarkId(null);
+    setRefactorRiskMode(false);
+    setRefactorRiskScanActive(false);
     setSelectedNode(null);
     setPageIndex(0);
     setLinkedCorridors([]);
@@ -1676,6 +1823,19 @@ export function GraphView({
       window.cancelAnimationFrame(selectionAutoPanFrameRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    setRefactorRiskScanActive(refactorRiskMode);
+  }, [refactorRiskMode]);
+
+  useEffect(() => {
+    if (!refactorRiskScanActive) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setRefactorRiskScanActive(false), 840);
+    return () => window.clearTimeout(timer);
+  }, [refactorRiskScanActive]);
 
   useEffect(() => {
     if (!laidOut || pageIndex === laidOut.currentPage) {
@@ -1866,6 +2026,26 @@ export function GraphView({
   const graphNodeById = useMemo(() => {
     return new Map((graph?.nodes ?? []).map((node) => [node.id, node]));
   }, [graph]);
+  const importedByCountById = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const edge of graph?.edges ?? []) {
+      counts.set(edge.target, (counts.get(edge.target) ?? 0) + 1);
+    }
+
+    return counts;
+  }, [graph?.edges]);
+  const refactorRiskByNodeId = useMemo(() => {
+    const pressures = new Map<string, RefactorRiskPressure>();
+
+    for (const node of graph?.nodes ?? []) {
+      if (node.type === "file") {
+        pressures.set(node.id, refactorRiskPressureFor(node, importedByCountById.get(node.id) ?? 0));
+      }
+    }
+
+    return pressures;
+  }, [graph?.nodes, importedByCountById]);
   useEffect(() => {
     if (!graph || !initialViewState || !viewStateKey || appliedViewStateKeyRef.current === viewStateKey) {
       return;
@@ -2336,6 +2516,8 @@ export function GraphView({
       return [];
     }
     const activeFolderRelationCounts = activeTraceFolderRelationCounts;
+    const riskScanBounds = layoutBounds(displayedLayoutNodes);
+    const riskScanSpan = Math.max(1, riskScanBounds.maxX - riskScanBounds.minX);
 
     const baseNodes = displayedLayoutNodes.map((node) => {
       const data = node.data as AtlasNode;
@@ -2396,6 +2578,10 @@ export function GraphView({
         runtimeState.active && runtimeLayout?.revealedNodeIds.has(node.id)
           ? runtimeNodePositions[node.id] ?? runtimeLayout.positions.get(node.id) ?? node.position
           : manualNodePositions[node.id] ?? node.position;
+      const refactorRisk = data.type === "file" ? refactorRiskByNodeId.get(realNodeId) : undefined;
+      const refactorRiskScanDelay = data.type === "file"
+        ? Math.round(((resolvedPosition.x - riskScanBounds.minX) / riskScanSpan) * 640)
+        : 0;
 
       return {
         ...node,
@@ -2415,6 +2601,10 @@ export function GraphView({
           connectionPorts: connectionPortsByNodeId.get(node.id) ?? connectionPortsByNodeId.get(realNodeId),
           runtimeStep: runtimeState.active ? runtimeState.chain?.nodes.find((runtimeNode) => runtimeNode.id === node.id)?.runtimeStep : undefined,
           relationTraceCount: relationTraceCount > 0 ? relationTraceCount : undefined,
+          refactorRiskTier: refactorRisk?.tier,
+          refactorRiskLabel: refactorRisk?.label,
+          refactorRiskReasons: refactorRisk?.reasons,
+          refactorRiskScanDelay,
           relationStub:
             shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
               ? {
@@ -2443,6 +2633,7 @@ export function GraphView({
       const phase = runtimeLayout.activeNodeId === node.id ? "current" : "residue";
       const visualState = runtimeVisualState(phase);
       const resolvedPosition = runtimeNodePositions[node.id] ?? node.position;
+      const refactorRisk = data.type === "file" ? refactorRiskByNodeId.get(flowNodeRealId(node)) : undefined;
 
       return {
         ...node,
@@ -2456,7 +2647,11 @@ export function GraphView({
           ...data,
           historyBadge: historyBadgeFor(data, graph?.fileHistory),
           visualState,
-          connectionPorts: connectionPortsByNodeId.get(node.id)
+          connectionPorts: connectionPortsByNodeId.get(node.id),
+          refactorRiskTier: refactorRisk?.tier,
+          refactorRiskLabel: refactorRisk?.label,
+          refactorRiskReasons: refactorRisk?.reasons,
+          refactorRiskScanDelay: 0
         },
         className: `${visualState.className} runtime-node`
       };
@@ -2483,6 +2678,7 @@ export function GraphView({
     activeTemporalState,
     focusedLandmark,
     graph?.fileHistory,
+    refactorRiskByNodeId,
     runtimeLayout,
     runtimeNodePositions,
     runtimeState,
@@ -3678,8 +3874,16 @@ export function GraphView({
             Paste a GitHub URL. Get a spatial graph, health scores, and a concrete refactor plan - in seconds.
           </p>
 
-          <form className="graph-idle-state__url-row" onSubmit={onAnalyzeRepo}>
+          <form
+            className="graph-idle-state__url-row"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const formData = new FormData(event.currentTarget);
+              onAnalyzeRepoUrl(String(formData.get("repoUrl") ?? ""));
+            }}
+          >
             <input
+              name="repoUrl"
               value={repoUrl}
               onChange={(event) => onRepoUrlChange(event.target.value)}
               placeholder="https://github.com/owner/repo"
@@ -3752,7 +3956,9 @@ export function GraphView({
       ref={graphShellRef}
       className={[
         "graph-shell",
-        structuralSelectionActive ? "is-selection-mode" : ""
+        structuralSelectionActive ? "is-selection-mode" : "",
+        refactorRiskMode ? "is-refactor-risk-mode" : "",
+        refactorRiskScanActive ? "is-refactor-risk-scanning" : ""
       ].filter(Boolean).join(" ")}
       onPointerDownCapture={handleSelectionPointerDownCapture}
       onPointerMoveCapture={handleSelectionPointerMoveCapture}
@@ -3774,8 +3980,23 @@ export function GraphView({
       <div className="selection-tool-overlay" aria-label="Graph tools">
         <button
           type="button"
+          className={refactorRiskMode ? "select-tool-button select-tool-button--risk is-active" : "select-tool-button select-tool-button--risk"}
+          aria-pressed={refactorRiskMode}
+          aria-label="Risk X-Ray"
+          title="Risk X-Ray: color files by deterministic refactor pressure"
+          onClick={handleRefactorRiskToggle}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 12h4l2-6 4 12 2-6h4" />
+            <path d="M4 20h16" />
+            <path d="M4 4h16" />
+          </svg>
+        </button>
+        <button
+          type="button"
           className={selectionToolActive ? "select-tool-button is-active" : "select-tool-button"}
           aria-pressed={selectionToolActive}
+          aria-label="Select objects"
           title="Select objects in a dragged zone and move them together"
           onClick={() => setSelectionToolActive((active) => !active)}
         >
@@ -3786,12 +4007,12 @@ export function GraphView({
             <path d="M8 20H4v-4" />
             <path d="m11 9 5 8-4-1-2 3z" />
           </svg>
-          <span>Select</span>
         </button>
         {linkedCorridors.length > 0 || corridorLinks.length > 0 ? (
           <button
             type="button"
             className="select-tool-button select-tool-button--reset"
+            aria-label="Reset linked corridors"
             title="Reset linked corridors"
             onClick={handleResetCorridors}
           >
@@ -3799,10 +4020,20 @@ export function GraphView({
               <path d="M3 12a9 9 0 1 0 3-6.7" />
               <path d="M3 4v6h6" />
             </svg>
-            <span>Reset</span>
           </button>
         ) : null}
       </div>
+      {refactorRiskMode ? (
+        <div className="refactor-risk-legend" aria-label="Risk X-Ray category legend">
+          {REFACTOR_RISK_LEGEND_TIERS.map((tier) => (
+            <div className="refactor-risk-legend__item" key={tier}>
+              <span className={`refactor-risk-legend__dot refactor-risk-legend__dot--${tier}`} aria-hidden="true" />
+              <span>{REFACTOR_RISK_LABELS[tier]}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {refactorRiskScanActive ? <div className="refactor-risk-scanline" aria-hidden="true" /> : null}
 
       <ReactFlow<AtlasFlowNode, AtlasFlowEdge>
         nodes={nodes}

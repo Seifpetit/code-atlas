@@ -50,6 +50,11 @@
     max-width: 100%;
   }
 
+  .saved-map-controls.is-expanded {
+    flex: 1 1 auto;
+    max-width: 100%;
+  }
+
   .saved-map-controls__select {
     max-width: none;
     flex: 1 1 180px;
@@ -83,6 +88,13 @@
 
   .selection-tool-overlay {
     top: 128px;
+  }
+
+  .refactor-risk-legend {
+    top: 168px;
+    right: 16px;
+    grid-template-columns: 1fr;
+    max-width: min(220px, calc(100vw - 32px));
   }
 
   .context-panel {

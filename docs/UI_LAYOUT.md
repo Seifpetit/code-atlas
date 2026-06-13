@@ -61,6 +61,17 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Accents identify deterministic role categories only; they do not express
   confidence or severity.
 
+**Refactor Pressure Colors**
+- Risk X-Ray Start Here: green border `#22c55e` with restrained emerald glow.
+- Risk X-Ray Foundation: blue border `#3b82f6` with restrained blue glow.
+- Risk X-Ray Needs Isolation: gold border `#eab308` with restrained warm glow.
+- Risk X-Ray High-Leverage Risk: magenta border `#d946ef` with restrained
+  magenta glow.
+- Risk X-Ray Critical Surface: red border `#ef4444` with restrained red glow.
+- Risk X-Ray Stable: slate border `#64748b` with minimal slate glow.
+- These colors override only file outline, folded-corner chrome, and a soft
+  behind-node glow while Risk X-Ray is active.
+
 **MiniMap Colors**
 - Folder: sky
 - File: solid representative accent from its extension palette
@@ -69,6 +80,16 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 ## Dimensions
 
 ### Graph Shell Overlays
+
+**Workflow Toolbar**
+- The toolbar overlays the graph shell at the top after a graph is loaded.
+- The textual status message and status dot are not rendered in the toolbar.
+- The function inventory control starts collapsed as a compact `Functions`
+  chip with an icon and raw count, then unfolds inline to show raw/runtime/ghost
+  counts plus a compact inventory-open icon.
+- Saved-map controls start collapsed behind a permanent gold `Save/Load` button with a save
+  icon; activating it expands the existing save name, save, load, open, and
+  share controls inline.
 
 **Breadcrumb Bar**
 - Position: top left
@@ -98,6 +119,13 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Position: floats over the upper-right canvas, aligned to the breadcrumb panel's vertical origin.
 - Placement: `top: 14px`, `right: 16px`.
 - Tool chrome padding: `0px`.
+- The green `Risk` tool sits directly to the left of `Select` in the same
+  overlay row.
+- Activating `Risk` shows a fast left-to-right scanline over the graph shell
+  and switches file chrome to the refactor pressure palette.
+- While active, Risk X-Ray shows a compact top-right dot legend mapping each
+  category color to `Start Here`, `Foundation`, `Needs Isolation`,
+  `High-Leverage Risk`, `Critical Surface`, and `Stable`.
 - When active, dragging on the graph surface draws a subdued cyan dashed
   selection zone using partial node intersection.
 - Dragging a selection zone into a canvas edge pans the structural viewport at
