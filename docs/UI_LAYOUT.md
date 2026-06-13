@@ -152,6 +152,18 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Interaction-memory residue uses a subdued warm marker only after earlier
   focus or Runtime X-Ray activation in the current analyzed session.
 - Metric cells and action controls remain compact so the graph stays primary.
+- File nodes do not render health warning/critical dots inside the graph card;
+  health remains available through the focused-file metadata panel.
+- In normal inspection, the forecast entry opens `Code Weather Forecast`, a
+  trajectory-only report answering what happens if the user does nothing.
+- While Risk X-Ray is active, the same entry is labeled `Simulate Refactor` and
+  opens `Refactor Simulation`, showing one possible separation of concerns plus
+  expected impact cards.
+- Both focused-file forecast surfaces use a three-question paginated flow:
+  header, pager question with dots, one visible page, and Back/Next navigation.
+  Weather asks `Should I care?`, `Why is it flagged?`, and `What if I ignore
+  it?`; Simulation asks `What's wrong?`, `How to split it?`, and `Is it worth
+  it?`.
 - Actions and runtime-origin selection use thin bordered instrument controls,
   inset activation accents, and restrained focus glow rather than solid
   dashboard buttons.
@@ -176,6 +188,9 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
   truncate rather than increasing header height.
 - Read-only monospace source viewport with dark surface and thin subdued teal
   native scrollbar.
+- The source modal Forecast toggle follows the same inspection-mode rule as the
+  focused-file panel: normal mode shows code weather, Risk X-Ray shows refactor
+  simulation.
 - Indexed source and structured text token colors are provided deterministically
   through lazily loaded dark syntax grammars; plain `.txt` retains the same
   viewport with raw monochrome text.

@@ -63,24 +63,6 @@
     transform 220ms ease;
 }
 
-.atlas-node__health-dot {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  z-index: 3;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-}
-
-.atlas-node__health-dot--warning {
-  background: #d97706;
-}
-
-.atlas-node__health-dot--critical {
-  background: #ef4444;
-}
-
 .atlas-node--palette-javascript .atlas-node__shape {
   --atlas-file-border: #facc15;
   --atlas-file-fold-border: rgba(250, 204, 21, 0.76);

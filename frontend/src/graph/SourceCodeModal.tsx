@@ -18,7 +18,7 @@ import {
   type SourceVariableWaypoint
 } from "./sourceInspection";
 import { highlightSource, sourceLanguageLabel, type HighlightedSource } from "./sourceSyntaxHighlighting";
-import { buildFileForecast, buildFunctionForecast } from "./forecastModel";
+import { buildFileForecast, buildFunctionForecast, type ForecastModel } from "./forecastModel";
 
 const RenderedMarkdown = lazy(() =>
   import("./RenderedMarkdown").then((module) => ({ default: module.RenderedMarkdown }))
@@ -44,6 +44,7 @@ interface SourceCodeModalProps {
   sourceFiles?: AtlasNode[];
   runtimeContext?: SourceRuntimeContext;
   fileContext?: SourceFileContext;
+  inspectionMode?: ForecastInspectionMode;
   embedded?: boolean;
   functionOnly?: boolean;
   initialFunctionId?: string | null;
@@ -60,6 +61,7 @@ interface LineRange {
 }
 
 type SourceStyle = CSSProperties & Record<`--${string}`, string | number>;
+type ForecastInspectionMode = "weather" | "simulation";
 type MarkdownDisplayMode = "rendered" | "raw";
 type InventoryFoldMode = "collapsed" | "expanded" | "runtime" | "ghost" | "custom";
 type InventoryFunctionCountKind = "raw" | "runtime" | "ghost" | "complex";
@@ -71,6 +73,42 @@ const FUNCTION_CLASSIFICATION_EXPLANATIONS: Record<InventoryFunctionCountKind, s
   ghost: "No call site found statically. May be dynamic, string-referenced, or unused. Signal, not verdict.",
   complex: "Sorted by cyclomatic and cognitive complexity. Highest risk functions first."
 };
+
+function sourceWeatherStatus(forecast: ForecastModel): "Stable" | "Warming" | "Under Pressure" | "High Risk" | "Storm Forming" {
+  const pressureCount = forecast.pressureSignals.length;
+  const responsibilityCount = forecast.current.items.length;
+  const score = pressureCount + Math.max(0, responsibilityCount - 1);
+
+  if (score >= 7) {
+    return "Storm Forming";
+  }
+
+  if (score >= 5) {
+    return "High Risk";
+  }
+
+  if (score >= 3) {
+    return "Under Pressure";
+  }
+
+  if (score >= 1) {
+    return "Warming";
+  }
+
+  return "Stable";
+}
+
+function sourceWeatherSummary(status: ReturnType<typeof sourceWeatherStatus>): string {
+  const summaries: Record<ReturnType<typeof sourceWeatherStatus>, string> = {
+    Stable: "This area remains stable. If current patterns continue, review pressure is unlikely to grow quickly.",
+    Warming: "Pressure is beginning to accumulate. If growth continues at the current pace, review complexity is likely to increase.",
+    "Under Pressure": "This surface is collecting enough work that future edits may become harder to review.",
+    "High Risk": "Pressure is concentrating here and may spread into nearby code if the current trajectory continues.",
+    "Storm Forming": "Several pressure signals are converging. If nothing changes, this area is likely to become harder to modify."
+  };
+
+  return summaries[status];
+}
 
 interface InventoryFunctionCount {
   id: InventoryFunctionCountKind;
@@ -718,6 +756,7 @@ export function SourceCodeModal({
   sourceFiles = [],
   runtimeContext,
   fileContext,
+  inspectionMode = "weather",
   embedded = false,
   functionOnly = false,
   initialFunctionId = null,
@@ -771,6 +810,9 @@ export function SourceCodeModal({
     [activeFunction, file]
   );
   const sourceForecast = activeFunctionForecast.available ? activeFunctionForecast : fileForecast;
+  const forecastInspectionMode: ForecastInspectionMode = inspectionMode;
+  const sourceForecastWeatherStatus = sourceWeatherStatus(sourceForecast);
+  const sourceForecastWeatherSummary = sourceWeatherSummary(sourceForecastWeatherStatus);
   const activeVariable = [...inspection.operationalVariables, ...inspection.localVariables]
     .find((variable) => variable.id === activeVariableId) ?? null;
   const activeVariableOccurrences = useMemo(
@@ -1732,7 +1774,7 @@ export function SourceCodeModal({
                 aria-pressed={forecastModeActive}
                 onClick={() => setForecastModeActive((active) => !active)}
               >
-                {forecastModeActive ? "Return" : "Forecast"}
+                {forecastModeActive ? "Return" : forecastInspectionMode === "simulation" ? "Simulate Refactor" : "Forecast"}
               </button>
             ) : null}
             {inventoryFunctionCounts?.length ? (
@@ -2150,16 +2192,21 @@ export function SourceCodeModal({
                 <div className="source-modal__forecast" aria-label={`Forecast for ${sourceForecast.subject}`}>
                   <header className="source-modal__forecast-header">
                     <div>
-                      <span>Forecast</span>
+                      <span>{forecastInspectionMode === "simulation" ? "Refactor Simulation" : "Code Weather Forecast"}</span>
                       <h3>{sourceForecast.subject}</h3>
                     </div>
-                    <p>{sourceForecast.subtext}</p>
+                    <p>
+                      {forecastInspectionMode === "simulation"
+                        ? "One possible separation of concerns. This is an architectural sketch, not a claim of the only separation."
+                        : sourceForecastWeatherSummary}
+                    </p>
                   </header>
                   <section className="source-modal__forecast-signals" aria-label="Pressure signals">
                     {sourceForecast.pressureSignals.map((signal) => (
                       <span key={signal}>{signal}</span>
                     ))}
                   </section>
+                  {forecastInspectionMode === "simulation" ? (
                   <div className="source-modal__forecast-grid">
                     <section className="source-modal__forecast-column source-modal__forecast-column--current">
                       <div className="source-modal__forecast-label">Current Structure</div>
@@ -2173,7 +2220,7 @@ export function SourceCodeModal({
                       </article>
                     </section>
                     <section className="source-modal__forecast-column source-modal__forecast-column--suggested">
-                      <div className="source-modal__forecast-label">Suggested Structure</div>
+                      <div className="source-modal__forecast-label">Possible Separation</div>
                       <div className="source-modal__forecast-stack">
                         {sourceForecast.suggested.map((block) => (
                           <article className="source-modal__forecast-block" key={block.title}>
@@ -2188,6 +2235,12 @@ export function SourceCodeModal({
                       </div>
                     </section>
                   </div>
+                  ) : (
+                    <section className="source-modal__forecast-weather" aria-label="Forecast question">
+                      <strong>{sourceForecastWeatherStatus}</strong>
+                      <p>What happens if we do nothing?</p>
+                    </section>
+                  )}
                 </div>
               ) : runtimePlacementFunction && runtimePlacement ? (
                 <div

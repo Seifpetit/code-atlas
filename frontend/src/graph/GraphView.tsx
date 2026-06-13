@@ -1,5 +1,6 @@
 import {
   lazy,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -121,12 +122,376 @@ interface LayoutBounds {
   maxY: number;
 }
 
+type ForecastInspectionMode = "weather" | "simulation";
 type ForecastSignalSeverity = "danger" | "warn" | "info";
+type ForecastFlowIcon = "files" | "function" | "chart-line" | "git-commit" | "cloud-storm" | "alert";
+type ForecastFlowTone = "calm" | "warm" | "storm" | "muted";
+type ForecastFlagSeverity = "high" | "medium";
+type SimulationMetricTone = "healthy" | "warning" | "critical";
+
+interface MetadataWeatherForecast {
+  status: "Stable" | "Warming" | "Under Pressure" | "High Risk" | "Storm Forming";
+  summary: string;
+  signals: string[];
+}
+
+interface ForecastSignalCard {
+  icon: ForecastFlowIcon;
+  label: string;
+  value: string;
+  tone: ForecastFlowTone;
+  fillPercent: number;
+}
+
+interface ForecastFlagRow {
+  text: string;
+  severity: ForecastFlagSeverity;
+}
+
+interface ForecastOutcomeCard {
+  label: string;
+  result: "Improved" | "Reduced";
+  direction: "up" | "down";
+  magnitude: number;
+}
+
+interface SimulationPressureDimension {
+  label: string;
+  value: string;
+  tone: SimulationMetricTone;
+  fillPercent: number;
+}
+
+interface ForecastFlowData {
+  pressurePercent: number;
+  weatherVerdict: string;
+  weatherVerdictTone: ForecastFlowTone;
+  signalCards: ForecastSignalCard[];
+  weatherFlagRows: ForecastFlagRow[];
+  simulationFlagRows: ForecastFlagRow[];
+  simulationPressureDimensions: SimulationPressureDimension[];
+  simulationPressureScore: number;
+  simulationPressureHeadline: string;
+  simulationPressureBody: string;
+  consequenceTitle: string;
+  consequenceBody: string;
+  outcomeCards: ForecastOutcomeCard[];
+  simulationVerdict: string;
+}
+
+const FORECAST_FLOW_QUESTIONS: Record<ForecastInspectionMode, string[]> = {
+  weather: ["Should I care?", "Why is it flagged?", "What if I ignore it?"],
+  simulation: ["What's wrong?", "How to split it?", "Is it worth it?"]
+};
+
+const FORECAST_FLOW_NEXT_LABELS: Record<ForecastInspectionMode, string[]> = {
+  weather: ["Why? \u2192", "What if ignored? \u2192", ""],
+  simulation: ["How? \u2192", "Worth it? \u2192", ""]
+};
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+function toneForThreshold(value: number, amberThreshold: number, redThreshold: number): ForecastFlowTone {
+  if (value > redThreshold) {
+    return "storm";
+  }
+
+  if (value > amberThreshold) {
+    return "warm";
+  }
+
+  return "calm";
+}
+
+function simulationMetricTone(value: number, warningThreshold: number, criticalThreshold: number): SimulationMetricTone {
+  if (value > criticalThreshold) {
+    return "critical";
+  }
+
+  if (value > warningThreshold) {
+    return "warning";
+  }
+
+  return "healthy";
+}
+
+function simulationPressureHeadline(criticalCount: number, warningCount: number): string {
+  if (criticalCount >= 2) {
+    return "Under significant pressure";
+  }
+
+  if (criticalCount === 1) {
+    return "Pressure is concentrated";
+  }
+
+  if (warningCount >= 2) {
+    return "Pressure is warming";
+  }
+
+  return "Pressure is manageable";
+}
+
+function simulationPressureBody(criticalCount: number, warningCount: number): string {
+  const criticalText = `${criticalCount} ${criticalCount === 1 ? "dimension" : "dimensions"} critical`;
+  const warningText = `${warningCount} ${warningCount === 1 ? "warming" : "warming"}`;
+
+  if (criticalCount > 0) {
+    return `${criticalText}, ${warningText}. Refactor is recommended before complexity compounds.`;
+  }
+
+  if (warningCount > 0) {
+    return `No dimensions critical, ${warningText}. Keep changes isolated before pressure compounds.`;
+  }
+
+  return "No dimensions critical, no warming dimensions. A split is optional unless new responsibilities keep landing here.";
+}
+
+function maxCyclomaticComplexity(file: AtlasNode): number {
+  return (file.metadata?.functionWaypoints ?? []).reduce(
+    (maxComplexity, waypoint) => Math.max(maxComplexity, Number(waypoint.cyclomaticComplexity ?? 0)),
+    0
+  );
+}
+
+function signalSeverityForRow(signal: string): ForecastFlagSeverity {
+  return metadataForecastSignalSeverity(signal) === "info" ? "medium" : "high";
+}
+
+function flagRowsForSignals(signals: string[], maxRows: number): ForecastFlagRow[] {
+  return signals
+    .map((signal) => ({
+      text: signal,
+      severity: signalSeverityForRow(signal)
+    }))
+    .sort((left, right) => (
+      (right.severity === "high" ? 1 : 0) - (left.severity === "high" ? 1 : 0) ||
+      left.text.localeCompare(right.text)
+    ))
+    .slice(0, maxRows);
+}
+
+function consequenceTextForSignal(signal: string): { title: string; body: string } {
+  const normalizedSignal = signal.toLowerCase();
+
+  if (normalizedSignal.includes("dependency") || normalizedSignal.includes("coupling") || normalizedSignal.includes("neighbor")) {
+    return {
+      title: "Dependency pressure is likely to spread.",
+      body: "If this file keeps absorbing connections, future changes may require more surrounding files to be inspected. Review scope can grow even when a change looks local."
+    };
+  }
+
+  if (normalizedSignal.includes("responsibil")) {
+    return {
+      title: "Responsibility accumulation will make intent harder to read.",
+      body: "If unrelated concerns keep landing here, reviewers will need to hold more context at once. Small edits can become harder to classify and test."
+    };
+  }
+
+  if (normalizedSignal.includes("size") || normalizedSignal.includes("function")) {
+    return {
+      title: "Review surface is likely to keep expanding.",
+      body: "If growth continues, the file will take longer to scan and reason about. Larger review surfaces also make automated edits harder to constrain."
+    };
+  }
+
+  return {
+    title: "Pressure can accumulate quietly.",
+    body: "If nothing changes, the current trajectory may make this area more expensive to review later. The signal is directional, not a verdict."
+  };
+}
+
+function forecastFlowDataFor(
+  file: AtlasNode,
+  forecast: ForecastModel,
+  weatherForecast: MetadataWeatherForecast | null,
+  simulationSignals: string[],
+  graph: AtlasGraph | null
+): ForecastFlowData {
+  const responsibilityCount = forecast.current.items.length;
+  const functions = file.metadata?.functionWaypoints ?? [];
+  const functionCount = Number(file.metadata?.functionCount ?? functions.length);
+  const cyclomatic = maxCyclomaticComplexity(file);
+  const churnPerDay = Number(graph?.fileHistory?.[file.path]?.churnRate ?? 0);
+  const churnPerMonth = Math.round(churnPerDay * 30);
+  const duplicatedFunctionCount = functions.filter(
+    (waypoint) => Array.isArray(waypoint.duplicateOf) && waypoint.duplicateOf.length > 0
+  ).length;
+  const duplicationRatio = functionCount > 0 ? duplicatedFunctionCount / functionCount : 0;
+  const pressurePercent = typeof file.healthScore === "number" ? clampPercent(100 - file.healthScore) : 0;
+  const healthTier = file.healthTier ?? "healthy";
+  const weatherVerdict =
+    healthTier === "critical"
+      ? "\u26a1 Storm Forming"
+      : healthTier === "warning"
+        ? "\u26a0 Warming"
+        : "\u2713 Stable";
+  const weatherVerdictTone =
+    healthTier === "critical"
+      ? "storm"
+      : healthTier === "warning"
+        ? "warm"
+        : "calm";
+  const complexityTone = toneForThreshold(cyclomatic, 7, 15);
+  const topWeatherSignal = weatherForecast?.signals[0] ?? "This area remains stable.";
+  const consequence = consequenceTextForSignal(topWeatherSignal);
+  const simulationPressureDimensions: SimulationPressureDimension[] = [
+    {
+      label: "Responsibilities",
+      value: formatMetricNumber(responsibilityCount, 0),
+      tone: simulationMetricTone(responsibilityCount, 1, 3),
+      fillPercent: clampPercent((responsibilityCount / 5) * 100)
+    },
+    {
+      label: "Function count",
+      value: formatMetricNumber(functionCount, 0),
+      tone: simulationMetricTone(functionCount, 20, 50),
+      fillPercent: clampPercent(functionCount)
+    },
+    {
+      label: "Complexity",
+      value: cyclomatic > 0 ? `cc ${formatMetricNumber(cyclomatic, 0)}` : "stable",
+      tone: simulationMetricTone(cyclomatic, 7, 15),
+      fillPercent: clampPercent((cyclomatic / 20) * 100)
+    },
+    {
+      label: "Churn",
+      value: `${formatMetricNumber(churnPerDay)}/mo`,
+      tone: simulationMetricTone(churnPerDay, 2, 5),
+      fillPercent: clampPercent((churnPerDay / 8) * 100)
+    },
+    {
+      label: "Duplication",
+      value: formatPercent(duplicationRatio),
+      tone: simulationMetricTone(duplicationRatio, 0.1, 0.25),
+      fillPercent: clampPercent((duplicationRatio / 0.25) * 100)
+    }
+  ];
+  const simulationCriticalCount = simulationPressureDimensions.filter((dimension) => dimension.tone === "critical").length;
+  const simulationWarningCount = simulationPressureDimensions.filter((dimension) => dimension.tone === "warning").length;
+
+  return {
+    pressurePercent,
+    weatherVerdict,
+    weatherVerdictTone,
+    signalCards: [
+      {
+        icon: "files",
+        label: "Responsibilities",
+        value: `${responsibilityCount} detected`,
+        tone: toneForThreshold(responsibilityCount, 1, 3),
+        fillPercent: clampPercent((responsibilityCount / 5) * 100)
+      },
+      {
+        icon: "function",
+        label: "Functions",
+        value: `${functionCount} total`,
+        tone: toneForThreshold(functionCount, 20, 50),
+        fillPercent: clampPercent(functionCount)
+      },
+      {
+        icon: "chart-line",
+        label: "Complexity",
+        value: complexityTone === "storm" ? "Critical" : complexityTone === "warm" ? "Warming" : "Stable",
+        tone: complexityTone,
+        fillPercent: clampPercent((cyclomatic / 20) * 100)
+      },
+      {
+        icon: "git-commit",
+        label: "Churn",
+        value: `${churnPerMonth}/month`,
+        tone: toneForThreshold(churnPerDay, 2, 5),
+        fillPercent: clampPercent((churnPerDay / 8) * 100)
+      }
+    ],
+    weatherFlagRows: flagRowsForSignals(weatherForecast?.signals ?? forecast.pressureSignals, 5),
+    simulationFlagRows: flagRowsForSignals(simulationSignals, 4),
+    simulationPressureDimensions,
+    simulationPressureScore: Math.round(pressurePercent),
+    simulationPressureHeadline: simulationPressureHeadline(simulationCriticalCount, simulationWarningCount),
+    simulationPressureBody: simulationPressureBody(simulationCriticalCount, simulationWarningCount),
+    consequenceTitle: consequence.title,
+    consequenceBody: consequence.body,
+    outcomeCards: [
+      { label: "Review Surface", result: "Reduced", direction: "down", magnitude: 74 },
+      { label: "Change Isolation", result: "Improved", direction: "up", magnitude: 82 },
+      { label: "Dependency Clarity", result: "Improved", direction: "up", magnitude: 68 },
+      { label: "AI Edit Risk", result: "Reduced", direction: "down", magnitude: 72 }
+    ],
+    simulationVerdict: "Splitting this file reduces the blast radius of future changes. Each module becomes independently reviewable."
+  };
+}
+
+function ForecastFlowIcon({ icon }: { icon: ForecastFlowIcon }) {
+  if (icon === "files") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M8 4h9l3 3v12H8z" />
+        <path d="M17 4v4h4" />
+        <path d="M4 8v12h12" />
+      </svg>
+    );
+  }
+
+  if (icon === "function") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 20c2-6 2-10 0-16" />
+        <path d="M4 8h8" />
+        <path d="M14 10l6 6" />
+        <path d="M20 10l-6 6" />
+      </svg>
+    );
+  }
+
+  if (icon === "chart-line") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 19h16" />
+        <path d="M5 15l4-4 4 2 6-7" />
+        <path d="M15 6h4v4" />
+      </svg>
+    );
+  }
+
+  if (icon === "git-commit") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 12h5" />
+        <path d="M15 12h5" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    );
+  }
+
+  if (icon === "cloud-storm") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 18a4 4 0 1 1 1-7 5 5 0 0 1 9.6 1.8A3 3 0 0 1 17 18H7z" />
+        <path d="M13 14l-2 4h3l-2 4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 4l9 16H3z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </svg>
+  );
+}
 
 function metadataForecastSignalSeverity(signal: string): ForecastSignalSeverity {
   const normalizedSignal = signal.toLowerCase();
 
-  if (normalizedSignal.includes("health score")) {
+  if (
+    normalizedSignal.includes("health score") ||
+    normalizedSignal.includes("storm") ||
+    normalizedSignal.includes("high risk") ||
+    normalizedSignal.includes("spreading")
+  ) {
     return "danger";
   }
 
@@ -141,17 +506,121 @@ function metadataForecastSignalSeverity(signal: string): ForecastSignalSeverity 
   return "warn";
 }
 
-function metadataForecastStayItem(forecast: ForecastModel): string | null {
-  const originBlock = forecast.suggested[0];
+function metadataWeatherForecastFor(file: AtlasNode, forecast: ForecastModel, importedByCount: number): MetadataWeatherForecast {
+  const linesOfCode = Number(file.metadata?.linesOfCode ?? 0);
+  const importCount = Number(file.metadata?.importCount ?? 0);
+  const functionCount = Number(file.metadata?.functionCount ?? file.metadata?.functionWaypoints?.length ?? 0);
+  const responsibilityCount = forecast.current.items.length;
+  const dependencySurface = importCount + importedByCount;
+  const healthScore = typeof file.healthScore === "number" ? file.healthScore : 100;
+  const functions = file.metadata?.functionWaypoints ?? [];
+  const signals: string[] = [];
+  let score = 0;
 
-  if (!originBlock || originBlock.title !== forecast.current.title) {
-    return null;
+  if (responsibilityCount >= 3) {
+    score += 2;
+    signals.push("This file is accumulating responsibilities.");
+  } else if (responsibilityCount >= 2) {
+    score += 1;
+    signals.push("Responsibility growth is starting to concentrate here.");
   }
 
-  const originItems = originBlock.items.map((item) => item.toLowerCase());
-  const exactMatch = forecast.current.items.find((item) => originItems.includes(item.toLowerCase()));
+  if (linesOfCode >= 420) {
+    score += 3;
+    signals.push("File size is large enough that continued growth will raise review complexity.");
+  } else if (linesOfCode >= 180) {
+    score += 2;
+    signals.push("Growing file size is beginning to increase review cost.");
+  } else if (linesOfCode >= 80) {
+    score += 1;
+  }
 
-  return exactMatch ?? forecast.current.items[0] ?? null;
+  if (dependencySurface >= 16) {
+    score += 3;
+    signals.push("Dependency count is concentrating around this file.");
+  } else if (dependencySurface >= 8) {
+    score += 2;
+    signals.push("Coupling growth is likely to affect neighboring files.");
+  } else if (dependencySurface >= 4) {
+    score += 1;
+  }
+
+  if (functionCount >= 24) {
+    score += 2;
+    signals.push("Function count is increasing the amount reviewers must keep in memory.");
+  } else if (functionCount >= 12) {
+    score += 1;
+  }
+
+  if (healthScore < 45) {
+    score += 3;
+    signals.push("Pressure is likely to spread if this area keeps taking changes.");
+  } else if (healthScore < 70) {
+    score += 1;
+    signals.push("Complexity is warming but not yet critical.");
+  }
+
+  if (functions.some((waypoint) => waypoint.calls.length >= 10 || waypoint.stateUpdates.length >= 4)) {
+    score += 2;
+    signals.push("Large orchestration paths are forming inside the file.");
+  }
+
+  if (signals.length === 0) {
+    signals.push("This area remains stable.");
+  }
+
+  const status =
+    score >= 9
+      ? "Storm Forming"
+      : score >= 7
+        ? "High Risk"
+        : score >= 4
+          ? "Under Pressure"
+          : score >= 2
+            ? "Warming"
+            : "Stable";
+  const summary: Record<MetadataWeatherForecast["status"], string> = {
+    Stable: "This area remains stable. If current patterns continue, review pressure is unlikely to grow quickly.",
+    Warming: "This file is beginning to accumulate pressure. If growth continues at the current pace, review complexity is likely to increase.",
+    "Under Pressure": "Pressure is concentrating here. Continued growth is likely to make nearby changes harder to review.",
+    "High Risk": "This file is carrying enough pressure that future edits may spread complexity into neighboring files.",
+    "Storm Forming": "Multiple pressure signals are converging. If nothing changes, this area is likely to become harder to review and modify."
+  };
+
+  return {
+    status,
+    summary: summary[status],
+    signals: signals.slice(0, 5)
+  };
+}
+
+function metadataSimulationSignalsFor(file: AtlasNode, forecast: ForecastModel, importedByCount: number): string[] {
+  const functions = file.metadata?.functionWaypoints ?? [];
+  const importCount = Number(file.metadata?.importCount ?? 0);
+  const responsibilities = forecast.current.items;
+  const signals: string[] = [];
+
+  if (responsibilities.length >= 3) {
+    signals.push("Multiple responsibilities");
+  }
+
+  if (functions.some((waypoint) => waypoint.calls.length >= 10 || waypoint.stateUpdates.length >= 4)) {
+    signals.push("Large orchestration function");
+  }
+
+  if (responsibilities.includes("runtime flow") && responsibilities.includes("rendering")) {
+    signals.push("Mixed runtime and rendering concerns");
+  }
+
+  if (importCount + importedByCount >= 10) {
+    signals.push("Dependency concentration");
+  }
+
+  if (typeof file.healthScore === "number" && file.healthScore < 50) {
+    signals.push("Review complexity pressure");
+  }
+
+  return signals.length > 0 ? signals.slice(0, 5) : forecast.pressureSignals.slice(0, 4);
 }
 
 interface SelectionMarqueeGesture {
@@ -1552,6 +2021,7 @@ export function GraphView({
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
   const [sourceModalFile, setSourceModalFile] = useState<AtlasNode | null>(null);
   const [metadataForecastNodeId, setMetadataForecastNodeId] = useState<string | null>(null);
+  const [metadataForecastPageIndex, setMetadataForecastPageIndex] = useState(0);
   const [filePanelView, setFilePanelView] = useState<"metadata" | "wires">("metadata");
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -3083,12 +3553,36 @@ export function GraphView({
       : null,
     [importedByCount, selectedNode]
   );
+  const forecastInspectionMode: ForecastInspectionMode = refactorRiskMode ? "simulation" : "weather";
   const metadataForecastActive =
     Boolean(selectedFileForecast?.available && selectedNode && metadataForecastNodeId === selectedNode.id);
-  const selectedFileForecastStayItem = useMemo(
-    () => selectedFileForecast ? metadataForecastStayItem(selectedFileForecast) : null,
-    [selectedFileForecast]
+  const selectedFileWeatherForecast = useMemo(
+    () => selectedNode?.type === "file" && selectedFileForecast?.available
+      ? metadataWeatherForecastFor(selectedNode, selectedFileForecast, importedByCount)
+      : null,
+    [importedByCount, selectedFileForecast, selectedNode]
   );
+  const selectedFileSimulationSignals = useMemo(
+    () => selectedNode?.type === "file" && selectedFileForecast?.available
+      ? metadataSimulationSignalsFor(selectedNode, selectedFileForecast, importedByCount)
+      : [],
+    [importedByCount, selectedFileForecast, selectedNode]
+  );
+  const selectedForecastFlowData = useMemo(
+    () => selectedNode?.type === "file" && selectedFileForecast?.available
+      ? forecastFlowDataFor(
+        selectedNode,
+        selectedFileForecast,
+        selectedFileWeatherForecast,
+        selectedFileSimulationSignals,
+        graph
+      )
+      : null,
+    [graph, selectedFileForecast, selectedFileSimulationSignals, selectedFileWeatherForecast, selectedNode]
+  );
+  useEffect(() => {
+    setMetadataForecastPageIndex(0);
+  }, [forecastInspectionMode, metadataForecastActive, metadataForecastNodeId]);
   const selectedFileFunctionCount = useMemo(() => {
     if (!selectedNode || selectedNode.type !== "file" || !hasFunctionMetadata(selectedNode)) {
       return 0;
@@ -4181,19 +4675,33 @@ export function GraphView({
         />
       ) : selectedNode ? (
         selectedNode.type === "file" ? (
-          <aside className={`metadata-panel metadata-panel--file ${metadataForecastActive ? "metadata-panel--forecast" : filePanelView === "wires" ? "metadata-panel--wires" : ""}`.trim()}>
-            {metadataForecastActive && selectedFileForecast ? (
+          <aside
+            className={`metadata-panel metadata-panel--file ${
+              metadataForecastActive
+                ? `metadata-panel--forecast metadata-panel--forecast-${forecastInspectionMode}`
+                : filePanelView === "wires"
+                  ? "metadata-panel--wires"
+                  : ""
+            }`.trim()}
+          >
+            {metadataForecastActive && selectedFileForecast && selectedForecastFlowData ? (
               <>
-                <header className="metadata-panel__forecast-header" aria-label="Forecast">
+                <header
+                  className="metadata-panel__forecast-header"
+                  aria-label={forecastInspectionMode === "simulation" ? "Refactor Simulation" : "Code Weather Forecast"}
+                >
                   <div className="metadata-panel__forecast-title-group">
                     <div>
-                      <div className="metadata-panel__forecast-eyebrow">Refactor Forecast</div>
-                      <h2>Under pressure</h2>
+                      <div className="metadata-panel__forecast-eyebrow">
+                        {forecastInspectionMode === "simulation" ? "Refactor Simulation" : "Forecast"}
+                      </div>
+                      <h2>{forecastInspectionMode === "simulation" ? "Simulate Refactor" : "Code Weather Forecast"}</h2>
                       <div className="metadata-panel__forecast-path">{selectedNode.path}</div>
                     </div>
                     <button
                       type="button"
                       className="metadata-panel__forecast-return"
+                      aria-label="Return to file details"
                       onClick={() => setMetadataForecastNodeId(null)}
                     >
                       ← Return
@@ -4201,65 +4709,252 @@ export function GraphView({
                   </div>
                 </header>
 
-                <section className="metadata-panel__forecast-summary" aria-label="Forecast summary">
-                  <p>
-                    This file is carrying <strong>{selectedFileForecast.current.items.length} responsibilities</strong> that would be cleaner as <strong>{selectedFileForecast.suggested.length} separate modules</strong>. Splitting it reduces <strong>risk</strong> and makes each <strong>concern</strong> easier to review.
-                  </p>
-                </section>
-
-                <section className="metadata-panel__forecast-signals" aria-label="Pressure signals">
-                  <div className="metadata-panel__forecast-section-label">Pressure signals</div>
-                  <div className="metadata-panel__forecast-signal-list">
-                    {selectedFileForecast.pressureSignals.map((signal) => (
-                      <div
-                        className={`metadata-panel__forecast-signal metadata-panel__forecast-signal--${metadataForecastSignalSeverity(signal)}`}
-                        key={signal}
-                      >
-                        <span className="metadata-panel__forecast-signal-dot" aria-hidden="true" />
-                        <span>{signal}</span>
-                      </div>
+                <div className="metadata-panel__forecast-pager" aria-label="Forecast questions">
+                  <span>{FORECAST_FLOW_QUESTIONS[forecastInspectionMode][metadataForecastPageIndex]}</span>
+                  <div className="metadata-panel__forecast-dots" aria-label="Forecast page navigation">
+                    {FORECAST_FLOW_QUESTIONS[forecastInspectionMode].map((question, index) => (
+                      <button
+                        type="button"
+                        className={[
+                          "metadata-panel__forecast-dot",
+                          index === metadataForecastPageIndex ? "is-active" : "",
+                          index < metadataForecastPageIndex ? "is-done" : ""
+                        ].filter(Boolean).join(" ")}
+                        key={question}
+                        aria-label={`Go to ${question}`}
+                        aria-current={index === metadataForecastPageIndex ? "step" : undefined}
+                        onClick={() => setMetadataForecastPageIndex(index)}
+                      />
                     ))}
                   </div>
-                </section>
+                </div>
 
-                <div className="metadata-panel__forecast-body" aria-label="Forecast structure comparison">
-                  <section className="metadata-panel__forecast-column metadata-panel__forecast-column--now" aria-label="Current structure">
-                    <div className="metadata-panel__forecast-column-label">Now</div>
-                    <article className="metadata-panel__forecast-file-block">
-                      <strong className="metadata-panel__forecast-file-name">{selectedFileForecast.current.title}</strong>
-                      <div className="metadata-panel__forecast-responsibility-list">
-                        {selectedFileForecast.current.items.map((item) => (
-                          <div
-                            className={`metadata-panel__forecast-responsibility ${item === selectedFileForecastStayItem ? "is-staying" : "is-moving"}`.trim()}
-                            key={item}
-                          >
-                            <span className="metadata-panel__forecast-responsibility-dash" aria-hidden="true" />
-                            <span>{item}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </article>
-                  </section>
-
-                  <section className="metadata-panel__forecast-column metadata-panel__forecast-column--suggested" aria-label="Suggested structure">
-                    <div className="metadata-panel__forecast-column-label">Suggested</div>
-                    {selectedFileForecast.suggested.map((block, blockIndex) => (
-                      <article
-                        className={`metadata-panel__forecast-file-block ${blockIndex === 0 ? "metadata-panel__forecast-file-block--origin" : "metadata-panel__forecast-file-block--split"}`.trim()}
-                        key={block.title}
+                <div className="metadata-panel__forecast-page-area">
+                  {forecastInspectionMode === "weather" ? (
+                    <>
+                      <section
+                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 0 ? "is-active" : ""}`.trim()}
+                        aria-hidden={metadataForecastPageIndex !== 0}
                       >
-                        <strong className="metadata-panel__forecast-file-name">{block.title}</strong>
-                        <div className="metadata-panel__forecast-responsibility-list">
-                          {block.items.map((item) => (
-                            <div className="metadata-panel__forecast-responsibility" key={`${block.title}:${item}`}>
-                              <span className="metadata-panel__forecast-responsibility-dash" aria-hidden="true" />
-                              <span>{item}</span>
-                            </div>
+                        <div className="metadata-panel__pressure-gauge">
+                          <div className="metadata-panel__pressure-label">Pressure level</div>
+                          <div className="metadata-panel__pressure-track">
+                            <div className="metadata-panel__pressure-fill" />
+                            <span
+                              className="metadata-panel__pressure-cursor"
+                              style={{ left: `${selectedForecastFlowData.pressurePercent}%` }}
+                              aria-hidden="true"
+                            />
+                          </div>
+                          <div className="metadata-panel__pressure-scale" aria-hidden="true">
+                            <span>Calm</span>
+                            <span>Warming</span>
+                            <span>Storm</span>
+                          </div>
+                          <div className={`metadata-panel__pressure-verdict metadata-panel__pressure-verdict--${selectedForecastFlowData.weatherVerdictTone}`}>
+                            {selectedForecastFlowData.weatherVerdict}
+                          </div>
+                        </div>
+
+                        <div className="metadata-panel__signal-card-grid">
+                          {selectedForecastFlowData.signalCards.map((card) => (
+                            <article className={`metadata-panel__signal-card metadata-panel__signal-card--${card.tone}`} key={card.label}>
+                              <div className="metadata-panel__signal-card-head">
+                                <span className="metadata-panel__signal-card-icon">
+                                  <ForecastFlowIcon icon={card.icon} />
+                                </span>
+                                <span>{card.label}</span>
+                              </div>
+                              <strong>{card.value}</strong>
+                              <div className="metadata-panel__signal-card-bar" aria-hidden="true">
+                                <span style={{ width: `${card.fillPercent}%` }} />
+                              </div>
+                            </article>
                           ))}
                         </div>
-                      </article>
-                    ))}
-                  </section>
+                      </section>
+
+                      <section
+                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 1 ? "is-active" : ""}`.trim()}
+                        aria-hidden={metadataForecastPageIndex !== 1}
+                      >
+                        <div className="metadata-panel__forecast-flag-list">
+                          {selectedForecastFlowData.weatherFlagRows.map((row) => (
+                            <article className={`metadata-panel__forecast-flag-row metadata-panel__forecast-flag-row--${row.severity}`} key={row.text}>
+                              <span className="metadata-panel__forecast-flag-icon">
+                                <ForecastFlowIcon icon="alert" />
+                              </span>
+                              <span>{row.text}</span>
+                              <strong>{row.severity === "high" ? "HIGH" : "MED"}</strong>
+                            </article>
+                          ))}
+                        </div>
+                      </section>
+
+                      <section
+                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 2 ? "is-active" : ""}`.trim()}
+                        aria-hidden={metadataForecastPageIndex !== 2}
+                      >
+                        <article className="metadata-panel__consequence-block">
+                          <span className="metadata-panel__consequence-icon">
+                            <ForecastFlowIcon icon="cloud-storm" />
+                          </span>
+                          <strong>{selectedForecastFlowData.consequenceTitle}</strong>
+                          <p>{selectedForecastFlowData.consequenceBody}</p>
+                          <small>Signal, not verdict. You decide when to act.</small>
+                        </article>
+                      </section>
+                    </>
+                  ) : (
+                    <>
+                      <section
+                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 0 ? "is-active" : ""}`.trim()}
+                        aria-hidden={metadataForecastPageIndex !== 0}
+                      >
+                        <article className="metadata-panel__simulation-pressure-card" aria-label="Pressure dimensions">
+                          <div className="metadata-panel__simulation-card-label">Pressure Dimensions</div>
+                          <div className="metadata-panel__simulation-pressure-list">
+                            {selectedForecastFlowData.simulationPressureDimensions.map((dimension) => (
+                              <div
+                                className={`metadata-panel__simulation-pressure-row metadata-panel__simulation-pressure-row--${dimension.tone}`}
+                                key={dimension.label}
+                              >
+                                <span>{dimension.label}</span>
+                                <div className="metadata-panel__simulation-pressure-track" aria-hidden="true">
+                                  <span style={{ width: `${dimension.fillPercent}%` }} />
+                                </div>
+                                <strong>{dimension.value}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        </article>
+
+                        <article className="metadata-panel__simulation-verdict-card" aria-label="Pressure verdict">
+                          <div
+                            className="metadata-panel__simulation-score-ring"
+                            style={{
+                              "--score-angle": `${selectedForecastFlowData.simulationPressureScore * 3.6}deg`
+                            } as CSSProperties}
+                          >
+                            <strong>{selectedForecastFlowData.simulationPressureScore}</strong>
+                            <span>/ 100</span>
+                          </div>
+                          <div className="metadata-panel__simulation-verdict-copy">
+                            <strong>{selectedForecastFlowData.simulationPressureHeadline}</strong>
+                            <p>{selectedForecastFlowData.simulationPressureBody}</p>
+                          </div>
+                        </article>
+
+                        <div className="metadata-panel__forecast-flag-list">
+                          {selectedForecastFlowData.simulationFlagRows.map((row) => (
+                            <article className={`metadata-panel__forecast-flag-row metadata-panel__forecast-flag-row--${row.severity}`} key={row.text}>
+                              <span className="metadata-panel__forecast-flag-icon">
+                                <ForecastFlowIcon icon="alert" />
+                              </span>
+                              <span>{row.text}</span>
+                              <strong>{row.severity === "high" ? "HIGH" : "MED"}</strong>
+                            </article>
+                          ))}
+                        </div>
+                      </section>
+
+                      <section
+                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 1 ? "is-active" : ""}`.trim()}
+                        aria-hidden={metadataForecastPageIndex !== 1}
+                      >
+                        <article className="metadata-panel__simulation-current-card" aria-label="Current file responsibilities">
+                          <span>Current file</span>
+                          <strong>{selectedFileForecast.current.title}</strong>
+                          <div className="metadata-panel__simulation-chip-row">
+                            {selectedFileForecast.current.items.map((item) => (
+                              <span key={item}>{item}</span>
+                            ))}
+                          </div>
+                        </article>
+
+                        <div className="metadata-panel__simulation-split-diagram" aria-label="Suggested split diagram">
+                          <article className="metadata-panel__simulation-origin-card">
+                            <span>Current File</span>
+                            <strong>{selectedFileForecast.current.title}</strong>
+                          </article>
+                          <div className="metadata-panel__simulation-split-arrow" aria-hidden="true">{"\u2193"}</div>
+                          <div className="metadata-panel__simulation-split-grid">
+                            {selectedFileForecast.suggested.map((block, blockIndex) => (
+                              <article
+                                className={`metadata-panel__simulation-file-card ${blockIndex === 0 ? "is-keep" : "is-new"}`}
+                                key={block.title}
+                              >
+                                <span>{blockIndex === 0 ? "KEEP" : "NEW"}</span>
+                                <strong>{block.title}</strong>
+                                <div className="metadata-panel__simulation-card-items">
+                                  {block.items.map((item) => (
+                                    <small key={`${block.title}:${item}`}>{item}</small>
+                                  ))}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        </div>
+                        <p className="metadata-panel__split-note">One possible separation. Architecture is subjective.</p>
+                      </section>
+
+                      <section
+                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 2 ? "is-active" : ""}`.trim()}
+                        aria-hidden={metadataForecastPageIndex !== 2}
+                      >
+                        <div className="metadata-panel__simulation-before-after" aria-label="Before and after comparison">
+                          <article>
+                            <span>Before</span>
+                            <strong>{selectedFileForecast.current.title}</strong>
+                            <small>single file</small>
+                          </article>
+                          <div aria-hidden="true">{"\u2192"}</div>
+                          <article>
+                            <span>After</span>
+                            <div className="metadata-panel__simulation-after-list">
+                              {selectedFileForecast.suggested.map((block) => (
+                                <strong key={block.title}>{block.title}</strong>
+                              ))}
+                            </div>
+                            <small>multiple modules</small>
+                          </article>
+                        </div>
+
+                        <div className="metadata-panel__simulation-impact-grid">
+                          {selectedForecastFlowData.outcomeCards.map((card) => (
+                            <article className="metadata-panel__simulation-impact" key={card.label}>
+                              <span>{card.label}</span>
+                              <strong className={`metadata-panel__simulation-impact-value metadata-panel__simulation-impact-value--${card.direction}`}>
+                                {card.result}
+                              </strong>
+                              <div className="metadata-panel__simulation-impact-bar" aria-hidden="true">
+                                <span style={{ width: `${card.magnitude}%` }} />
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                        <div className="metadata-panel__simulation-verdict">{selectedForecastFlowData.simulationVerdict}</div>
+                      </section>
+                    </>
+                  )}
+                </div>
+
+                <div className="metadata-panel__forecast-nav" aria-label="Forecast page controls">
+                  <button
+                    type="button"
+                    className={`metadata-panel__forecast-nav-button ${metadataForecastPageIndex === 0 ? "is-hidden" : ""}`.trim()}
+                    onClick={() => setMetadataForecastPageIndex((page) => Math.max(0, page - 1))}
+                  >
+                    {"\u2190"} Back
+                  </button>
+                  <span>{metadataForecastPageIndex + 1} of 3</span>
+                  <button
+                    type="button"
+                    className={`metadata-panel__forecast-nav-button metadata-panel__forecast-nav-button--next ${metadataForecastPageIndex === 2 ? "is-hidden" : ""}`.trim()}
+                    onClick={() => setMetadataForecastPageIndex((page) => Math.min(2, page + 1))}
+                  >
+                    {FORECAST_FLOW_NEXT_LABELS[forecastInspectionMode][metadataForecastPageIndex]}
+                  </button>
                 </div>
               </>
             ) : filePanelView === "wires" ? (
@@ -4512,12 +5207,12 @@ export function GraphView({
                     ) : null}
                     {selectedFileForecast?.available ? (
                       <div className="metadata-panel__forecast-entry" aria-label="Forecast available">
-                        <span>Forecast Available</span>
+                        <span>{forecastInspectionMode === "simulation" ? "Refactor Simulation" : "Architectural Weather"}</span>
                         <button
                           type="button"
                           onClick={enterMetadataForecast}
                         >
-                          Forecast
+                          {forecastInspectionMode === "simulation" ? "Simulate Refactor" : "Forecast"}
                         </button>
                       </div>
                     ) : null}
@@ -4659,6 +5354,7 @@ export function GraphView({
             sourceFiles={graph?.nodes.filter((node) => node.type === "file")}
             runtimeContext={sourceModalRuntimeContext}
             fileContext={sourceModalFileContext}
+            inspectionMode={forecastInspectionMode}
             onClose={() => setSourceModalFile(null)}
           />
         </Suspense>

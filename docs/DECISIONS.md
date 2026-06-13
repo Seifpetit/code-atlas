@@ -759,3 +759,31 @@ Implications:
   severity.
 - Future sound or richer diagnostics should remain optional and must not
   interfere with the structural graph interaction model.
+
+## 31. Forecast Entry Splits Weather From Refactor Simulation
+
+Status:
+- Accepted
+
+Decision:
+- The focused-file forecast entry has two meanings based on inspection mode.
+- The source inspection modal Forecast toggle follows the same rule.
+- In normal inspection, `Forecast` opens `Code Weather Forecast`.
+- In Risk X-Ray mode, the entry becomes `Simulate Refactor` and opens
+  `Refactor Simulation`.
+- Code Weather Forecast answers what happens if nothing changes. It uses
+  trajectory statuses and pressure-movement signals only.
+- Refactor Simulation answers what one possible cleanup path could look like.
+  It shows why the file was flagged, current structure, possible separation,
+  and expected outcome cards.
+- The focused-file Weather and Simulation panels are exactly three-page
+  question flows, with one active page competing for attention at a time.
+- File-node health warning/critical dots are removed from graph chrome; health
+  remains inspectable in the focused-file metadata panel.
+
+Rationale:
+- Future-state forecasting and alternative-state simulation answer different
+  product questions and should not share wording or visual structure.
+- The normal Forecast view must not imply a refactor recommendation.
+- The X-Ray simulation view can sketch a possible separation without presenting
+  it as the only valid architecture.

@@ -238,6 +238,36 @@ Technical name:
 - `refactorRiskMode`
 - `refactorRiskTier`
 
+**Code Weather Forecast**
+The normal-inspection meaning of the focused-file Forecast entry.
+
+Purpose:
+- Answers what happens if the current repository continues evolving without
+  intervention.
+- Uses trajectory language such as `Stable`, `Warming`, `Under Pressure`,
+  `High Risk`, or `Storm Forming`.
+
+Rule:
+- Does not show refactor suggestions or simulated file splits.
+- Uses a three-question paginated flow: `Should I care?`, `Why is it flagged?`,
+  and `What if I ignore it?`.
+- Signals describe pressure movement: file size, dependency concentration,
+  responsibility accumulation, coupling growth, and review complexity.
+
+**Refactor Simulation**
+The Risk X-Ray meaning of the focused-file forecast entry.
+
+Purpose:
+- Answers what one possible cleanup path could look like.
+- Presents a possible separation of concerns, current structure, simulated
+  architecture, and expected outcome cards.
+
+Rule:
+- Uses `possible separation`, never a single required-separation framing.
+- Uses a three-question paginated flow: `What's wrong?`, `How to split it?`,
+  and `Is it worth it?`.
+- Exists only while Risk X-Ray mode is active.
+
 ## UI Objects
 
 **Object**

@@ -4,7 +4,6 @@ import { Handle, Position } from "@xyflow/react";
 import type { AtlasNode } from "../api";
 import type { NodeVisualState } from "./attention/attentionTypes";
 import { filePaletteForExtension } from "./filePalette";
-import { getHealthTier, type GraphNode } from "./healthScore";
 
 type StructuralKind = "folder" | "file";
 const FUNCTION_METADATA_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py"]);
@@ -162,15 +161,10 @@ function FolderShape(props: NodeChromeProps) {
 }
 
 function FileShape(props: NodeChromeProps) {
-  const healthTier = getHealthTier(props.data as GraphNode);
-
   return (
     <>
       <div className="atlas-node__risk-glow" aria-hidden="true" />
       <div className="atlas-node__shape atlas-node__shape--file">
-        {healthTier === "warning" || healthTier === "critical" ? (
-          <span className={`atlas-node__health-dot atlas-node__health-dot--${healthTier}`} aria-hidden="true" />
-        ) : null}
         <svg
           className="atlas-node__file-frame"
           viewBox="0 0 130 180"
