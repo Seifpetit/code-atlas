@@ -1521,9 +1521,7 @@ export async function extractGraph(
     .filter((filePath) => (structure.fileMetadata.get(filePath)?.sourceText.length ?? 0) > 0)
     .sort()
     .slice(0, MAX_PARSED_SOURCE_FILES);
-  const sourceFiles = filePaths.map((filePath) =>
-    project.createSourceFile(path.join(repoRoot, filePath), structure.fileMetadata.get(filePath)?.sourceText ?? "")
-  );
+  const sourceFiles = filePaths.map((filePath) => project.addSourceFileAtPath(path.join(repoRoot, filePath)));
   const sourceFilesByPath = new Map<string, SourceFile>();
   const pythonExtractionsByPath = new Map<string, PythonExtraction>();
   const seenEdges = new Set<string>();

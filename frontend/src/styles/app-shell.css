@@ -1127,15 +1127,20 @@
 }
 
 .github-connect-strip {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   min-height: 100%;
   border: 1px solid rgba(45, 212, 191, 0.2);
   border-radius: 8px;
   background: rgba(11, 22, 38, 0.82);
   padding: 12px;
-  text-align: center;
-  align-items: center;
+  text-align: left;
+  min-width: 0;
+}
+
+.github-connect-strip span {
   min-width: 0;
 }
 
@@ -1161,8 +1166,9 @@
 }
 
 .github-connect-strip button {
-  width: min(100%, 320px);
-  height: 52px;
+  flex: 0 0 auto;
+  width: auto;
+  height: 34px;
   padding: 0 18px;
   font-size: 12px;
   letter-spacing: 0.08em;

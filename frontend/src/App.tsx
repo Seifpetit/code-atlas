@@ -1363,9 +1363,12 @@ export default function App() {
                 <div className="github-connect-strip">
                   <span>
                     {githubStatus.configured
-                      ? "GitHub account available. Open the graph view to connect."
+                      ? "GitHub account available. Connect to load private repositories and saved maps."
                       : "Set GitHub OAuth env vars to enable connected repositories."}
                   </span>
+                  <button type="button" disabled={!githubStatus.configured} onClick={handleConnectGitHub}>
+                    Connect GitHub
+                  </button>
                 </div>
               )}
             </div>
