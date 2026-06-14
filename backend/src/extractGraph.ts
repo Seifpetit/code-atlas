@@ -19,6 +19,12 @@ import type {
   VariableWaypoint
 } from "./types.js";
 
+interface ExtractGraphOptions {
+  maxDepth?: number;
+  parseSource?: boolean;
+  analysis?: GraphJson["analysis"];
+}
+
 const IGNORED_DIRECTORIES = new Set([
   "node_modules",
   "dist",
@@ -1376,7 +1382,16 @@ async function importedCallTargets(repoRoot: string, sourceFile: SourceFile): Pr
   return { bindings, namespaces };
 }
 
-async function walkRepo(directory: string, repoRoot: string, structure: ExtractedStructure): Promise<void> {
+function relativePathDepth(relativePath: string): number {
+  return relativePath === "." ? 0 : relativePath.split("/").filter(Boolean).length;
+}
+
+async function walkRepo(
+  directory: string,
+  repoRoot: string,
+  structure: ExtractedStructure,
+  options: ExtractGraphOptions
+): Promise<void> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
@@ -1386,14 +1401,22 @@ async function walkRepo(directory: string, repoRoot: string, structure: Extracte
 
     const absolutePath = path.join(directory, entry.name);
     const relativePath = toPosixRelative(repoRoot, absolutePath);
+    const depth = relativePathDepth(relativePath);
 
     if (entry.isDirectory()) {
       structure.folders.add(relativePath);
-      await walkRepo(absolutePath, repoRoot, structure);
+      if (options.maxDepth !== undefined && depth >= options.maxDepth) {
+        continue;
+      }
+      await walkRepo(absolutePath, repoRoot, structure, options);
       continue;
     }
 
     if (entry.isFile() && STRUCTURAL_FILE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+      if (options.maxDepth !== undefined && depth > options.maxDepth) {
+        continue;
+      }
+
       if (structure.files.size >= MAX_STRUCTURAL_FILES) {
         throw new Error(
           `Repository is too large to analyze safely (${MAX_STRUCTURAL_FILES}+ supported files). Try a smaller repo or a narrower branch.`
@@ -1401,13 +1424,20 @@ async function walkRepo(directory: string, repoRoot: string, structure: Extracte
       }
 
       const stats = await fs.stat(absolutePath);
+      const shouldAttemptSource = options.parseSource !== false;
       const shouldRetainSource =
+        shouldAttemptSource &&
         stats.size <= MAX_SOURCE_FILE_BYTES &&
         structure.retainedSourceBytes + stats.size <= MAX_RETAINED_SOURCE_BYTES;
       const contents = shouldRetainSource ? await fs.readFile(absolutePath, "utf8") : "";
 
       if (shouldRetainSource) {
         structure.retainedSourceBytes += stats.size;
+      } else if (shouldAttemptSource) {
+        structure.skippedSourceFiles += 1;
+        if (stats.size > MAX_SOURCE_FILE_BYTES) {
+          structure.skippedLargeFiles += 1;
+        }
       }
 
       structure.files.add(relativePath);
@@ -1496,17 +1526,20 @@ function connectInputSources(structure: ExtractedStructure): void {
 
 export async function extractGraph(
   repoRoot: string,
-  fileHistory: Record<string, FileHistoryInfo> = {}
+  fileHistory: Record<string, FileHistoryInfo> = {},
+  options: ExtractGraphOptions = {}
 ): Promise<GraphJson> {
   const structure: ExtractedStructure = {
     folders: new Set(),
     files: new Set(),
     fileMetadata: new Map(),
     retainedSourceBytes: 0,
+    skippedSourceFiles: 0,
+    skippedLargeFiles: 0,
     imports: []
   };
 
-  await walkRepo(repoRoot, repoRoot, structure);
+  await walkRepo(repoRoot, repoRoot, structure, options);
 
   const project = new Project({
     skipAddingFilesFromTsConfig: true,
@@ -1614,5 +1647,20 @@ export async function extractGraph(
     }
   }
 
-  return buildGraph(structure, fileHistory);
+  const graph = buildGraph(structure, fileHistory);
+
+  return {
+    ...graph,
+    analyzeStats: {
+      folderCount: structure.folders.size,
+      supportedFileCount: structure.files.size,
+      retainedSourceBytes: structure.retainedSourceBytes,
+      parsedTsFiles: sourceFiles.length,
+      parsedPythonFiles: pythonPaths.length,
+      parsedStaticFiles: staticReferencePaths.length,
+      skippedSourceFiles: structure.skippedSourceFiles,
+      skippedLargeFiles: structure.skippedLargeFiles
+    },
+    ...(options.analysis ? { analysis: options.analysis } : {})
+  };
 }

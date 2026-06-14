@@ -387,7 +387,7 @@
   display: flex;
   width: 100%;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   margin: -8px 0 20px;
   border: 1px solid rgba(6, 182, 212, 0.18);
@@ -399,9 +399,15 @@
 }
 
 .graph-idle-state__progress strong {
+  margin-left: auto;
   color: #06b6d4;
   font-size: 12px;
   font-weight: 700;
+}
+
+.graph-idle-state__progress small {
+  color: #484f58;
+  font-size: 10px;
 }
 
 .graph-idle-state__divider {

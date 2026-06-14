@@ -143,6 +143,28 @@ export interface AtlasGraph {
     extractHistoryMs: number;
     totalMs: number;
   };
+  analyzeStats?: AnalyzeStats;
+  analysis?: GraphAnalysisState;
+}
+
+export interface GraphAnalysisState {
+  mode: "partial" | "complete";
+  pending: boolean;
+  depth?: number;
+  jobId?: string;
+  status?: "running" | "complete" | "failed";
+  message?: string;
+}
+
+export interface AnalyzeStats {
+  folderCount: number;
+  supportedFileCount: number;
+  retainedSourceBytes: number;
+  parsedTsFiles: number;
+  parsedPythonFiles: number;
+  parsedStaticFiles: number;
+  skippedSourceFiles: number;
+  skippedLargeFiles: number;
 }
 
 export interface SavedMapViewState {
@@ -213,6 +235,37 @@ export interface GitHubRepository {
   stargazersCount?: number;
   language?: string | null;
   topics?: string[];
+  sizeKb?: number;
+}
+
+export interface AnalyzeEstimate {
+  repoUrl: string;
+  repositoryFullName: string;
+  estimatedMs: number;
+  initialEstimatedMs: number;
+  repoSizeKb: number;
+  supportedFileCount: number;
+  initialSupportedFileCount: number;
+  parseCandidateCount: number;
+  treeFileCount: number;
+  ignoredPathCount: number;
+  confidence: "high" | "medium" | "low";
+  treeTruncated: boolean;
+}
+
+export interface AnalyzeJobSummary {
+  id: string;
+  repoUrl: string;
+  status: "running" | "complete" | "failed";
+  phase: string;
+  startedAt: number;
+  updatedAt: number;
+  error?: string;
+}
+
+export interface AnalyzeJobResponse {
+  job: AnalyzeJobSummary;
+  graph?: AtlasGraph;
 }
 
 export interface SavedGraphSummary {
@@ -271,6 +324,32 @@ export async function analyzeRepo(repoUrl: string): Promise<AtlasGraph> {
   }
 
   return payload as AtlasGraph;
+}
+
+export async function estimateAnalyzeRepo(repoUrl: string): Promise<AnalyzeEstimate> {
+  const response = await fetch(`${API_BASE_URL}/analyze/estimate?${new URLSearchParams({ repoUrl }).toString()}`, {
+    credentials: "include"
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to estimate repository analysis.");
+  }
+
+  return payload as AnalyzeEstimate;
+}
+
+export async function loadAnalyzeJob(jobId: string): Promise<AnalyzeJobResponse> {
+  const response = await fetch(`${API_BASE_URL}/analyze/jobs/${encodeURIComponent(jobId)}`, {
+    credentials: "include"
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to load analysis job.");
+  }
+
+  return payload as AnalyzeJobResponse;
 }
 
 export function githubConnectUrl(): string {

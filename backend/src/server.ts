@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import { extractGitDiff } from "./gitDiff.js";
 import { extractGitHistory } from "./gitHistory.js";
 import {
   completeGitHubOAuth,
+  estimateRepositoryAnalysis,
   githubAuthStatus,
   githubSessionFor,
   logoutGitHub,
@@ -25,10 +27,28 @@ import {
   shareSavedGraphForSession,
   type SavedGraphPayload
 } from "./savedGraphs.js";
+import type { GraphJson } from "./types.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
 let lastAnalyzedRepoUrl: string | null = null;
+const INITIAL_ANALYSIS_DEPTH = 3;
+const ANALYSIS_JOB_TTL_MS = 30 * 60 * 1000;
+
+type AnalyzeJobStatus = "running" | "complete" | "failed";
+
+interface AnalyzeJobRecord {
+  id: string;
+  repoUrl: string;
+  status: AnalyzeJobStatus;
+  phase: string;
+  startedAt: number;
+  updatedAt: number;
+  graph?: GraphJson;
+  error?: string;
+}
+
+const analyzeJobs = new Map<string, AnalyzeJobRecord>();
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendDistPath = path.resolve(currentDir, "../../frontend/dist");
 const frontendIndexPath = path.join(frontendDistPath, "index.html");
@@ -76,6 +96,86 @@ app.get("/health", (_request, response) => {
   response.json({ ok: true });
 });
 
+function cleanupAnalyzeJobs(): void {
+  const now = Date.now();
+
+  for (const [jobId, job] of analyzeJobs.entries()) {
+    if (now - job.updatedAt > ANALYSIS_JOB_TTL_MS) {
+      analyzeJobs.delete(jobId);
+    }
+  }
+}
+
+function analyzeJobPayload(job: AnalyzeJobRecord): Omit<AnalyzeJobRecord, "graph"> {
+  return {
+    id: job.id,
+    repoUrl: job.repoUrl,
+    status: job.status,
+    phase: job.phase,
+    startedAt: job.startedAt,
+    updatedAt: job.updatedAt,
+    ...(job.error ? { error: job.error } : {})
+  };
+}
+
+async function runCompleteAnalysisJob(
+  jobId: string,
+  repoPath: string,
+  cloneMs: number,
+  analyzeStartedAt: number
+): Promise<void> {
+  const job = analyzeJobs.get(jobId);
+
+  if (!job) {
+    await cleanupRepo(repoPath);
+    return;
+  }
+
+  try {
+    job.phase = "Reading git history";
+    job.updatedAt = Date.now();
+    const historyStartedAt = Date.now();
+    const history = await extractGitHistory(repoPath);
+    const extractHistoryMs = Date.now() - historyStartedAt;
+
+    job.phase = "Completing deep graph analysis";
+    job.updatedAt = Date.now();
+    const graphStartedAt = Date.now();
+    const graph = await extractGraph(repoPath, history.fileHistory, {
+      analysis: {
+        mode: "complete",
+        pending: false,
+        jobId,
+        status: "complete",
+        message: "Deep analysis complete"
+      }
+    });
+    const extractGraphMs = Date.now() - graphStartedAt;
+
+    job.graph = {
+      ...graph,
+      commits: history.commits,
+      fileHistory: history.fileHistory,
+      analyzeTiming: {
+        cloneMs,
+        extractGraphMs,
+        extractHistoryMs,
+        totalMs: Date.now() - analyzeStartedAt
+      }
+    };
+    job.status = "complete";
+    job.phase = "Complete";
+    job.updatedAt = Date.now();
+  } catch (error) {
+    job.status = "failed";
+    job.phase = "Failed";
+    job.error = error instanceof Error ? error.message : "Failed to complete repository analysis.";
+    job.updatedAt = Date.now();
+  } finally {
+    await cleanupRepo(repoPath);
+  }
+}
+
 app.get("/auth/github", (request, response) => {
   if (typeof request.query.code === "string" || typeof request.query.state === "string") {
     void completeGitHubOAuth(request, response);
@@ -112,6 +212,23 @@ app.get("/github/public-repos", async (request, response) => {
     response.json({ repositories: await searchPublicRepositories(query, session?.accessToken) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to search public repositories.";
+    response.status(500).json({ error: message });
+  }
+});
+
+app.get("/analyze/estimate", async (request, response) => {
+  const repoUrl = typeof request.query.repoUrl === "string" ? request.query.repoUrl : "";
+
+  if (!repoUrl.trim()) {
+    response.status(400).json({ error: "repoUrl is required." });
+    return;
+  }
+
+  try {
+    const session = githubSessionFor(request);
+    response.json(await estimateRepositoryAnalysis(repoUrl.trim(), session?.accessToken));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to estimate repository analysis.";
     response.status(500).json({ error: message });
   }
 });
@@ -254,7 +371,9 @@ app.post("/analyze", async (request, response) => {
   }
 
   let repoPath: string | undefined;
+  let pendingJobId: string | undefined;
   const analyzeStartedAt = Date.now();
+  cleanupAnalyzeJobs();
 
   try {
     lastAnalyzedRepoUrl = repoUrl.trim();
@@ -263,24 +382,51 @@ app.post("/analyze", async (request, response) => {
       githubToken: githubSessionFor(request)?.accessToken
     });
     const cloneMs = Date.now() - cloneStartedAt;
-    const historyStartedAt = Date.now();
-    const history = await extractGitHistory(repoPath);
-    const extractHistoryMs = Date.now() - historyStartedAt;
-    const graphStartedAt = Date.now();
-    const graph = await extractGraph(repoPath, history.fileHistory);
-    const extractGraphMs = Date.now() - graphStartedAt;
-    response.json({
+
+    const jobId = randomUUID();
+    pendingJobId = jobId;
+    const job: AnalyzeJobRecord = {
+      id: jobId,
+      repoUrl: lastAnalyzedRepoUrl,
+      status: "running",
+      phase: "Initial map ready; deep analysis continuing",
+      startedAt: analyzeStartedAt,
+      updatedAt: Date.now()
+    };
+    analyzeJobs.set(jobId, job);
+
+    const initialGraphStartedAt = Date.now();
+    const graph = await extractGraph(repoPath, {}, {
+      maxDepth: INITIAL_ANALYSIS_DEPTH,
+      parseSource: false,
+      analysis: {
+        mode: "partial",
+        pending: true,
+        depth: INITIAL_ANALYSIS_DEPTH,
+        jobId,
+        status: "running",
+        message: "Initial map ready; deep analysis continuing"
+      }
+    });
+    const extractGraphMs = Date.now() - initialGraphStartedAt;
+    const initialPayload = {
       ...graph,
-      commits: history.commits,
-      fileHistory: history.fileHistory,
       analyzeTiming: {
         cloneMs,
         extractGraphMs,
-        extractHistoryMs,
+        extractHistoryMs: 0,
         totalMs: Date.now() - analyzeStartedAt
       }
-    });
+    };
+
+    response.json(initialPayload);
+    void runCompleteAnalysisJob(jobId, repoPath, cloneMs, analyzeStartedAt);
+    repoPath = undefined;
+    pendingJobId = undefined;
   } catch (error) {
+    if (pendingJobId) {
+      analyzeJobs.delete(pendingJobId);
+    }
     const message = error instanceof Error ? error.message : "Failed to analyze repository.";
     response.status(message.includes("too large to analyze safely") ? 413 : 500).json({ error: message });
   } finally {
@@ -288,6 +434,21 @@ app.post("/analyze", async (request, response) => {
       await cleanupRepo(repoPath);
     }
   }
+});
+
+app.get("/analyze/jobs/:jobId", (request, response) => {
+  cleanupAnalyzeJobs();
+  const job = analyzeJobs.get(request.params.jobId);
+
+  if (!job) {
+    response.status(404).json({ error: "Analysis job not found." });
+    return;
+  }
+
+  response.json({
+    job: analyzeJobPayload(job),
+    ...(job.status === "complete" && job.graph ? { graph: job.graph } : {})
+  });
 });
 
 app.post("/diff", async (request, response) => {

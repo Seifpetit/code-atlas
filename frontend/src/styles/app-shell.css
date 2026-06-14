@@ -56,8 +56,92 @@
   letter-spacing: 0.02em;
 }
 
+.analyze-progress-meter {
+  position: relative;
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  transition:
+    width var(--analysis-progress-transition-ms, 420ms) ease,
+    height var(--analysis-progress-transition-ms, 420ms) ease;
+}
+
+.analyze-progress-meter__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, #0b1423 57%, transparent 59%),
+    conic-gradient(
+      #99f6e4 0deg var(--analysis-progress-angle, 0deg),
+      #1a2332 var(--analysis-progress-angle, 0deg) 360deg
+    );
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.16);
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    background var(--analysis-progress-transition-ms, 420ms) linear,
+    opacity var(--analysis-progress-transition-ms, 420ms) ease,
+    transform var(--analysis-progress-transition-ms, 420ms) ease;
+}
+
+.analyze-progress-meter__line {
+  position: absolute;
+  width: 66px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #1a2332;
+  opacity: 0;
+  transform: scaleX(0.45);
+  transition:
+    opacity var(--analysis-progress-transition-ms, 420ms) ease,
+    transform var(--analysis-progress-transition-ms, 420ms) ease;
+}
+
+.analyze-progress-meter__line span {
+  position: absolute;
+  inset: 0;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, #99f6e4, transparent);
+  animation: analyze-progress-line 1.05s linear infinite;
+}
+
+.analyze-progress-meter--line {
+  width: 66px;
+  height: 22px;
+}
+
+.analyze-progress-meter--line .analyze-progress-meter__ring {
+  opacity: 0;
+  transform: scale(0.48);
+}
+
+.analyze-progress-meter--line .analyze-progress-meter__line {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+@keyframes analyze-progress-line {
+  from {
+    transform: translateX(-115%);
+  }
+
+  to {
+    transform: translateX(250%);
+  }
+}
+
 .analyze-progress-chip.is-timing {
   gap: 10px;
+}
+
+.analyze-progress-chip.is-estimate {
+  border-color: rgba(147, 197, 253, 0.3);
+  background: rgba(15, 23, 42, 0.86);
 }
 
 .analyze-progress-chip.is-timing span {

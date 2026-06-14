@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import crypto from "node:crypto";
+import path from "node:path";
+import { validateRepoUrl } from "./cloneRepo.js";
 
 export interface GitHubUser {
   id: number;
@@ -23,6 +25,22 @@ export interface GitHubRepository {
   stargazersCount?: number;
   language?: string | null;
   topics?: string[];
+  sizeKb?: number;
+}
+
+export interface AnalyzeEstimate {
+  repoUrl: string;
+  repositoryFullName: string;
+  estimatedMs: number;
+  initialEstimatedMs: number;
+  repoSizeKb: number;
+  supportedFileCount: number;
+  initialSupportedFileCount: number;
+  parseCandidateCount: number;
+  treeFileCount: number;
+  ignoredPathCount: number;
+  confidence: "high" | "medium" | "low";
+  treeTruncated: boolean;
 }
 
 export interface GitHubSession {
@@ -63,9 +81,19 @@ interface GitHubApiRepository {
   stargazers_count?: number;
   language?: string | null;
   topics?: string[];
+  size?: number;
 }
 interface GitHubSearchResponse {
   items: GitHubApiRepository[];
+}
+
+interface GitHubTreeResponse {
+  tree: Array<{
+    path: string;
+    type: "blob" | "tree" | "commit";
+    size?: number;
+  }>;
+  truncated?: boolean;
 }
 
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
@@ -76,6 +104,48 @@ const OAUTH_STATE_COOKIE = "code_atlas_oauth_state";
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_REPO_PAGES = 4;
+const ESTIMATE_INITIAL_ANALYSIS_DEPTH = 3;
+const ESTIMATE_IGNORED_DIRECTORIES = new Set([
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  ".next",
+  ".nuxt",
+  ".turbo",
+  ".cache",
+  ".parcel-cache",
+  "coverage",
+  ".git",
+  ".venv",
+  "venv",
+  "vendor",
+  "target",
+  "tmp",
+  "temp",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".tox"
+]);
+const ESTIMATE_IMPORT_PARSE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+const ESTIMATE_PYTHON_PARSE_EXTENSIONS = new Set([".py"]);
+const ESTIMATE_STATIC_PARSE_EXTENSIONS = new Set([".html", ".css", ".scss", ".sass", ".less"]);
+const ESTIMATE_STRUCTURAL_EXTENSIONS = new Set([
+  ...ESTIMATE_IMPORT_PARSE_EXTENSIONS,
+  ...ESTIMATE_PYTHON_PARSE_EXTENSIONS,
+  ...ESTIMATE_STATIC_PARSE_EXTENSIONS,
+  ".json",
+  ".md",
+  ".mdx",
+  ".yml",
+  ".yaml",
+  ".toml",
+  ".xml",
+  ".svg",
+  ".txt"
+]);
 
 const sessions = new Map<string, GitHubSession>();
 
@@ -246,6 +316,65 @@ export async function searchPublicRepositories(query: string, accessToken?: stri
   return payload.items.map(toGitHubRepository);
 }
 
+export async function estimateRepositoryAnalysis(repoUrl: string, accessToken?: string): Promise<AnalyzeEstimate> {
+  const { owner, repo } = githubOwnerRepoFromUrl(repoUrl);
+  const repository = await fetchGitHubMaybe<GitHubApiRepository>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+    accessToken
+  );
+  const repoSizeKb = Number(repository.size ?? 0);
+  let tree: GitHubTreeResponse | null = null;
+
+  try {
+    tree = await fetchGitHubMaybe<GitHubTreeResponse>(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(repository.default_branch)}?recursive=1`,
+      accessToken
+    );
+  } catch {
+    tree = null;
+  }
+
+  const blobs = tree?.tree.filter((entry) => entry.type === "blob") ?? [];
+  const activeBlobs = blobs.filter((entry) => !isIgnoredEstimatePath(entry.path));
+  const ignoredPathCount = blobs.length - activeBlobs.length;
+  const supportedFileCount = activeBlobs.filter((entry) =>
+    ESTIMATE_STRUCTURAL_EXTENSIONS.has(path.extname(entry.path).toLowerCase())
+  ).length;
+  const initialSupportedFileCount = activeBlobs.filter((entry) =>
+    estimatePathDepth(entry.path) <= ESTIMATE_INITIAL_ANALYSIS_DEPTH &&
+    ESTIMATE_STRUCTURAL_EXTENSIONS.has(path.extname(entry.path).toLowerCase())
+  ).length;
+  const parseCandidateCount = activeBlobs.filter((entry) => {
+    const extension = path.extname(entry.path).toLowerCase();
+    return (
+      ESTIMATE_IMPORT_PARSE_EXTENSIONS.has(extension) ||
+      ESTIMATE_PYTHON_PARSE_EXTENSIONS.has(extension) ||
+      ESTIMATE_STATIC_PARSE_EXTENSIONS.has(extension)
+    );
+  }).length;
+  const treeTruncated = Boolean(tree?.truncated);
+  const confidence: AnalyzeEstimate["confidence"] = !tree
+    ? "low"
+    : treeTruncated
+      ? "medium"
+      : "high";
+
+  return {
+    repoUrl,
+    repositoryFullName: repository.full_name,
+    estimatedMs: estimateAnalyzeMs(repoSizeKb, supportedFileCount, parseCandidateCount, confidence),
+    initialEstimatedMs: estimateInitialAnalyzeMs(repoSizeKb, initialSupportedFileCount, confidence),
+    repoSizeKb,
+    supportedFileCount,
+    initialSupportedFileCount,
+    parseCandidateCount,
+    treeFileCount: blobs.length,
+    ignoredPathCount,
+    confidence,
+    treeTruncated
+  };
+}
+
 async function exchangeCodeForToken(code: string, redirectUri: string): Promise<string> {
   const response = await fetch(GITHUB_ACCESS_TOKEN_URL, {
     method: "POST",
@@ -299,6 +428,12 @@ async function fetchGitHubApi<T>(accessToken: string, path: string): Promise<T> 
   return await response.json() as T;
 }
 
+async function fetchGitHubMaybe<T>(path: string, accessToken?: string): Promise<T> {
+  return accessToken
+    ? await fetchGitHubApi<T>(accessToken, path)
+    : await fetchGitHubPublicApi<T>(path);
+}
+
 async function fetchGitHubPublicApi<T>(path: string): Promise<T> {
   const response = await fetch(`${GITHUB_API_URL}${path}`, {
     headers: {
@@ -332,8 +467,59 @@ function toGitHubRepository(repository: GitHubApiRepository): GitHubRepository {
     updatedAt: repository.updated_at,
     stargazersCount: repository.stargazers_count,
     language: repository.language,
-    topics: repository.topics ?? []
+    topics: repository.topics ?? [],
+    sizeKb: repository.size
   };
+}
+
+function githubOwnerRepoFromUrl(repoUrl: string): { owner: string; repo: string } {
+  validateRepoUrl(repoUrl);
+
+  const url = new URL(repoUrl);
+  const [owner = "", rawRepo = ""] = url.pathname.replace(/^\/|\/$/g, "").split("/");
+  const repo = rawRepo.replace(/\.git$/i, "");
+
+  if (!owner || !repo) {
+    throw new Error("repoUrl must be a GitHub repository HTTPS URL.");
+  }
+
+  return { owner, repo };
+}
+
+function isIgnoredEstimatePath(filePath: string): boolean {
+  return filePath.split("/").some((segment) => ESTIMATE_IGNORED_DIRECTORIES.has(segment));
+}
+
+function estimatePathDepth(filePath: string): number {
+  return filePath.split("/").filter(Boolean).length;
+}
+
+function estimateAnalyzeMs(
+  repoSizeKb: number,
+  supportedFileCount: number,
+  parseCandidateCount: number,
+  confidence: AnalyzeEstimate["confidence"]
+): number {
+  const baseMs = 7_000;
+  const sizeFactor = Math.min(35_000, repoSizeKb * 0.35);
+  const fileFactor = Math.min(45_000, supportedFileCount * 28);
+  const parseFactor = Math.min(55_000, parseCandidateCount * 65);
+  const confidenceFactor = confidence === "low" ? 12_000 : confidence === "medium" ? 5_000 : 0;
+
+  return Math.round(baseMs + sizeFactor + fileFactor + parseFactor + confidenceFactor);
+}
+
+function estimateInitialAnalyzeMs(
+  repoSizeKb: number,
+  initialSupportedFileCount: number,
+  confidence: AnalyzeEstimate["confidence"]
+): number {
+  const baseMs = 4_500;
+  const cloneSizeFactor = Math.min(22_000, repoSizeKb * 0.22);
+  const shallowFileFactor = Math.min(8_000, initialSupportedFileCount * 10);
+  const confidenceFactor = confidence === "low" ? 4_000 : confidence === "medium" ? 2_000 : 0;
+
+  return Math.round(baseMs + cloneSizeFactor + shallowFileFactor + confidenceFactor);
 }
 
 function githubCallbackUrl(request: Request): string {

@@ -131,6 +131,36 @@ export interface GraphJson {
   edges: GraphEdge[];
   commits?: CommitInfo[];
   fileHistory?: Record<string, FileHistoryInfo>;
+  analyzeTiming?: AnalyzeTiming;
+  analyzeStats?: AnalyzeStats;
+  analysis?: GraphAnalysisState;
+}
+
+export interface AnalyzeTiming {
+  cloneMs: number;
+  extractGraphMs: number;
+  extractHistoryMs: number;
+  totalMs: number;
+}
+
+export interface GraphAnalysisState {
+  mode: "partial" | "complete";
+  pending: boolean;
+  depth?: number;
+  jobId?: string;
+  status?: "running" | "complete" | "failed";
+  message?: string;
+}
+
+export interface AnalyzeStats {
+  folderCount: number;
+  supportedFileCount: number;
+  retainedSourceBytes: number;
+  parsedTsFiles: number;
+  parsedPythonFiles: number;
+  parsedStaticFiles: number;
+  skippedSourceFiles: number;
+  skippedLargeFiles: number;
 }
 
 export interface ExtractedStructure {
@@ -138,6 +168,8 @@ export interface ExtractedStructure {
   files: Set<string>;
   fileMetadata: Map<string, ExtractedFileMetadata>;
   retainedSourceBytes: number;
+  skippedSourceFiles: number;
+  skippedLargeFiles: number;
   imports: Array<{
     source: string;
     target: string;

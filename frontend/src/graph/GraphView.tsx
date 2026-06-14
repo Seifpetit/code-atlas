@@ -65,6 +65,12 @@ interface GraphViewProps {
   onAnalyzeExampleRepo: (repoUrl: string, label: string) => void;
   isAnalyzing?: boolean;
   analyzeElapsedLabel?: string;
+  isEstimatingAnalyze?: boolean;
+  analyzeEstimateLabel?: string | null;
+  analyzeEstimateMeta?: string | null;
+  analyzeProgressPercent?: number;
+  analyzeProgressMode?: "circle" | "line";
+  analyzeProgressTransitionMs?: number;
   initialViewState?: SavedMapViewState | null;
   viewStateKey?: string | null;
   onViewStateChange?: (viewState: SavedMapViewState | null) => void;
@@ -2015,6 +2021,12 @@ export function GraphView({
   onAnalyzeExampleRepo,
   isAnalyzing = false,
   analyzeElapsedLabel,
+  isEstimatingAnalyze = false,
+  analyzeEstimateLabel,
+  analyzeEstimateMeta,
+  analyzeProgressPercent = 0,
+  analyzeProgressMode = "line",
+  analyzeProgressTransitionMs = 420,
   initialViewState = null,
   viewStateKey = null,
   onViewStateChange,
@@ -2065,6 +2077,8 @@ export function GraphView({
   const centeredSecondaryFocusKeyRef = useRef<string | null>(null);
   const appliedViewStateKeyRef = useRef<string | null>(null);
   const pendingSavedViewportRef = useRef<{ key: string; viewport: SavedMapViewState["viewport"] } | null>(null);
+  const previousGraphAnalysisRef = useRef<AtlasGraph["analysis"] | null>(null);
+  const skipNextFitViewRef = useRef(false);
   const skipNextContextResetRef = useRef(false);
   const selectionMarqueeRef = useRef<SelectionMarqueeGesture>({
     active: false,
@@ -2197,6 +2211,23 @@ export function GraphView({
   }, [activeTraceEdgeIds, clusteringMode, currentContextId, focusedNodeId, laidOut]);
 
   useEffect(() => {
+    const previousAnalysis = previousGraphAnalysisRef.current;
+    const nextAnalysis = graph?.analysis ?? null;
+    const isProgressiveCompletion = Boolean(
+      previousAnalysis?.pending &&
+      previousAnalysis.jobId &&
+      previousAnalysis.mode === "partial" &&
+      nextAnalysis?.mode === "complete" &&
+      nextAnalysis.jobId === previousAnalysis.jobId
+    );
+    previousGraphAnalysisRef.current = nextAnalysis;
+
+    if (isProgressiveCompletion) {
+      skipNextFitViewRef.current = true;
+      return;
+    }
+
+    skipNextFitViewRef.current = false;
     setCurrentContextId(null);
     setHoveredNodeId(null);
     setFocusedNodeId(null);
@@ -2321,6 +2352,11 @@ export function GraphView({
 
   useEffect(() => {
     if (!reactFlowInstance || !laidOut) {
+      return;
+    }
+
+    if (skipNextFitViewRef.current) {
+      skipNextFitViewRef.current = false;
       return;
     }
 
@@ -4394,8 +4430,28 @@ export function GraphView({
           </form>
           {isAnalyzing ? (
             <div className="graph-idle-state__progress" aria-live="polite">
+              <span
+                className={`analyze-progress-meter analyze-progress-meter--${analyzeProgressMode}`}
+                style={{
+                  "--analysis-progress-angle": `${analyzeProgressPercent * 3.6}deg`,
+                  "--analysis-progress-transition-ms": `${analyzeProgressTransitionMs}ms`
+                } as CSSProperties}
+                aria-hidden="true"
+              >
+                <span className="analyze-progress-meter__ring" />
+                <span className="analyze-progress-meter__line"><span /></span>
+              </span>
               <span>Analyzing repository</span>
-              <strong>{analyzeElapsedLabel ?? "starting"}</strong>
+              <strong>
+                {analyzeElapsedLabel ?? "starting"}
+                {analyzeEstimateLabel ? ` / est ${analyzeEstimateLabel}` : ""}
+              </strong>
+            </div>
+          ) : isEstimatingAnalyze || analyzeEstimateLabel ? (
+            <div className="graph-idle-state__progress" aria-live="polite">
+              <span>{isEstimatingAnalyze ? "Estimating analysis" : "Estimated analysis"}</span>
+              <strong>{isEstimatingAnalyze ? "checking" : analyzeEstimateLabel}</strong>
+              {analyzeEstimateMeta ? <small>{analyzeEstimateMeta}</small> : null}
             </div>
           ) : null}
 

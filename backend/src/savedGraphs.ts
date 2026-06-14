@@ -7,9 +7,7 @@ import { Pool } from "pg";
 import type { GitHubSession } from "./githubAuth.js";
 import type { GraphJson } from "./types.js";
 
-export interface SavedGraphPayload extends GraphJson {
-  analyzeTiming?: unknown;
-}
+export type SavedGraphPayload = GraphJson & Record<string, unknown>;
 
 export type SavedGraphViewState = Record<string, unknown> | null;
 

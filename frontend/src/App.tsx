@@ -13,9 +13,11 @@ import {
 } from "react";
 import {
   analyzeRepo,
+  estimateAnalyzeRepo,
   getGitHubAuthStatus,
   githubConnectUrl,
   listSavedGraphs,
+  loadAnalyzeJob,
   loadSavedGraph,
   loadSharedGraph,
   loadGitHubRepositories,
@@ -23,6 +25,7 @@ import {
   saveGraph,
   searchPublicGitHubRepositories,
   shareSavedGraph,
+  type AnalyzeEstimate,
   type AtlasGraph,
   type AtlasNode,
   type GitHubAuthStatus,
@@ -37,6 +40,12 @@ import { GraphView } from "./graph/GraphView";
 const SourceCodeModal = lazy(() =>
   import("./graph/SourceCodeModal").then((module) => ({ default: module.SourceCodeModal }))
 );
+const GITHUB_REPO_URL_PATTERN =
+  /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/;
+const ANALYZE_PROGRESS_TRANSITION_MS = 420;
+const ANALYZE_PROGRESS_FAST_STEP = 5.5;
+const ANALYZE_PROGRESS_SLOW_STEP = 2.25;
+const ANALYZE_PROGRESS_BACK_STEP = 3.5;
 
 type FunctionWaypoint = NonNullable<NonNullable<AtlasNode["metadata"]>["functionWaypoints"]>[number];
 type FunctionCall = FunctionWaypoint["calls"][number];
@@ -675,6 +684,11 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeElapsedMs, setAnalyzeElapsedMs] = useState(0);
   const [lastAnalyzeTiming, setLastAnalyzeTiming] = useState<AtlasGraph["analyzeTiming"]>();
+  const [analyzeEstimate, setAnalyzeEstimate] = useState<AnalyzeEstimate | null>(null);
+  const [isEstimatingAnalyze, setIsEstimatingAnalyze] = useState(false);
+  const [displayedAnalyzeProgress, setDisplayedAnalyzeProgress] = useState(0);
+  const [activeAnalyzeJobId, setActiveAnalyzeJobId] = useState<string | null>(null);
+  const [activeAnalyzeJobPhase, setActiveAnalyzeJobPhase] = useState<string | null>(null);
   const [githubStatus, setGithubStatus] = useState<GitHubAuthStatus>({
     configured: false,
     connected: false,
@@ -730,6 +744,9 @@ export default function App() {
   }, []);
 
   function applyLoadedGraph(result: LoadedSavedGraph, restoreKey: string): void {
+    setActiveAnalyzeJobId(null);
+    setActiveAnalyzeJobPhase(null);
+    setIsAnalyzing(false);
     setGraph(result.graph);
     setCurrentGraphRepoUrl(result.savedGraph.repoUrl);
     setRepoUrl(result.savedGraph.repoUrl);
@@ -777,11 +794,82 @@ export default function App() {
     return `${minutes}m ${remainingSeconds}s`;
   }
 
+  function formatByteSize(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes}B`;
+    }
+
+    const kb = bytes / 1024;
+    if (kb < 1024) {
+      return `${kb.toFixed(kb >= 10 ? 0 : 1)}KB`;
+    }
+
+    const mb = kb / 1024;
+    return `${mb.toFixed(mb >= 10 ? 0 : 1)}MB`;
+  }
+
+  function analyzeInitialEstimateLabel(estimate: AnalyzeEstimate | null): string | null {
+    if (!estimate) {
+      return null;
+    }
+
+    return `~${formatDuration(estimate.initialEstimatedMs ?? estimate.estimatedMs)}`;
+  }
+
+  function analyzeEstimateMeta(estimate: AnalyzeEstimate | null): string | null {
+    if (!estimate) {
+      return null;
+    }
+
+    return `${estimate.initialSupportedFileCount ?? estimate.supportedFileCount} first-map files / ${estimate.supportedFileCount} total / ${estimate.confidence}`;
+  }
+
+  function analyzeStatsMeta(stats: AtlasGraph["analyzeStats"]): string | null {
+    if (!stats) {
+      return null;
+    }
+
+    const parsedCount = stats.parsedTsFiles + stats.parsedPythonFiles + stats.parsedStaticFiles;
+    return `${stats.supportedFileCount} files / ${parsedCount} parsed / ${formatByteSize(stats.retainedSourceBytes)} retained`;
+  }
+
+  function analyzeProgressTargetPercent(elapsedMs: number, estimate: AnalyzeEstimate | null): number {
+    const progressEstimateMs = estimate?.initialEstimatedMs ?? estimate?.estimatedMs ?? 0;
+
+    if (progressEstimateMs <= 0) {
+      return 0;
+    }
+
+    const rawPercent = (elapsedMs / progressEstimateMs) * 100;
+    return Math.max(0, Math.min(100, rawPercent));
+  }
+
+  function speedBumpProgressPercent(currentPercent: number, targetPercent: number): number {
+    const delta = targetPercent - currentPercent;
+
+    if (Math.abs(delta) <= 0.25) {
+      return targetPercent;
+    }
+
+    const step = delta > 0
+      ? (targetPercent > 90 ? ANALYZE_PROGRESS_SLOW_STEP : ANALYZE_PROGRESS_FAST_STEP)
+      : ANALYZE_PROGRESS_BACK_STEP;
+
+    return currentPercent + Math.sign(delta) * Math.min(Math.abs(delta), step);
+  }
+
   function estimateAnalyzeDuration(repository: GitHubRepository): number {
+    if (typeof repository.sizeKb === "number") {
+      const baseMs = 9000;
+      const sizeFactor = Math.min(35000, repository.sizeKb * 0.35);
+      const starFactor = Math.min(12000, Math.log10((repository.stargazersCount ?? 0) + 10) * 2500);
+      return Math.round(baseMs + sizeFactor + starFactor);
+    }
+
     const stars = repository.stargazersCount ?? 0;
     const topicFactor = Math.min(8, repository.topics?.length ?? 0) * 2200;
-    const starFactor = Math.min(180000, Math.log10(stars + 10) * 26000);
-    const baseMs = 22000;
+    const starFactor = Math.min(45000, Math.log10(stars + 10) * 7000);
+    const baseMs = 18000;
     return Math.round(baseMs + starFactor + topicFactor);
   }
 
@@ -871,6 +959,47 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const trimmedRepoUrl = repoUrl.trim();
+
+    if (isAnalyzing) {
+      return;
+    }
+
+    if (!GITHUB_REPO_URL_PATTERN.test(trimmedRepoUrl)) {
+      setAnalyzeEstimate(null);
+      setIsEstimatingAnalyze(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsEstimatingAnalyze(true);
+
+    const timer = window.setTimeout(() => {
+      estimateAnalyzeRepo(trimmedRepoUrl)
+        .then((estimate) => {
+          if (!cancelled) {
+            setAnalyzeEstimate(estimate);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setAnalyzeEstimate(null);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setIsEstimatingAnalyze(false);
+          }
+        });
+    }, 650);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [githubStatus.connected, isAnalyzing, repoUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -965,6 +1094,25 @@ export default function App() {
     setIsAnalyzing(true);
     setAnalyzeElapsedMs(0);
     setLastAnalyzeTiming(undefined);
+    setActiveAnalyzeJobId(null);
+    setActiveAnalyzeJobPhase(null);
+
+    setAnalyzeEstimate((current) => current?.repoUrl === targetRepoUrl ? current : null);
+    if (GITHUB_REPO_URL_PATTERN.test(targetRepoUrl)) {
+      setIsEstimatingAnalyze(true);
+      estimateAnalyzeRepo(targetRepoUrl)
+        .then((estimate) => {
+          setAnalyzeEstimate(estimate);
+        })
+        .catch(() => {
+          setAnalyzeEstimate(null);
+        })
+        .finally(() => {
+          setIsEstimatingAnalyze(false);
+        });
+    }
+
+    let analysisContinuesInBackground = false;
 
     try {
       const result = await analyzeRepo(targetRepoUrl);
@@ -975,14 +1123,27 @@ export default function App() {
       setRestoreGraphViewState(null);
       setRestoreGraphViewStateKey(null);
       setSaveMapName("");
-      setLastAnalyzeTiming(result.analyzeTiming);
-      setStatus(`${result.nodes.length} nodes, ${result.edges.length} imports, ${result.commits?.length ?? 0} commits`);
+      const jobId = result.analysis?.pending ? result.analysis.jobId : null;
+
+      if (jobId) {
+        analysisContinuesInBackground = true;
+        setActiveAnalyzeJobId(jobId);
+        setActiveAnalyzeJobPhase(result.analysis?.message ?? "Deep analysis continuing");
+        setStatus(`Initial map ready: ${result.nodes.length} nodes. Deep analysis continuing.`);
+      } else {
+        setLastAnalyzeTiming(result.analyzeTiming);
+        setStatus(`${result.nodes.length} nodes, ${result.edges.length} imports, ${result.commits?.length ?? 0} commits`);
+      }
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Analysis failed.";
       setError(message);
       setStatus("Analysis failed");
+      setActiveAnalyzeJobId(null);
+      setActiveAnalyzeJobPhase(null);
     } finally {
-      setIsAnalyzing(false);
+      if (!analysisContinuesInBackground) {
+        setIsAnalyzing(false);
+      }
     }
   }
 
@@ -1003,6 +1164,7 @@ export default function App() {
 
   useEffect(() => {
     if (!isAnalyzing) {
+      setDisplayedAnalyzeProgress(0);
       return;
     }
 
@@ -1015,6 +1177,83 @@ export default function App() {
     };
   }, [isAnalyzing]);
 
+  useEffect(() => {
+    if (!isAnalyzing) {
+      setDisplayedAnalyzeProgress(0);
+      return;
+    }
+
+    const targetPercent = analyzeProgressTargetPercent(analyzeElapsedMs, analyzeEstimate);
+    const progressEstimateMs = analyzeEstimate?.initialEstimatedMs ?? analyzeEstimate?.estimatedMs ?? 0;
+    const isPastEstimate = progressEstimateMs > 0 && analyzeElapsedMs > progressEstimateMs;
+    const cappedTarget = isPastEstimate ? 100 : Math.min(96, targetPercent);
+
+    setDisplayedAnalyzeProgress((currentPercent) =>
+      speedBumpProgressPercent(currentPercent, cappedTarget)
+    );
+  }, [analyzeElapsedMs, analyzeEstimate?.estimatedMs, analyzeEstimate?.initialEstimatedMs, isAnalyzing]);
+
+  useEffect(() => {
+    if (!activeAnalyzeJobId) {
+      return;
+    }
+
+    const jobId = activeAnalyzeJobId;
+    let cancelled = false;
+    let timer: number | undefined;
+
+    async function pollJob(): Promise<void> {
+      try {
+        const result = await loadAnalyzeJob(jobId);
+
+        if (cancelled) {
+          return;
+        }
+
+        setActiveAnalyzeJobPhase(result.job.phase);
+
+        if (result.job.status === "complete" && result.graph) {
+          setGraph(result.graph);
+          setLastAnalyzeTiming(result.graph.analyzeTiming);
+          setStatus(`${result.graph.nodes.length} nodes, ${result.graph.edges.length} imports, ${result.graph.commits?.length ?? 0} commits`);
+          setActiveAnalyzeJobId(null);
+          setActiveAnalyzeJobPhase(null);
+          setIsAnalyzing(false);
+          return;
+        }
+
+        if (result.job.status === "failed") {
+          setError(result.job.error ?? "Deep analysis failed.");
+          setStatus("Deep analysis failed");
+          setActiveAnalyzeJobId(null);
+          setActiveAnalyzeJobPhase(null);
+          setIsAnalyzing(false);
+          return;
+        }
+
+        timer = window.setTimeout(() => void pollJob(), 1500);
+      } catch (caughtError) {
+        if (!cancelled) {
+          const message = caughtError instanceof Error ? caughtError.message : "Deep analysis status unavailable.";
+          setError(message);
+          setStatus("Deep analysis status unavailable");
+          setActiveAnalyzeJobId(null);
+          setActiveAnalyzeJobPhase(null);
+          setIsAnalyzing(false);
+        }
+      }
+    }
+
+    timer = window.setTimeout(() => void pollJob(), 1000);
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [activeAnalyzeJobId]);
+
   function handleConnectGitHub() {
     window.location.href = githubConnectUrl();
   }
@@ -1024,6 +1263,9 @@ export default function App() {
       await logoutGitHub();
       setGithubStatus({ configured: githubStatus.configured, connected: false, user: null });
       setGraph(null);
+      setActiveAnalyzeJobId(null);
+      setActiveAnalyzeJobPhase(null);
+      setIsAnalyzing(false);
       setCurrentGraphRepoUrl("");
       setGithubRepos([]);
       setGithubQuery("");
@@ -1290,6 +1532,13 @@ export default function App() {
     await runAnalysis(repository.htmlUrl, repository.fullName);
   }
 
+  const analyzeProgressEstimateMs = analyzeEstimate?.initialEstimatedMs ?? analyzeEstimate?.estimatedMs ?? 0;
+  const analyzeProgressOverEstimate = isAnalyzing && analyzeProgressEstimateMs > 0 && analyzeElapsedMs > analyzeProgressEstimateMs;
+  const analyzeProgressMode = !analyzeEstimate || analyzeProgressOverEstimate ? "line" : "circle";
+  const analyzeProgressStyle = {
+    "--analysis-progress-angle": `${displayedAnalyzeProgress * 3.6}deg`,
+    "--analysis-progress-transition-ms": `${ANALYZE_PROGRESS_TRANSITION_MS}ms`
+  } as CSSProperties;
   const showWorkflowChrome = graph !== null || githubStatus.connected;
 
   return (
@@ -1376,16 +1625,37 @@ export default function App() {
             <div className="analyze-form is-secondary">
               {isAnalyzing ? (
                 <div className="analyze-progress-chip" aria-live="polite">
-                  <span>Analyzing</span>
+                  <span
+                    className={`analyze-progress-meter analyze-progress-meter--${analyzeProgressMode}`}
+                    style={analyzeProgressStyle}
+                    aria-hidden="true"
+                  >
+                    <span className="analyze-progress-meter__ring" />
+                    <span className="analyze-progress-meter__line"><span /></span>
+                  </span>
+                  <span>{activeAnalyzeJobId ? "Deep analysis" : "Analyzing"}</span>
                   <strong>{formatDuration(analyzeElapsedMs)}</strong>
+                  {activeAnalyzeJobPhase ? <span>{activeAnalyzeJobPhase}</span> : null}
+                  {!activeAnalyzeJobId && analyzeInitialEstimateLabel(analyzeEstimate) ? (
+                    <span>Map est {analyzeInitialEstimateLabel(analyzeEstimate)}</span>
+                  ) : null}
+                  {!analyzeEstimate && isEstimatingAnalyze ? <span>Estimating</span> : null}
                 </div>
               ) : null}
-              {!isAnalyzing && lastAnalyzeTiming ? (
+              {!isAnalyzing && analyzeEstimate && analyzeEstimate.repoUrl !== currentGraphRepoUrl ? (
+                <div className="analyze-progress-chip is-estimate" aria-live="polite">
+                  <span>Estimated first map</span>
+                  <strong>{analyzeInitialEstimateLabel(analyzeEstimate)}</strong>
+                  <span>{analyzeEstimateMeta(analyzeEstimate)}</span>
+                </div>
+              ) : null}
+              {!isAnalyzing && lastAnalyzeTiming && (!analyzeEstimate || analyzeEstimate.repoUrl === currentGraphRepoUrl) ? (
                 <div className="analyze-progress-chip is-timing" aria-live="polite">
                   <span>Clone {formatDuration(lastAnalyzeTiming.cloneMs)}</span>
                   <span>Graph {formatDuration(lastAnalyzeTiming.extractGraphMs)}</span>
                   <span>History {formatDuration(lastAnalyzeTiming.extractHistoryMs)}</span>
                   <strong>Total {formatDuration(lastAnalyzeTiming.totalMs)}</strong>
+                  {analyzeStatsMeta(graph?.analyzeStats) ? <span>{analyzeStatsMeta(graph?.analyzeStats)}</span> : null}
                 </div>
               ) : null}
               <form className="analyze-form analyze-form--inline" onSubmit={handleSubmit}>
@@ -1587,6 +1857,12 @@ export default function App() {
         onAnalyzeExampleRepo={handleAnalyzeExampleRepo}
         isAnalyzing={isAnalyzing}
         analyzeElapsedLabel={formatDuration(analyzeElapsedMs)}
+        isEstimatingAnalyze={isEstimatingAnalyze}
+        analyzeEstimateLabel={analyzeInitialEstimateLabel(analyzeEstimate)}
+        analyzeEstimateMeta={analyzeEstimateMeta(analyzeEstimate)}
+        analyzeProgressPercent={displayedAnalyzeProgress}
+        analyzeProgressMode={analyzeProgressMode}
+        analyzeProgressTransitionMs={ANALYZE_PROGRESS_TRANSITION_MS}
         initialViewState={restoreGraphViewState}
         viewStateKey={restoreGraphViewStateKey}
         onViewStateChange={handleGraphViewStateChange}
