@@ -237,16 +237,32 @@ export interface LoadedSavedGraph {
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 const API_BASE_URL = configuredApiBaseUrl ?? (import.meta.env.DEV ? "http://localhost:4000" : "");
+const ANALYZE_TIMEOUT_MS = 120_000;
 
 export async function analyzeRepo(repoUrl: string): Promise<AtlasGraph> {
-  const response = await fetch(`${API_BASE_URL}/analyze`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ repoUrl })
-  });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}/analyze`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ repoUrl }),
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Analysis timed out. Try a smaller repository or connect GitHub and analyze a narrower repo.");
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 
   const payload = await response.json();
 

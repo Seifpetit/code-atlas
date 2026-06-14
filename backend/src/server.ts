@@ -282,7 +282,7 @@ app.post("/analyze", async (request, response) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to analyze repository.";
-    response.status(500).json({ error: message });
+    response.status(message.includes("too large to analyze safely") ? 413 : 500).json({ error: message });
   } finally {
     if (repoPath) {
       await cleanupRepo(repoPath);

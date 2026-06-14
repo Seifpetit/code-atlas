@@ -1582,6 +1582,8 @@ export default function App() {
         onRepoUrlChange={setRepoUrl}
         onAnalyzeRepoUrl={handleAnalyzeRepoUrl}
         onAnalyzeExampleRepo={handleAnalyzeExampleRepo}
+        isAnalyzing={isAnalyzing}
+        analyzeElapsedLabel={formatDuration(analyzeElapsedMs)}
         initialViewState={restoreGraphViewState}
         viewStateKey={restoreGraphViewStateKey}
         onViewStateChange={handleGraphViewStateChange}

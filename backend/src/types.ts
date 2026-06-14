@@ -137,6 +137,7 @@ export interface ExtractedStructure {
   folders: Set<string>;
   files: Set<string>;
   fileMetadata: Map<string, ExtractedFileMetadata>;
+  retainedSourceBytes: number;
   imports: Array<{
     source: string;
     target: string;

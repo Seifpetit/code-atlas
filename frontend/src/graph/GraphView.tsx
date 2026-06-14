@@ -63,6 +63,8 @@ interface GraphViewProps {
   onRepoUrlChange: (value: string) => void;
   onAnalyzeRepoUrl: (repoUrl: string) => void;
   onAnalyzeExampleRepo: (repoUrl: string, label: string) => void;
+  isAnalyzing?: boolean;
+  analyzeElapsedLabel?: string;
   initialViewState?: SavedMapViewState | null;
   viewStateKey?: string | null;
   onViewStateChange?: (viewState: SavedMapViewState | null) => void;
@@ -2011,6 +2013,8 @@ export function GraphView({
   onRepoUrlChange,
   onAnalyzeRepoUrl,
   onAnalyzeExampleRepo,
+  isAnalyzing = false,
+  analyzeElapsedLabel,
   initialViewState = null,
   viewStateKey = null,
   onViewStateChange,
@@ -4382,11 +4386,18 @@ export function GraphView({
               onChange={(event) => onRepoUrlChange(event.target.value)}
               placeholder="https://github.com/owner/repo"
               aria-label="GitHub repository URL"
+              disabled={isAnalyzing}
             />
-            <button type="submit" disabled={repoUrl.trim().length === 0}>
-              Analyze
+            <button type="submit" disabled={isAnalyzing || repoUrl.trim().length === 0}>
+              {isAnalyzing ? "Analyzing" : "Analyze"}
             </button>
           </form>
+          {isAnalyzing ? (
+            <div className="graph-idle-state__progress" aria-live="polite">
+              <span>Analyzing repository</span>
+              <strong>{analyzeElapsedLabel ?? "starting"}</strong>
+            </div>
+          ) : null}
 
           <div className="graph-idle-state__divider" aria-hidden="true">
             <span />

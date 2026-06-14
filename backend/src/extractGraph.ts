@@ -23,17 +23,31 @@ const IGNORED_DIRECTORIES = new Set([
   "node_modules",
   "dist",
   "build",
+  "out",
   ".next",
+  ".nuxt",
+  ".turbo",
+  ".cache",
+  ".parcel-cache",
   "coverage",
   ".git",
   ".venv",
   "venv",
+  "vendor",
+  "target",
+  "tmp",
+  "temp",
   "__pycache__",
   ".pytest_cache",
   ".mypy_cache",
   ".ruff_cache",
   ".tox"
 ]);
+
+const MAX_STRUCTURAL_FILES = 5000;
+const MAX_RETAINED_SOURCE_BYTES = 20 * 1024 * 1024;
+const MAX_SOURCE_FILE_BYTES = 240 * 1024;
+const MAX_PARSED_SOURCE_FILES = 1200;
 
 const IMPORT_PARSE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 const PYTHON_PARSE_EXTENSIONS = new Set([".py"]);
@@ -1380,7 +1394,22 @@ async function walkRepo(directory: string, repoRoot: string, structure: Extracte
     }
 
     if (entry.isFile() && STRUCTURAL_FILE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-      const contents = await fs.readFile(absolutePath, "utf8");
+      if (structure.files.size >= MAX_STRUCTURAL_FILES) {
+        throw new Error(
+          `Repository is too large to analyze safely (${MAX_STRUCTURAL_FILES}+ supported files). Try a smaller repo or a narrower branch.`
+        );
+      }
+
+      const stats = await fs.stat(absolutePath);
+      const shouldRetainSource =
+        stats.size <= MAX_SOURCE_FILE_BYTES &&
+        structure.retainedSourceBytes + stats.size <= MAX_RETAINED_SOURCE_BYTES;
+      const contents = shouldRetainSource ? await fs.readFile(absolutePath, "utf8") : "";
+
+      if (shouldRetainSource) {
+        structure.retainedSourceBytes += stats.size;
+      }
+
       structure.files.add(relativePath);
       structure.fileMetadata.set(relativePath, {
         linesOfCode: countLinesOfCode(contents),
@@ -1473,6 +1502,7 @@ export async function extractGraph(
     folders: new Set(),
     files: new Set(),
     fileMetadata: new Map(),
+    retainedSourceBytes: 0,
     imports: []
   };
 
@@ -1488,8 +1518,12 @@ export async function extractGraph(
 
   const filePaths = [...structure.files]
     .filter((filePath) => IMPORT_PARSE_EXTENSIONS.has(path.extname(filePath).toLowerCase()))
-    .sort();
-  const sourceFiles = filePaths.map((filePath) => project.addSourceFileAtPath(path.join(repoRoot, filePath)));
+    .filter((filePath) => (structure.fileMetadata.get(filePath)?.sourceText.length ?? 0) > 0)
+    .sort()
+    .slice(0, MAX_PARSED_SOURCE_FILES);
+  const sourceFiles = filePaths.map((filePath) =>
+    project.createSourceFile(path.join(repoRoot, filePath), structure.fileMetadata.get(filePath)?.sourceText ?? "")
+  );
   const sourceFilesByPath = new Map<string, SourceFile>();
   const pythonExtractionsByPath = new Map<string, PythonExtraction>();
   const seenEdges = new Set<string>();
@@ -1525,6 +1559,7 @@ export async function extractGraph(
 
   const pythonPaths = [...structure.files]
     .filter((filePath) => PYTHON_PARSE_EXTENSIONS.has(path.extname(filePath).toLowerCase()))
+    .filter((filePath) => (structure.fileMetadata.get(filePath)?.sourceText.length ?? 0) > 0)
     .sort();
 
   for (const sourcePath of pythonPaths) {
@@ -1546,6 +1581,7 @@ export async function extractGraph(
 
   const staticReferencePaths = [...structure.files]
     .filter((filePath) => [".html", ".css", ".scss", ".sass", ".less"].includes(path.extname(filePath).toLowerCase()))
+    .filter((filePath) => (structure.fileMetadata.get(filePath)?.sourceText.length ?? 0) > 0)
     .sort();
 
   for (const sourcePath of staticReferencePaths) {
