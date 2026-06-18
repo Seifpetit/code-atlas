@@ -26,7 +26,7 @@ export type AtlasFlowNode = Node<AtlasNode, "folder" | "file">;
 export type AtlasFlowEdge = Edge<Record<string, unknown>, "structural">;
 
 const MAX_VISIBLE_CHILDREN = 30;
-const FOLDER_NODE_WIDTH = 246;
+const FOLDER_NODE_WIDTH = 197;
 const FOLDER_NODE_HEIGHT = 108;
 const FILE_NODE_WIDTH = 130;
 const FILE_NODE_HEIGHT = 180;

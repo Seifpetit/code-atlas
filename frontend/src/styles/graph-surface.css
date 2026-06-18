@@ -6,7 +6,11 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #070b12;
+  background:
+    repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.035) 0 1px, transparent 1px 28px),
+    repeating-linear-gradient(90deg, rgba(45, 212, 191, 0.028) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(135deg, rgba(125, 211, 252, 0.03) 0 1px, transparent 1px 44px),
+    linear-gradient(135deg, #070b12 0%, #111827 48%, #071314 100%);
 }
 
 .breadcrumb-bar {
@@ -71,10 +75,10 @@
   justify-content: center;
   gap: 7px;
   height: 32px;
-  width: 36px;
+  min-width: 78px;
   border: 1px solid #293548;
   background: #101827;
-  padding: 0;
+  padding: 0 10px;
   color: #9fb0c8;
   font-size: 11px;
   font-weight: 800;
@@ -89,7 +93,7 @@
 }
 
 .select-tool-button--reset {
-  min-width: auto;
+  min-width: 82px;
   border-color: rgba(239, 68, 68, 0.44);
   background: rgba(30, 12, 18, 0.94);
   color: #fecaca;
@@ -122,6 +126,7 @@
 }
 
 .select-tool-button svg {
+  flex: 0 0 auto;
   width: 15px;
   height: 15px;
   fill: none;
@@ -129,6 +134,11 @@
   stroke-linecap: square;
   stroke-linejoin: round;
   stroke-width: 1.6;
+}
+
+.select-tool-button span {
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .select-tool-button:hover {
@@ -539,7 +549,11 @@
 }
 
 .react-flow {
-  background: #070b12;
+  background:
+    repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.035) 0 1px, transparent 1px 28px),
+    repeating-linear-gradient(90deg, rgba(45, 212, 191, 0.028) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(135deg, rgba(125, 211, 252, 0.03) 0 1px, transparent 1px 44px),
+    linear-gradient(135deg, #070b12 0%, #111827 48%, #071314 100%);
 }
 
 .graph-shell.is-selection-mode .react-flow {

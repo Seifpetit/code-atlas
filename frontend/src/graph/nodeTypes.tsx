@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import type { NodeProps, NodeTypes } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { AtlasNode } from "../api";
@@ -161,10 +161,54 @@ function FolderShape(props: NodeChromeProps) {
 }
 
 function FileShape(props: NodeChromeProps) {
+  const [liquidAnimating, setLiquidAnimating] = useState(false);
+  const [ripplePosition, setRipplePosition] = useState({ x: 50, y: 50 });
+  const liquidAnimationTimer = useRef<number | null>(null);
+
+  const handleLiquidPointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 100;
+    const y = ((event.clientY - rect.top) / rect.height) * 100;
+
+    setRipplePosition({
+      x: Math.max(0, Math.min(100, x)),
+      y: Math.max(0, Math.min(100, y))
+    });
+    setLiquidAnimating(false);
+
+    window.requestAnimationFrame(() => {
+      setLiquidAnimating(true);
+    });
+
+    if (liquidAnimationTimer.current !== null) {
+      window.clearTimeout(liquidAnimationTimer.current);
+    }
+
+    liquidAnimationTimer.current = window.setTimeout(() => {
+      setLiquidAnimating(false);
+      liquidAnimationTimer.current = null;
+    }, 820);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (liquidAnimationTimer.current !== null) {
+        window.clearTimeout(liquidAnimationTimer.current);
+      }
+    };
+  }, []);
+
   return (
     <>
       <div className="atlas-node__risk-glow" aria-hidden="true" />
-      <div className="atlas-node__shape atlas-node__shape--file">
+      <div
+        className={`atlas-node__shape atlas-node__shape--file ${liquidAnimating ? "is-liquid-animating" : ""}`.trim()}
+        onPointerDown={handleLiquidPointerDown}
+        style={{
+          "--liquid-ripple-x": `${ripplePosition.x}%`,
+          "--liquid-ripple-y": `${ripplePosition.y}%`
+        } as CSSProperties}
+      >
         <svg
           className="atlas-node__file-frame"
           viewBox="0 0 130 180"
@@ -181,6 +225,7 @@ function FileShape(props: NodeChromeProps) {
             d="M 11 2 H 101 Q 105 2 108 5 L 125 22 Q 128 25 128 29 V 169 Q 128 178 119 178 H 11 Q 2 178 2 169 V 11 Q 2 2 11 2 Z"
           />
         </svg>
+        {liquidAnimating ? <div className="atlas-node__liquid-ripple" aria-hidden="true" /> : null}
         <NodeContent {...props} />
       </div>
     </>
