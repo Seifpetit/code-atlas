@@ -125,7 +125,7 @@ function fileAccentColor(data: AtlasNode, historyBadge?: string): string {
   }
 
   if (CSS_ACCENT_EXTENSIONS.has(extension)) {
-    return "#fde68a";
+    return "#f7cf30";
   }
 
   if (TYPESCRIPT_ACCENT_EXTENSIONS.has(extension)) {

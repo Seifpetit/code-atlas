@@ -286,7 +286,7 @@
 
 .atlas-node__health-dot {
   position: absolute;
-  top: 7px;
+  top: 20px;
   right: 27px;
   z-index: 2;
   width: 5px;
