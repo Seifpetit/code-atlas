@@ -35,6 +35,9 @@ this file should be refreshed.
 - Architectural time is explored through a temporal scrubber; raw commit
   evidence is subordinate to structural exploration.
 - Node emphasis is centrally resolved through the attention compositor.
+- Graph-node highlight is focus-only; temporal, runtime, search, relationship,
+  compression, proximity, and Risk X-Ray signals do not create separate node
+  highlight strengths.
 - File nodes display deterministic `LOC` weight cues, adding `F` only on
   JS/TS-family files; rule-classified low-signal files receive an ambient-only
   calm presentation.

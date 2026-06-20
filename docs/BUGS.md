@@ -29,9 +29,14 @@ Fix:
 - `GraphView` now provides attention signals and receives one final `NodeVisualState`.
 - Historical significance no longer independently adds node highlight classes.
 - CSS now styles attention layers instead of scattered feature-owned highlight classes.
+- Latest simplification: graph-node attention is focus-only.
+- Search, hover, temporal pressure, structural guidance, runtime participation,
+  low-signal compression, relationship relevance, proximity, and Risk X-Ray no
+  longer create separate node highlight strengths.
 
 Needs watching:
-- New features that affect attention must route through the attention compositor instead of adding direct node classes.
+- New features that affect graph nodes must not add highlight classes outside
+  the focus-only attention compositor.
 
 ## Hover preview flicker
 

@@ -29,12 +29,11 @@ import { historyBadgeFor } from "../history/historyUtils";
 import { extractArchitecturalLandmarks, snapToLandmark } from "../time/landmarkExtraction";
 import { RawHistoryInspector } from "../time/RawHistoryInspector";
 import { TemporalScrubber } from "../time/TemporalScrubber";
-import { buildTemporalStates, nodeTemporalPressure, temporalPressureLevel } from "../time/temporalPressure";
+import { buildTemporalStates, nodeTemporalPressure } from "../time/temporalPressure";
 import { buildRuntimeChain } from "../runtime/buildRuntimeChain";
 import { layoutRuntimeCorridor } from "../runtime/runtimeLayout";
 import { RuntimeScrubber } from "../runtime/RuntimeScrubber";
 import { inactiveRuntimeState, type RuntimeState } from "../runtime/runtimeTypes";
-import { runtimeVisualState } from "../runtime/runtimeVisualState";
 import { RuntimeXRayOverlay } from "../runtime/RuntimeXRayOverlay";
 import { visualStateStyle } from "./attention/applyNodeVisualState";
 import { composeNodeVisualState } from "./attention/composeNodeVisualState";
@@ -2168,7 +2167,6 @@ export function GraphView({
   const [metadataForecastPageIndex, setMetadataForecastPageIndex] = useState(0);
   const [filePanelView, setFilePanelView] = useState<"metadata" | "wires">("metadata");
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [tracedEdgeIds, setTracedEdgeIds] = useState<string[]>([]);
   const [tracedFolderRelationCounts, setTracedFolderRelationCounts] = useState<Record<string, number>>({});
@@ -2243,7 +2241,6 @@ export function GraphView({
       : [],
     [graph, linkedCorridors]
   );
-  const normalizedSearch = searchTerm.trim().toLowerCase();
   const handleTraceStart = useCallback((edgeIds: string[], folderRelationCounts: Record<string, number> = {}) => {
     setTracedEdgeIds([...new Set(edgeIds)]);
     setTracedFolderRelationCounts(folderRelationCounts);
@@ -2357,7 +2354,6 @@ export function GraphView({
 
     skipNextFitViewRef.current = false;
     setCurrentContextId(null);
-    setHoveredNodeId(null);
     setFocusedNodeId(null);
     setTracedEdgeIds([]);
     setTracedFolderRelationCounts({});
@@ -2396,7 +2392,6 @@ export function GraphView({
     }
 
     setFocusedNodeId(null);
-    setHoveredNodeId(null);
     setTracedEdgeIds([]);
     setTracedFolderRelationCounts({});
     setPinnedTraceGroups([]);
@@ -2422,7 +2417,6 @@ export function GraphView({
       return;
     }
 
-    setHoveredNodeId(null);
     setFocusedNodeId(null);
     setTracedEdgeIds([]);
     setTracedFolderRelationCounts({});
@@ -2684,6 +2678,31 @@ export function GraphView({
 
     return pressures;
   }, [graph?.nodes, importedByCountById]);
+  const inspectSourceFromNodeMenu = useCallback((node: AtlasNode) => {
+    if (node.type !== "file") {
+      return;
+    }
+
+    recordNodeFocus(node.id);
+    setFocusedNodeId(node.id);
+    setSelectedNode(node);
+    setMetadataForecastNodeId(null);
+    setFilePanelView("metadata");
+    setExpandedPanelRegion({ nodeId: node.id, region: null });
+    setSourceModalFile(node);
+  }, [recordNodeFocus]);
+  const showWiresFromNodeMenu = useCallback((node: AtlasNode) => {
+    if (node.type !== "file") {
+      return;
+    }
+
+    recordNodeFocus(node.id);
+    setFocusedNodeId(node.id);
+    setSelectedNode(node);
+    setMetadataForecastNodeId(null);
+    setFilePanelView("wires");
+    setExpandedPanelRegion({ nodeId: node.id, region: null });
+  }, [recordNodeFocus]);
   useEffect(() => {
     if (!graph || !initialViewState || !viewStateKey || appliedViewStateKeyRef.current === viewStateKey) {
       return;
@@ -3075,7 +3094,6 @@ export function GraphView({
     });
   }, [runtimeLayout, runtimeState.active]);
   const activeNodeId = focusedNodeId;
-  const activeMode = runtimeState.active ? "runtime" : focusedNodeId ? "focus" : null;
   const relationshipCollection = useMemo(() => {
     if (!graph || !laidOut || !activeNodeId || runtimeState.active) {
       return null;
@@ -3088,7 +3106,7 @@ export function GraphView({
       activeNodeId,
       selectedCorridorIndex
     );
-  }, [activeMode, activeNodeId, displayedLayoutNodes, graph, graphNodeById, laidOut, runtimeState.active, selectedCorridorIndex]);
+  }, [activeNodeId, displayedLayoutNodes, graph, graphNodeById, laidOut, runtimeState.active, selectedCorridorIndex]);
   const relationshipBudget = useMemo(
     () => relationshipCollection ? budgetRelationships(relationshipCollection, 6) : null,
     [relationshipCollection]
@@ -3097,32 +3115,6 @@ export function GraphView({
     () => relationshipCollection ? traceRelationships(relationshipCollection) : null,
     [relationshipCollection]
   );
-  const connectedNodeIds = useMemo(() => {
-    const ids = new Set<string>();
-
-    if (!relationshipBudget || !activeNodeId) {
-      return ids;
-    }
-
-    ids.add(activeNodeId);
-    const visibleFlowNodeById = new Map(displayedLayoutNodes.map((node) => [node.id, node]));
-    for (const relation of relationshipBudget.visible) {
-      ids.add(relation.edge.source);
-      ids.add(relation.edge.target);
-      const sourceNode = visibleFlowNodeById.get(relation.edge.source);
-      const targetNode = visibleFlowNodeById.get(relation.edge.target);
-
-      if (sourceNode) {
-        ids.add(flowNodeRealId(sourceNode));
-      }
-
-      if (targetNode) {
-        ids.add(flowNodeRealId(targetNode));
-      }
-    }
-
-    return ids;
-  }, [activeNodeId, displayedLayoutNodes, relationshipBudget]);
   const connectionPortsByNodeId = useMemo(() => {
     const ports = new Map<string, { input: boolean; export: boolean }>();
 
@@ -3154,47 +3146,18 @@ export function GraphView({
       return [];
     }
     const activeFolderRelationCounts = activeTraceFolderRelationCounts;
-    const riskScanBounds = layoutBounds(displayedLayoutNodes);
-    const riskScanSpan = Math.max(1, riskScanBounds.maxX - riskScanBounds.minX);
 
     const baseNodes = displayedLayoutNodes.map((node) => {
       const data = node.data as AtlasNode;
       const realNodeId = flowNodeRealId(node);
       const isLineageAnchor = typeof data.lineageKind === "string";
       const isOriginCorridorSpine = Number(data.corridorIndex ?? 0) === 0 && isLineageAnchor;
-      const matchesSearch = normalizedSearch.length > 0 && data.path.toLowerCase().includes(normalizedSearch);
       const temporalPressure = nodeTemporalPressure(data, activeTemporalState);
-      const temporalLevel = temporalPressureLevel(temporalPressure);
       const isActive = activeNodeId === realNodeId;
-      const isHovered = hoveredNodeId === realNodeId;
-      const isNeighbor = !isActive && connectedNodeIds.has(realNodeId);
-      const hasFocusContext = Boolean(activeNodeId) && connectedNodeIds.size > 1;
-      const hasCriticalEvent = Boolean(focusedLandmark);
       const visualState = composeNodeVisualState({
-        isHovered,
-        isFocused: isActive && activeMode === "focus",
-        isSearchMatch: matchesSearch,
-        isRelationshipRelevant: isActive || isNeighbor,
-        hasFocusContext,
-        temporalPressureLevel: temporalLevel,
-        temporalPressureScore: temporalPressure,
-        hasTemporalState: Boolean(activeTemporalState),
-        hasCriticalEvent,
-        isCriticalEventAffected: hasCriticalEvent && temporalPressure > 0.2,
-        hasStructuralGuidance: Boolean(activeTemporalState && data.significanceLevel && !temporalLevel),
-        isLowSignalCompressed: data.type === "file" && data.metadata?.compressionLevel === "low-signal"
+        isFocused: isActive
       });
-      const runtimePhase =
-        runtimeState.active && runtimeLayout
-          ? runtimeLayout.activeNodeId === node.id
-            ? "current"
-            : runtimeLayout.revealedNodeIds.has(node.id)
-              ? "residue"
-              : runtimeLayout.participatingNodeIds.has(node.id)
-                ? "participating"
-                : "background"
-          : null;
-      const resolvedVisualState = runtimePhase ? runtimeVisualState(runtimePhase) : visualState;
+      const resolvedVisualState = visualState;
       const shouldShowStubs = !runtimeState.active && focusedNodeId === realNodeId;
       const outgoingCount = shouldShowStubs ? relationshipBudget?.totalOutgoing ?? 0 : 0;
       const incomingCount = shouldShowStubs ? relationshipBudget?.totalIncoming ?? 0 : 0;
@@ -3217,9 +3180,6 @@ export function GraphView({
           ? runtimeNodePositions[node.id] ?? runtimeLayout.positions.get(node.id) ?? node.position
           : manualNodePositions[node.id] ?? node.position;
       const refactorRisk = data.type === "file" ? refactorRiskByNodeId.get(realNodeId) : undefined;
-      const refactorRiskScanDelay = data.type === "file"
-        ? Math.round(((resolvedPosition.x - riskScanBounds.minX) / riskScanSpan) * 640)
-        : 0;
 
       return {
         ...node,
@@ -3239,10 +3199,11 @@ export function GraphView({
           connectionPorts: connectionPortsByNodeId.get(node.id) ?? connectionPortsByNodeId.get(realNodeId),
           runtimeStep: runtimeState.active ? runtimeState.chain?.nodes.find((runtimeNode) => runtimeNode.id === node.id)?.runtimeStep : undefined,
           relationTraceCount: relationTraceCount > 0 ? relationTraceCount : undefined,
-          refactorRiskTier: refactorRisk?.tier,
+          importedByCount: data.type === "file" ? importedByCountById.get(realNodeId) ?? 0 : undefined,
+          onInspectSource: data.type === "file" ? inspectSourceFromNodeMenu : undefined,
+          onShowWires: data.type === "file" ? showWiresFromNodeMenu : undefined,
           refactorRiskLabel: refactorRisk?.label,
           refactorRiskReasons: refactorRisk?.reasons,
-          refactorRiskScanDelay,
           relationStub:
             shouldShowStubs && (outgoingCount > 0 || incomingCount > 0)
               ? {
@@ -3268,8 +3229,9 @@ export function GraphView({
 
     const runtimeExtraNodes = runtimeLayout.extraNodes.map((node) => {
       const data = node.data as AtlasNode;
-      const phase = runtimeLayout.activeNodeId === node.id ? "current" : "residue";
-      const visualState = runtimeVisualState(phase);
+      const visualState = composeNodeVisualState({
+        isFocused: false
+      });
       const resolvedPosition = runtimeNodePositions[node.id] ?? node.position;
       const refactorRisk = data.type === "file" ? refactorRiskByNodeId.get(flowNodeRealId(node)) : undefined;
 
@@ -3286,10 +3248,11 @@ export function GraphView({
           historyBadge: historyBadgeFor(data, graph?.fileHistory),
           visualState,
           connectionPorts: connectionPortsByNodeId.get(node.id),
-          refactorRiskTier: refactorRisk?.tier,
+          importedByCount: data.type === "file" ? importedByCountById.get(flowNodeRealId(node)) ?? 0 : undefined,
+          onInspectSource: data.type === "file" ? inspectSourceFromNodeMenu : undefined,
+          onShowWires: data.type === "file" ? showWiresFromNodeMenu : undefined,
           refactorRiskLabel: refactorRisk?.label,
-          refactorRiskReasons: refactorRisk?.reasons,
-          refactorRiskScanDelay: 0
+          refactorRiskReasons: refactorRisk?.reasons
         },
         className: `${visualState.className} runtime-node`
       };
@@ -3297,30 +3260,28 @@ export function GraphView({
 
     return [...baseNodes, ...runtimeExtraNodes];
   }, [
-    activeMode,
     activeNodeId,
     connectionPortsByNodeId,
-    connectedNodeIds,
     handleTraceEnd,
     handleTraceStart,
     handleTraceToggle,
+    importedByCountById,
+    inspectSourceFromNodeMenu,
     displayedLayoutNodes,
     laidOut,
     manualNodePositions,
-    normalizedSearch,
     relationshipBudget,
     relationshipTrace,
     activeTraceFolderRelationCounts,
     focusedNodeId,
-    hoveredNodeId,
     activeTemporalState,
-    focusedLandmark,
     graph?.fileHistory,
     refactorRiskByNodeId,
     runtimeLayout,
     runtimeNodePositions,
     runtimeState,
     selectedObjectIdSet,
+    showWiresFromNodeMenu,
     structuralSelectionActive
   ]);
 
@@ -4464,14 +4425,6 @@ export function GraphView({
     setSelectedCorridorIndex(corridorIndex);
   };
 
-  const handleNodeMouseEnter: NodeMouseHandler<AtlasFlowNode> = (_event, node) => {
-    setHoveredNodeId(flowNodeRealId(node));
-  };
-
-  const handleNodeMouseLeave: NodeMouseHandler<AtlasFlowNode> = () => {
-    setHoveredNodeId(null);
-  };
-
   function navigateToContext(contextId: string | null): void {
     const target = contextId ? graph?.nodes.find((node) => node.id === contextId) : null;
     const entersChildContext =
@@ -4645,27 +4598,6 @@ export function GraphView({
       onPointerDownCapture={handleSelectionPointerDownCapture}
       onPointerMoveCapture={handleSelectionPointerMoveCapture}
     >
-      <svg className="graph-liquid-glass-defs" aria-hidden="true" focusable="false">
-        <defs>
-          <filter id="atlas-liquid-glass-distortion" x="-16%" y="-16%" width="132%" height="132%">
-            <feTurbulence
-              type="fractalNoise"
-              baseFrequency="0.005 0.005"
-              numOctaves="5"
-              seed="92"
-              result="noise"
-            />
-            <feGaussianBlur in="noise" stdDeviation="2" result="blurred" />
-            <feDisplacementMap
-              in="SourceGraphic"
-              in2="blurred"
-              scale="10"
-              xChannelSelector="R"
-              yChannelSelector="G"
-            />
-          </filter>
-        </defs>
-      </svg>
       <div className="breadcrumb-bar" aria-label="Current graph context">
         {laidOut.breadcrumbPath.map((item, index) => (
           <span className="breadcrumb-bar__item" key={item.id ?? "root"}>
@@ -4767,8 +4699,6 @@ export function GraphView({
         onInit={setReactFlowInstance}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
-        onNodeMouseEnter={handleNodeMouseEnter}
-        onNodeMouseLeave={handleNodeMouseLeave}
         onSelectionChange={handleSelectionChange}
         onSelectionStart={handleSelectionStart}
         onSelectionEnd={handleSelectionEnd}
@@ -4783,7 +4713,6 @@ export function GraphView({
             return;
           }
 
-          setHoveredNodeId(null);
           setFocusedNodeId(null);
           setTracedEdgeIds([]);
           setTracedFolderRelationCounts({});

@@ -210,8 +210,9 @@ Rule:
 - Path anchors and Runtime X-Ray corridor manipulation are outside its scope.
 
 **Risk X-Ray Mode**
-An explicit graph tool that temporarily scans the current atlas and recolors
-file chrome by deterministic refactor pressure.
+An explicit graph tool that temporarily scans the current atlas and changes
+focused-file interpretation from forecast language to refactor-simulation
+language.
 
 Purpose:
 - Helps users distinguish safe extraction candidates from high-risk behavior
@@ -222,9 +223,10 @@ Purpose:
 Rule:
 - The mode does not alter layout, graph state, hierarchy, focus, relationships,
   runtime, or saved view state.
-- File bodies stay neutral; only outline, folded-corner chrome, and a restrained
-  behind-node glow switch to the refactor pressure palette.
-- Folder nodes and lineage anchors keep their structural color language.
+- File, folder, and lineage node chrome stay neutral unless the object is
+  focused.
+- Pressure colors are available to legends, panel copy, and simulation
+  language; they do not recolor graph nodes.
 
 Current pressure colors:
 - Green: Start Here.
@@ -236,7 +238,6 @@ Current pressure colors:
 
 Technical name:
 - `refactorRiskMode`
-- `refactorRiskTier`
 
 **Code Weather Forecast**
 The normal-inspection meaning of the focused-file Forecast entry.
@@ -314,7 +315,8 @@ UI format:
 - `421L` followed by a centered separator and `14F`.
 
 **Deterministic Semantic Compression**
-An ambient visual treatment for files with explicit low-signal structural rules.
+A deterministic classification for files with explicit low-signal structural
+rules.
 
 Purpose:
 - Makes higher-signal implementation regions easier to see without deleting,
@@ -324,7 +326,9 @@ Rules:
 - Uses only filename conventions, non-blank LOC, syntax-derived function
   counts, pass-through export structure, and import-only Python package
   gateway structure.
-- Compression is overridden by focus, search, temporal attention, and runtime states.
+- Compression affects ordering weight and panel explanation, not graph-node
+  highlight strength.
+- Focus is the only graph-node highlight state.
 
 Technical name:
 - `compressionLevel: "low-signal"`
@@ -720,8 +724,9 @@ The focused object plus directly connected visible objects and edges.
 The central system that decides a node's final visual emphasis.
 
 Purpose:
-- Prevents hover, focus, temporal pressure, structural guidance, and landmarks from competing randomly.
-- Makes highlighting represent interruption priority.
+- Keeps graph-node highlighting deterministic and focus-only.
+- Prevents hover, search, temporal pressure, structural guidance, runtime
+  states, landmarks, or compression from creating competing highlight levels.
 
 Technical name:
 - `composeNodeVisualState`
@@ -731,15 +736,11 @@ The winning attention category for a node.
 
 Current layers:
 - `ambient`
-- `compressed`
-- `hover`
 - `focus`
-- `structural-guidance`
-- `temporal-pressure`
-- `critical-event`
 
 Rule:
-- Higher-priority layers suppress weaker competing signals.
+- Only the focused object can receive the focus layer.
+- Every non-focused visible object remains ambient.
 
 **Node Visual State**
 The final composed visual state applied to a node.
@@ -752,6 +753,11 @@ Includes:
 - glow type
 - pulse
 - label emphasis
+
+Rule:
+- Non-focused objects use neutral opacity, scale, pulse, and label emphasis.
+- Runtime, temporal, search, and relationship states may still drive panels,
+  controls, and edges, but they do not alter graph-node chrome.
 
 Technical name:
 - `NodeVisualState`

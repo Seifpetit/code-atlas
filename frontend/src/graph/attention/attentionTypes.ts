@@ -1,18 +1,8 @@
-export type AttentionLayer =
-  | "ambient"
-  | "compressed"
-  | "hover"
-  | "focus"
-  | "runtime-current"
-  | "runtime-residue"
-  | "runtime-preview"
-  | "structural-guidance"
-  | "temporal-pressure"
-  | "critical-event";
+export type AttentionLayer = "ambient" | "focus";
 
-export type AttentionGlowType = "none" | "interaction" | "runtime" | "temporal" | "structural" | "critical";
-export type AttentionPulse = "none" | "slow" | "medium";
-export type AttentionLabelEmphasis = "normal" | "strong" | "muted";
+export type AttentionGlowType = "none" | "interaction";
+export type AttentionPulse = "none";
+export type AttentionLabelEmphasis = "normal" | "strong";
 
 export interface NodeVisualState {
   layer: AttentionLayer;
@@ -29,16 +19,5 @@ export interface NodeVisualState {
 }
 
 export interface NodeAttentionSignals {
-  isHovered: boolean;
   isFocused: boolean;
-  isSearchMatch: boolean;
-  isRelationshipRelevant: boolean;
-  hasFocusContext: boolean;
-  temporalPressureLevel: "low" | "medium" | "high" | null;
-  temporalPressureScore: number;
-  hasTemporalState: boolean;
-  hasCriticalEvent: boolean;
-  isCriticalEventAffected: boolean;
-  hasStructuralGuidance: boolean;
-  isLowSignalCompressed: boolean;
 }

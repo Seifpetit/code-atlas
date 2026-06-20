@@ -570,11 +570,17 @@
   outline-offset: 4px;
 }
 
+.graph-shell.is-selection-mode .react-flow__node.selected .atlas-node--file::before {
+  opacity: 1;
+  transform: translateY(10px) scaleX(0.94);
+}
+
+.graph-shell.is-selection-mode .react-flow__node.selected .atlas-node--file .atlas-node__shape {
+  outline: 0;
+}
+
 .graph-shell.is-selection-mode .react-flow__node.selected .atlas-node__shape--file {
-  box-shadow:
-    0 0 0 1px rgba(45, 212, 191, 0.2),
-    0 0 18px rgba(45, 212, 191, 0.08),
-    0 16px 40px rgba(0, 0, 0, 0.24);
+  box-shadow: none;
 }
 
 .react-flow__controls {

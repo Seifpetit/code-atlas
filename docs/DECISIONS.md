@@ -270,18 +270,23 @@ Status:
 
 Decision:
 - Node highlighting is resolved through a central attention compositor.
-- Features provide signals; they do not directly own final node emphasis.
-- The final visual state determines the node's attention layer, opacity, scale, z-index, glow type, pulse, and label emphasis.
+- The compositor resolves only two graph-node layers: `ambient` and `focus`.
+- The final visual state determines whether a node uses neutral ambient chrome
+  or the focused-object highlight.
 
 Rationale:
 - Scattered highlight classes made the same object look important for unclear reasons.
-- Highlighting represents interruption priority, so visual priority must be deterministic.
-- Interaction focus, temporal pressure, structural guidance, and critical landmarks need distinct visual languages.
+- Multiple highlight strengths made the atlas harder to interpret because the
+  user could not tell which system owned emphasis.
+- Graph-node highlight should mean one thing: the object is currently focused.
 
 Implications:
 - New attention-affecting features must pass through the attention compositor.
-- Click/search focus has higher priority than temporal pressure.
-- Temporal and structural signals may remain visible only when they do not visually compete with higher-priority states.
+- Search, temporal pressure, structural guidance, runtime participation,
+  relationship relevance, compression, and risk analysis must not directly
+  change graph-node chrome.
+- Those systems may still drive panels, controls, connection lines, and
+  metadata.
 
 ## 15. Structural Layout Uses Object-Type Columns
 
@@ -377,8 +382,35 @@ Rationale:
 
 Implications:
 - Compressed files retain normal node bounds, containment, relationship data, and click behavior.
-- Focus, search, temporal attention, and runtime corridor states override the compressed ambient presentation.
+- Focus is the only graph-node highlight state.
+- Search, temporal attention, runtime corridor states, relationship relevance,
+  and low-signal compression do not create separate graph-node highlight
+  strengths.
 - Classification reasons must be exposed in the data contract and available in the focused details panel.
+
+## 19a. Graph Node Highlighting Is Focus-Only
+
+Status:
+- Accepted
+
+Decision:
+- Only the currently focused graph object receives highlighted node chrome.
+- Non-focused folders and files remain visually ambient even when they are
+  search matches, temporal hotspots, relationship neighbors, runtime
+  participants, critical-event participants, compressed files, or close-overlap
+  collision cases.
+
+Rationale:
+- Multiple highlight strengths made the atlas hard to read because users could
+  not tell which signal owned the emphasis.
+- Node highlight should mean one thing: this is the object the user is
+  inspecting.
+
+Implications:
+- Runtime, temporal, search, and relationship systems may still drive panels,
+  controls, connection lines, and metadata, but not node chrome.
+- Hover is CSS-only and does not create a node attention state.
+- The attention compositor resolves only `ambient` and `focus` layers.
 
 ## 20. The Details Panel Is An Operational Interpretation Surface
 

@@ -13,23 +13,53 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Muted text: `#94a3b8`
 
 **Structural Node Colors**
-- Folder: cyan / sky
-  - Border: `#38bdf8`
-  - Body: `#0c2230`
-- File: neutral `#333` body with extension-classified border and fold accent
-  - JS/TS (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`): amber `#facc15`
-  - Python (`.py`): blue `#60a5fa`
-  - Markdown (`.md`) / MDX (`.mdx`): violet / purple
-  - JSON / TOML: orange / amber
-  - YAML (`.yml`, `.yaml`): pink
-  - CSS / SCSS / Sass / Less: sky / pink / rose / indigo
-  - HTML / SVG / XML: rose / emerald / cyan
-  - Text / PowerShell / shell: slate / blue / lime
-  - Unknown or extensionless: amber fallback
-- File border color is a deterministic format cue only; attention, temporal, and
-  runtime states may override chrome emphasis.
-- File format outlines use an `80%` opacity `3px` vector stroke following the
-  rounded body and cut folded edge; the folded surface is an interior accent.
+- Folder and file nodes share one compact dark card family:
+  - Body background: `#0d1117`
+  - Border: `#1a2332`
+  - Body radius: `8px`
+  - Shared padding rhythm: `13px` top, `12px` sides, `11px` bottom
+  - Name row: `13px`, `#e6edf3`, single-line ellipsis
+- Folders render as simple rectangular containers with no tab or fold.
+  - Type row: uppercase `9px` label with a small Tabler-style folder icon,
+    color `#484f58`
+  - Path row: `9px` monospace, `#30363d`, single-line ellipsis
+  - Top accent bar: `3px` full-width `#30363d`
+  - Meta row shows item count with a files icon.
+  - The visible folder connection dot is the right-side container dot.
+- Files render as SVG-backed folded paper rather than a clipped CSS card.
+  - Fold surface: `#161b22`
+  - Paper stroke: `#1a2332`
+  - Accent stroke follows the top edge and fold edge.
+  - Top content starts with a `12px` file-kind icon only; no `FILE` text row.
+  - The parent path row is removed; the file extension row replaces it at
+    `9px` monospace `#30363d`.
+  - HOT / RECENT text badges are not rendered on file cards.
+  - Bottom stats are text-only: large LOC with `L` suffix, optional `{count}F`,
+    optional `{count}in`, separated by subdued middle dots.
+  - File cards expose a hover-only `16px` three-dot context menu with
+    `Inspect source`, `Show wires`, and `Copy path`.
+- File accent colors:
+  - Config (`.json`, `.yaml`, `.yml`, `.toml`, `.env`): `#7f77dd`
+  - Docs/styles (`.md`, `.mdx`, `.css`, `.scss`): `#06b6d4`
+  - Source (`.ts`, `.tsx`, `.js`, `.jsx`, `.py`) and unknown: `#484f58`
+  - Critical health overrides accent to `#ef4444`
+  - Warning health plus `HOT` history overrides accent to `#d97706`
+- File warning or critical health is shown as a `5px` dot at `top: 7px`,
+  `right: 27px`. Folders do not render health or residue dots.
+- File and folder connection handles use the pre-redesign React Flow-centered
+  connected-handle behavior: `9px` handle bounds, invisible unless connected,
+  direction-colored input/export styling, and opacity-only hover emphasis.
+- Node emphasis is focus-only:
+  - The focused object is the only folder/file that receives highlighted node
+    chrome.
+  - Focused files do not use a rectangular border or outline; their focus
+    emphasis is a soft glow underneath the folded paper shape.
+  - Focused folders can use rectangular border emphasis because their shape is
+    rectangular.
+  - Search, temporal state, runtime participation, relationship relevance,
+    low-signal compression, collision proximity, and Risk X-Ray do not create
+    separate graph-node highlight levels.
+  - Non-focused objects remain ambient.
 
 **Interaction Colors**
 - Primary action: `#2dd4bf`
@@ -62,15 +92,10 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
   confidence or severity.
 
 **Refactor Pressure Colors**
-- Risk X-Ray Start Here: green border `#22c55e` with restrained emerald glow.
-- Risk X-Ray Foundation: blue border `#3b82f6` with restrained blue glow.
-- Risk X-Ray Needs Isolation: gold border `#eab308` with restrained warm glow.
-- Risk X-Ray High-Leverage Risk: magenta border `#d946ef` with restrained
-  magenta glow.
-- Risk X-Ray Critical Surface: red border `#ef4444` with restrained red glow.
-- Risk X-Ray Stable: slate border `#64748b` with minimal slate glow.
-- These colors override only file outline, folded-corner chrome, and a soft
-  behind-node glow while Risk X-Ray is active.
+- Risk X-Ray category colors remain available for legends, panel copy, and
+  simulation language.
+- Risk X-Ray does not recolor or glow graph nodes; graph-node chrome remains
+  focus-only.
 
 **MiniMap Colors**
 - Folder: sky
@@ -122,7 +147,7 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - The green `Risk` tool sits directly to the left of `Select` in the same
   overlay row.
 - Activating `Risk` shows a fast left-to-right scanline over the graph shell
-  and switches file chrome to the refactor pressure palette.
+  and switches focused-file forecast language to refactor simulation.
 - While active, Risk X-Ray shows a compact top-right dot legend mapping each
   category color to `Start Here`, `Foundation`, `Needs Isolation`,
   `High-Leverage Risk`, `Critical Surface`, and `Stable`.
@@ -152,8 +177,9 @@ This file records fixed UI dimensions, panel positions, and color roles so spati
 - Interaction-memory residue uses a subdued warm marker only after earlier
   focus or Runtime X-Ray activation in the current analyzed session.
 - Metric cells and action controls remain compact so the graph stays primary.
-- File nodes do not render health warning/critical dots inside the graph card;
-  health remains available through the focused-file metadata panel.
+- File nodes render only the compact warning/critical health dot described in
+  the structural node contract; detailed health remains available through the
+  focused-file metadata panel.
 - In normal inspection, the forecast entry opens `Code Weather Forecast`, a
   trajectory-only report answering what happens if the user does nothing.
 - While Risk X-Ray is active, the same entry is labeled `Simulate Refactor` and
@@ -261,26 +287,24 @@ These values are layout inputs, not decorative CSS-only values. React Flow node 
 
 **Folder Nodes**
 - Source: `frontend/src/graph/layout.ts`
-- Width: `246px`
-- Height: `108px`
+- Width: `148px`
+- Height: `92px`
 - Root-level and nested directories use this same folder presentation.
-- Visible chrome uses the folder shape with a tab.
+- Visible chrome uses the simple rectangular folder shape with no tab.
 
 **File Nodes**
 - Source: `frontend/src/graph/layout.ts`
-- Width: `130px`
-- Height: `180px`
-- Files are intentionally vertical rectangles.
+- Width: `148px`
+- Height: `102px`
+- Files use the same width as folders with an extra `10px` of vertical space.
 - Visible chrome uses the file shape with a folded corner.
-- File identity places the basename first and the right-aligned extension on a
-  second line, then renders only the parent path to avoid repeated filenames.
-- The bottom metadata row displays lightweight `LOC` metrics and adds `/F`
-  function count only for JS/TS-family and Python files.
-- `LOC` and function counts use separate amber/violet cues to keep the
-  two architectural weight readings distinct.
+- File identity uses a single-line file name with ellipsis and a separate
+  parent path row.
+- The bottom metadata row displays compact stat icons for imports, `LOC`, and
+  `F` function count where applicable.
 - File history residue sits at the right end of that bottom metadata row.
-- Low-signal compression changes ambient opacity/chrome emphasis only; it does
-  not change file-node dimensions or layout bounds.
+- Low-signal compression changes ordering weight only; it does not create a
+  separate graph-node highlight or change file-node dimensions.
 
 **Runtime Artifacts**
 - Source: `frontend/src/runtime/runtimeLayout.ts`
