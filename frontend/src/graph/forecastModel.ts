@@ -98,32 +98,40 @@ function pressureSignalsForFile(file: AtlasNode, importedByCount: number): strin
   const complexity = maxComplexity(functions);
   const importCount = Number(file.metadata?.importCount ?? 0);
   const functionCount = Number(file.metadata?.functionCount ?? functions.length);
+  const maxFunctionLines = functions.reduce(
+    (maximum, waypoint) => Math.max(maximum, Math.max(0, waypoint.endLine - waypoint.startLine + 1)),
+    0
+  );
   const signals: string[] = [];
 
   if (file.healthTier === "critical" || (typeof file.healthScore === "number" && file.healthScore < 45)) {
-    signals.push("Health score is under pressure.");
+    signals.push("Health Stress");
   } else if (file.healthTier === "warning" || (typeof file.healthScore === "number" && file.healthScore < 70)) {
-    signals.push("Health score is starting to weaken.");
+    signals.push("Health Stress");
+  }
+
+  if (maxFunctionLines >= 60) {
+    signals.push("Large Function");
   }
 
   if (complexity.cyclomatic >= 15 || complexity.cognitive >= 20) {
-    signals.push("One or more functions are hard to follow.");
+    signals.push("High Complexity");
   }
 
   if (responsibilities.length >= 3) {
-    signals.push("This file is carrying several jobs.");
+    signals.push("Responsibility Overlap");
   }
 
   if (importCount >= 10 || importedByCount >= 8 || importCount + importedByCount >= 16) {
-    signals.push("Many files connect through this file.");
+    signals.push("Dependency Concentration");
   }
 
   if (functionCount >= 25) {
-    signals.push("There are many functions in one place.");
+    signals.push("Function Sprawl");
   }
 
   if (functions.some((waypoint) => waypoint.calls.length >= 10 || waypoint.stateUpdates.length >= 4)) {
-    signals.push("A function controls many moving parts.");
+    signals.push("Orchestration Hub");
   }
 
   return signals;
@@ -241,23 +249,23 @@ function sourcePressureSignals(waypoint: SourceFunctionWaypoint): string[] {
   const signals: string[] = [];
 
   if (waypoint.gravityLevel === "high" || waypoint.gravityScore >= 70) {
-    signals.push("This function controls many parts of the file.");
+    signals.push("Orchestration Hub");
   }
 
   if (complexity >= 24 || Number(waypoint.cyclomaticComplexity ?? 0) >= 15 || Number(waypoint.cognitiveComplexity ?? 0) >= 20) {
-    signals.push("The function is hard to follow.");
+    signals.push("High Complexity");
   }
 
   if (waypoint.concerns.length >= 3) {
-    signals.push("It handles several jobs at once.");
+    signals.push("Responsibility Overlap");
   }
 
   if (waypoint.calls.length >= 8) {
-    signals.push("It sends work to many other functions.");
+    signals.push("Dependency Concentration");
   }
 
   if (waypoint.stateUpdates.length >= 3) {
-    signals.push("It changes several pieces of state.");
+    signals.push("State Pressure");
   }
 
   return signals;

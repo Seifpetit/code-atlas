@@ -48,6 +48,7 @@ interface SourceCodeModalProps {
   embedded?: boolean;
   functionOnly?: boolean;
   initialFunctionId?: string | null;
+  inventoryMode?: boolean;
   inventoryRuntimeFunctionIds?: Set<string>;
   inventoryFunctionCounts?: InventoryFunctionCount[];
   inventorySortExplanation?: string;
@@ -760,6 +761,7 @@ export function SourceCodeModal({
   embedded = false,
   functionOnly = false,
   initialFunctionId = null,
+  inventoryMode = false,
   inventoryRuntimeFunctionIds,
   inventoryFunctionCounts,
   inventorySortExplanation,
@@ -1095,7 +1097,7 @@ export function SourceCodeModal({
 
     return functionsByLine;
   }, [inspection.functions, sourceLines.length]);
-  const inventoryModeActive = Boolean(inventoryRuntimeFunctionIds);
+  const inventoryModeActive = Boolean(inventoryMode || inventoryRuntimeFunctionIds);
   const allInventoryFunctionsCollapsed =
     foldableFunctionIds.length > 0 && foldableFunctionIds.every((id) => foldedFunctionIds.has(id));
   const showFunctionFoldTools = foldableFunctionIds.length > 0 && !runtimePlacementFunction && !functionOnly;
@@ -1774,7 +1776,7 @@ export function SourceCodeModal({
                 aria-pressed={forecastModeActive}
                 onClick={() => setForecastModeActive((active) => !active)}
               >
-                {forecastModeActive ? "Return" : forecastInspectionMode === "simulation" ? "Simulate Refactor" : "Forecast"}
+                {forecastModeActive ? "Return" : "Pressure Analysis"}
               </button>
             ) : null}
             {inventoryFunctionCounts?.length ? (
@@ -2185,14 +2187,14 @@ export function SourceCodeModal({
           </aside>
           <section
             className="source-modal__implementation"
-            aria-label={forecastModeActive && sourceForecast.available ? "Forecast" : runtimePlacementFunction ? "Runtime placement" : "Source implementation"}
+            aria-label={forecastModeActive && sourceForecast.available ? "Pressure analysis" : runtimePlacementFunction ? "Runtime placement" : "Source implementation"}
           >
             <div className="source-modal__code-frame">
               {forecastModeActive && sourceForecast.available ? (
-                <div className="source-modal__forecast" aria-label={`Forecast for ${sourceForecast.subject}`}>
+                <div className="source-modal__forecast" aria-label={`Pressure analysis for ${sourceForecast.subject}`}>
                   <header className="source-modal__forecast-header">
                     <div>
-                      <span>{forecastInspectionMode === "simulation" ? "Refactor Simulation" : "Code Weather Forecast"}</span>
+                      <span>Pressure Analysis</span>
                       <h3>{sourceForecast.subject}</h3>
                     </div>
                     <p>
@@ -2236,7 +2238,7 @@ export function SourceCodeModal({
                     </section>
                   </div>
                   ) : (
-                    <section className="source-modal__forecast-weather" aria-label="Forecast question">
+                    <section className="source-modal__forecast-weather" aria-label="Pressure question">
                       <strong>{sourceForecastWeatherStatus}</strong>
                       <p>What happens if we do nothing?</p>
                     </section>

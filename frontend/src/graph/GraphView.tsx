@@ -42,11 +42,6 @@ import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
 import { minimapColorForFile } from "./filePalette";
 import { buildFileForecast, type ForecastModel } from "./forecastModel";
-import {
-  computeHealthDetails,
-  type GraphNode,
-  type HealthComponentId
-} from "./healthScore";
 import { layoutStructuralContext, type AtlasFlowEdge, type AtlasFlowNode } from "./layout";
 import { nodeTypes } from "./nodeTypes";
 
@@ -135,6 +130,23 @@ type ForecastFlowIcon = "files" | "function" | "chart-line" | "git-commit" | "cl
 type ForecastFlowTone = "calm" | "warm" | "storm" | "muted";
 type ForecastFlagSeverity = "high" | "medium";
 type SimulationMetricTone = "healthy" | "warning" | "critical";
+type PressureSimulationPhase = "centering" | "folders" | "files" | "edges";
+type PressureResponsibilityKey = "runtime" | "state" | "transforms" | "relations" | "helpers" | "other";
+type PressureRuleAction = "function-loc" | "function-inventory" | "dependency-placeholder" | "complexity-placeholder" | "under-construction";
+type PressureInvestigationKind = Exclude<PressureRuleAction, "function-inventory">;
+type SourceModalInventoryMode = "function-count" | null;
+
+interface PressureSimulationState {
+  nodeId: string;
+  phase: PressureSimulationPhase;
+}
+
+interface PressureResponsibilityOrbit {
+  label: string;
+  percent: number;
+  offsetX: number;
+  offsetY: number;
+}
 
 interface MetadataWeatherForecast {
   status: "Stable" | "Warming" | "Under Pressure" | "High Risk" | "Storm Forming";
@@ -201,6 +213,42 @@ interface ForecastFlowData {
   consequenceBody: string;
 }
 
+type EngineeringBasisState = "ok" | "watch";
+
+interface EngineeringBasisRow {
+  rule: string;
+  label: string;
+  state: EngineeringBasisState;
+  reason: string;
+}
+
+interface PressureRuleCard {
+  id: string;
+  title: string;
+  description: string;
+  current: string;
+  target: string;
+  action: PressureRuleAction;
+  tone: "warning" | "critical";
+}
+
+interface ActivePressureInvestigation {
+  kind: PressureInvestigationKind;
+  title: string;
+}
+
+interface PressureFunctionRow {
+  id: string;
+  name: string;
+  startLine: number;
+  endLine: number;
+  lineCount: number;
+  cyclomaticComplexity: number;
+  cognitiveComplexity: number;
+  source: string;
+  tone: "stable" | "warning" | "critical";
+}
+
 const FORECAST_FLOW_QUESTIONS: Record<ForecastInspectionMode, string[]> = {
   weather: ["Should I care?", "Why is it flagged?", "What if I ignore it?"],
   simulation: ["What's wrong?", "How to split it?", "Is it worth it?"]
@@ -211,6 +259,7 @@ const FORECAST_FLOW_NEXT_LABELS: Record<ForecastInspectionMode, string[]> = {
   simulation: ["How? \u2192", "Release Pressure \u2192", ""]
 };
 
+const PRESSURE_SIMULATION_PHASE_ORDER: PressureSimulationPhase[] = ["centering", "folders", "files", "edges"];
 const SIMULATION_PERCENTAGES = [42, 25, 18, 15];
 const SIMULATION_COLORS = ["#ef4444", "#f59e0b", "#2dd4bf", "#a78bfa"];
 const SIMULATION_SATELLITE_POSITIONS = [
@@ -226,9 +275,77 @@ const SIMULATION_FALLBACK_MODULES: SimulationModuleCard[] = [
   { status: "NEW", title: "emailService.ts", role: "email sending" },
   { status: "NEW", title: "loggingService.ts", role: "logging" }
 ];
+const PRESSURE_RESPONSIBILITY_ORBIT: Record<PressureResponsibilityKey, PressureResponsibilityOrbit> = {
+  runtime: { label: "Runtime", percent: 25, offsetX: 340, offsetY: -220 },
+  state: { label: "State", percent: 18, offsetX: 340, offsetY: 220 },
+  transforms: { label: "Transforms", percent: 15, offsetX: -340, offsetY: -220 },
+  relations: { label: "Relations", percent: 12, offsetX: -340, offsetY: 220 },
+  helpers: { label: "Helpers", percent: 10, offsetX: 0, offsetY: 340 },
+  other: { label: "Extracted", percent: 10, offsetX: 0, offsetY: -340 }
+};
+const PRESSURE_FUNCTION_LOC_TARGET = 60;
+const PRESSURE_FUNCTION_COUNT_TARGET = 25;
+const PRESSURE_IMPORT_COUNT_TARGET = 10;
+const PRESSURE_CYCLOMATIC_TARGET = 15;
+const PRESSURE_COGNITIVE_TARGET = 20;
 
 function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, value));
+}
+
+function pressureSimulationPhaseAtLeast(phase: PressureSimulationPhase, target: PressureSimulationPhase): boolean {
+  return PRESSURE_SIMULATION_PHASE_ORDER.indexOf(phase) >= PRESSURE_SIMULATION_PHASE_ORDER.indexOf(target);
+}
+
+function fileExtensionFromTitle(title: string): string {
+  const normalized = title.replace(/\\/g, "/");
+  const fileName = normalized.split("/").pop() ?? normalized;
+  const dotIndex = fileName.lastIndexOf(".");
+
+  return dotIndex > 0 ? fileName.slice(dotIndex).toLowerCase() : "";
+}
+
+function folderNameFromSuggestedTitle(title: string): string {
+  const normalized = title.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+
+  return parts.length > 1 ? parts[0] : "helpers";
+}
+
+function fileNameFromSuggestedTitle(title: string): string {
+  const normalized = title.replace(/\\/g, "/");
+
+  return normalized.split("/").filter(Boolean).pop() ?? normalized;
+}
+
+function pressureResponsibilityKeyForBlock(block: ForecastModel["suggested"][number]): PressureResponsibilityKey {
+  const signal = `${block.title}\n${block.items.join("\n")}`.toLowerCase();
+
+  if (/\bruntime\b|\btrace\b|\bflow\b|\bcorridor\b/.test(signal)) {
+    return "runtime";
+  }
+
+  if (/\bhooks?\b|\bstate\b|\buse[A-Z]/.test(block.title) || /\bstate\b|\breducer\b/.test(signal)) {
+    return "state";
+  }
+
+  if (/\btransforms?\b|\btransform\b|\bnormalize\b|\bmap\b|\bbuild\b|\bhelpers?\b/.test(signal)) {
+    return signal.includes("helper") && !signal.includes("transform") ? "helpers" : "transforms";
+  }
+
+  if (/\brelations?\b|\bdependencies\b|\bdependency\b|\bimports?\b|\bconnection\b/.test(signal)) {
+    return "relations";
+  }
+
+  if (/\bhelpers?\b|\blocal helper\b/.test(signal)) {
+    return "helpers";
+  }
+
+  return "other";
+}
+
+function pressureResponsibilityForBlock(block: ForecastModel["suggested"][number]): PressureResponsibilityOrbit {
+  return PRESSURE_RESPONSIBILITY_ORBIT[pressureResponsibilityKeyForBlock(block)];
 }
 
 function toneForThreshold(value: number, amberThreshold: number, redThreshold: number): ForecastFlowTone {
@@ -425,6 +542,248 @@ function maxCyclomaticComplexity(file: AtlasNode): number {
   );
 }
 
+function maxCognitiveComplexity(file: AtlasNode): number {
+  return (file.metadata?.functionWaypoints ?? []).reduce(
+    (maxComplexity, waypoint) => Math.max(maxComplexity, Number(waypoint.cognitiveComplexity ?? 0)),
+    0
+  );
+}
+
+function maxFunctionLineSpan(file: AtlasNode): number {
+  return (file.metadata?.functionWaypoints ?? []).reduce(
+    (maxSpan, waypoint) => Math.max(maxSpan, Math.max(0, waypoint.endLine - waypoint.startLine + 1)),
+    0
+  );
+}
+
+function functionWaypointDisplayId(
+  waypoint: NonNullable<NonNullable<AtlasNode["metadata"]>["functionWaypoints"]>[number],
+  index: number
+): string {
+  return waypoint.waypointId ?? `function-${index}-${waypoint.startLine}`;
+}
+
+function pressureFunctionRowsForFile(file: AtlasNode): PressureFunctionRow[] {
+  const sourceLines = typeof file.sourceText === "string" ? file.sourceText.split(/\r?\n/) : [];
+
+  return (file.metadata?.functionWaypoints ?? [])
+    .map((waypoint, index): PressureFunctionRow => {
+      const lineCount = Math.max(1, waypoint.endLine - waypoint.startLine + 1);
+      const cyclomaticComplexity = Number(waypoint.cyclomaticComplexity ?? 0);
+      const cognitiveComplexity = Number(waypoint.cognitiveComplexity ?? 0);
+      const tone =
+        lineCount >= PRESSURE_FUNCTION_LOC_TARGET * 2 ||
+        cyclomaticComplexity >= PRESSURE_CYCLOMATIC_TARGET ||
+        cognitiveComplexity >= PRESSURE_COGNITIVE_TARGET
+          ? "critical"
+          : lineCount > PRESSURE_FUNCTION_LOC_TARGET
+            ? "warning"
+            : "stable";
+
+      return {
+        id: functionWaypointDisplayId(waypoint, index),
+        name: waypoint.name,
+        startLine: waypoint.startLine,
+        endLine: waypoint.endLine,
+        lineCount,
+        cyclomaticComplexity,
+        cognitiveComplexity,
+        source: sourceLines.slice(waypoint.startLine - 1, waypoint.endLine).join("\n"),
+        tone
+      };
+    })
+    .sort((left, right) =>
+      right.lineCount - left.lineCount ||
+      right.cyclomaticComplexity - left.cyclomaticComplexity ||
+      left.startLine - right.startLine
+    );
+}
+
+function strongestComplexityForFile(file: AtlasNode): { current: number; target: number; label: string } {
+  const cyclomatic = maxCyclomaticComplexity(file);
+  const cognitive = maxCognitiveComplexity(file);
+
+  if (cognitive / PRESSURE_COGNITIVE_TARGET > cyclomatic / PRESSURE_CYCLOMATIC_TARGET) {
+    return { current: cognitive, target: PRESSURE_COGNITIVE_TARGET, label: "Cognitive" };
+  }
+
+  return { current: cyclomatic, target: PRESSURE_CYCLOMATIC_TARGET, label: "Cyclomatic" };
+}
+
+function pressureRuleCardsForFile(
+  file: AtlasNode,
+  forecast: ForecastModel | null | undefined,
+  importedByCount: number
+): PressureRuleCard[] {
+  const functions = pressureFunctionRowsForFile(file);
+  const largestFunction = functions[0] ?? null;
+  const functionCount = Number(file.metadata?.functionCount ?? functions.length);
+  const importCount = Number(file.metadata?.importCount ?? 0);
+  const complexity = strongestComplexityForFile(file);
+  const cards: PressureRuleCard[] = [];
+  const coveredSignals = new Set<string>();
+
+  if (largestFunction && largestFunction.lineCount > PRESSURE_FUNCTION_LOC_TARGET) {
+    cards.push({
+      id: "function-loc",
+      title: "Large Function",
+      description: "One function is larger than the review unit.",
+      current: `${largestFunction.lineCount} LOC`,
+      target: `${PRESSURE_FUNCTION_LOC_TARGET} LOC`,
+      action: "function-loc",
+      tone: largestFunction.lineCount >= PRESSURE_FUNCTION_LOC_TARGET * 2 ? "critical" : "warning"
+    });
+    coveredSignals.add("Large Function");
+  }
+
+  if (functionCount > PRESSURE_FUNCTION_COUNT_TARGET) {
+    cards.push({
+      id: "function-count",
+      title: "Function Sprawl",
+      description: "The file has too many local function surfaces.",
+      current: `${functionCount} functions`,
+      target: `${PRESSURE_FUNCTION_COUNT_TARGET} functions`,
+      action: "function-inventory",
+      tone: functionCount >= PRESSURE_FUNCTION_COUNT_TARGET * 2 ? "critical" : "warning"
+    });
+    coveredSignals.add("Function Sprawl");
+  }
+
+  if (importCount > PRESSURE_IMPORT_COUNT_TARGET) {
+    cards.push({
+      id: "import-count",
+      title: "Dependency Surface",
+      description: "Imports exceed the local dependency target.",
+      current: `${importCount} imports`,
+      target: `${PRESSURE_IMPORT_COUNT_TARGET} imports`,
+      action: "dependency-placeholder",
+      tone: importCount >= PRESSURE_IMPORT_COUNT_TARGET * 2 ? "critical" : "warning"
+    });
+    coveredSignals.add("Dependency Concentration");
+  }
+
+  if (complexity.current > complexity.target) {
+    cards.push({
+      id: "complexity",
+      title: "Complexity Pressure",
+      description: "A function exceeds the complexity target.",
+      current: `${complexity.label} ${complexity.current}`,
+      target: `${complexity.target}`,
+      action: "complexity-placeholder",
+      tone: complexity.current >= complexity.target * 1.5 ? "critical" : "warning"
+    });
+    coveredSignals.add("High Complexity");
+  }
+
+  for (const signal of pressureSignalLabelsForFile(file, forecast, importedByCount)) {
+    if (coveredSignals.has(signal)) {
+      continue;
+    }
+
+    cards.push({
+      id: `future:${signal.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      title: signal,
+      description: "Investigation surface planned.",
+      current: "Active signal",
+      target: "Planned",
+      action: "under-construction",
+      tone: "warning"
+    });
+    coveredSignals.add(signal);
+  }
+
+  return cards;
+}
+
+function compactPressureSignal(signal: string): string {
+  const normalizedSignal = signal.toLowerCase();
+
+  if (normalizedSignal.includes("large function")) {
+    return "Large Function";
+  }
+
+  if (normalizedSignal.includes("health score") || normalizedSignal.includes("health stress")) {
+    return "Health Stress";
+  }
+
+  if (normalizedSignal.includes("hard to follow") || normalizedSignal.includes("complexity")) {
+    return "High Complexity";
+  }
+
+  if (normalizedSignal.includes("responsibil") || normalizedSignal.includes("several jobs")) {
+    return "Responsibility Overlap";
+  }
+
+  if (
+    normalizedSignal.includes("connect") ||
+    normalizedSignal.includes("dependency") ||
+    normalizedSignal.includes("many files")
+  ) {
+    return "Dependency Concentration";
+  }
+
+  if (normalizedSignal.includes("many functions") || normalizedSignal.includes("function count")) {
+    return "Function Sprawl";
+  }
+
+  if (normalizedSignal.includes("moving parts") || normalizedSignal.includes("orchestration")) {
+    return "Orchestration Hub";
+  }
+
+  return signal.replace(/\.$/, "");
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function pressureSignalLabelsForFile(
+  file: AtlasNode,
+  forecast: ForecastModel | null | undefined,
+  importedByCount: number
+): string[] {
+  const functions = file.metadata?.functionWaypoints ?? [];
+  const maxFunctionSpan = maxFunctionLineSpan(file);
+  const maxCyclomatic = maxCyclomaticComplexity(file);
+  const maxCognitive = maxCognitiveComplexity(file);
+  const functionCount = Number(file.metadata?.functionCount ?? functions.length);
+  const dependencySurface = Number(file.metadata?.importCount ?? 0) + importedByCount;
+  const responsibilityCount = forecast?.current.items.length ?? 0;
+  const signals: string[] = [];
+
+  if (maxFunctionSpan >= 60) {
+    signals.push("Large Function");
+  }
+
+  if (responsibilityCount >= 3) {
+    signals.push("Responsibility Overlap");
+  }
+
+  if (maxCyclomatic >= 15 || maxCognitive >= 20) {
+    signals.push("High Complexity");
+  }
+
+  if (dependencySurface >= 16) {
+    signals.push("Dependency Concentration");
+  }
+
+  if (functionCount >= 25) {
+    signals.push("Function Sprawl");
+  }
+
+  if (functions.some((waypoint) => waypoint.calls.length >= 10 || waypoint.stateUpdates.length >= 4)) {
+    signals.push("Orchestration Hub");
+  }
+
+  if (file.healthTier === "critical" || (typeof file.healthScore === "number" && file.healthScore < 45)) {
+    signals.push("Health Stress");
+  }
+
+  signals.push(...(forecast?.pressureSignals ?? []).map(compactPressureSignal));
+
+  return uniqueStrings(signals).slice(0, 4);
+}
+
 function signalSeverityForRow(signal: string): ForecastFlagSeverity {
   return metadataForecastSignalSeverity(signal) === "info" ? "medium" : "high";
 }
@@ -459,7 +818,7 @@ function consequenceTextForSignal(signal: string): { title: string; body: string
     };
   }
 
-  if (normalizedSignal.includes("size") || normalizedSignal.includes("function")) {
+  if (normalizedSignal.includes("size") || normalizedSignal.includes("function") || normalizedSignal.includes("complexity")) {
     return {
       title: "Review surface is likely to keep expanding.",
       body: "If growth continues, the file will take longer to scan and reason about. Larger review surfaces also make automated edits harder to constrain."
@@ -469,121 +828,6 @@ function consequenceTextForSignal(signal: string): { title: string; body: string
   return {
     title: "Pressure can accumulate quietly.",
     body: "If nothing changes, the current trajectory may make this area more expensive to review later. The signal is directional, not a verdict."
-  };
-}
-
-function forecastFlowDataFor(
-  file: AtlasNode,
-  forecast: ForecastModel,
-  weatherForecast: MetadataWeatherForecast | null,
-  graph: AtlasGraph | null
-): ForecastFlowData {
-  const responsibilityCount = forecast.current.items.length;
-  const functions = file.metadata?.functionWaypoints ?? [];
-  const functionCount = Number(file.metadata?.functionCount ?? functions.length);
-  const cyclomatic = maxCyclomaticComplexity(file);
-  const averageCyclomatic = averageCyclomaticComplexity(file);
-  const churnPerDay = Number(graph?.fileHistory?.[file.path]?.churnRate ?? 0);
-  const churnPerMonth = Math.round(churnPerDay * 30);
-  const historyChurnRate = graph?.fileHistory?.[file.path]?.churnRate;
-  const simulationChurnPerMonth = typeof historyChurnRate === "number" && historyChurnRate > 0
-    ? Math.round(historyChurnRate)
-    : 14;
-  const pressurePercent = typeof file.healthScore === "number" ? clampPercent(100 - file.healthScore) : 0;
-  const healthTier = file.healthTier ?? "healthy";
-  const weatherVerdict =
-    healthTier === "critical"
-      ? "\u26a1 Storm Forming"
-      : healthTier === "warning"
-        ? "\u26a0 Warming"
-        : "\u2713 Stable";
-  const weatherVerdictTone =
-    healthTier === "critical"
-      ? "storm"
-      : healthTier === "warning"
-        ? "warm"
-        : "calm";
-  const complexityTone = toneForThreshold(cyclomatic, 7, 15);
-  const topWeatherSignal = weatherForecast?.signals[0] ?? "This area remains stable.";
-  const consequence = consequenceTextForSignal(topWeatherSignal);
-  const simulationResponsibilities = simulationResponsibilitiesFor(forecast);
-  const simulationResponsibilityCount = responsibilityCount > 1 ? responsibilityCount : 5;
-  const simulationFunctionCount = functionCount > 0 ? functionCount : 66;
-  const simulationAverageComplexity = averageCyclomatic > 0 ? averageCyclomatic : 5.7;
-  const simulationPressureDimensions: SimulationPressureDimension[] = [
-    {
-      label: "Responsibilities",
-      value: formatMetricNumber(simulationResponsibilityCount, 0),
-      tone: simulationMetricTone(simulationResponsibilityCount, 1, 3),
-      fillPercent: clampPercent((simulationResponsibilityCount / 5) * 100)
-    },
-    {
-      label: "Functions",
-      value: formatMetricNumber(simulationFunctionCount, 0),
-      tone: simulationMetricTone(simulationFunctionCount, 20, 50),
-      fillPercent: clampPercent((simulationFunctionCount / 66) * 100)
-    },
-    {
-      label: "Complexity",
-      value: `avg ${formatMetricNumber(simulationAverageComplexity)}`,
-      tone: simulationMetricTone(simulationAverageComplexity, 3, 7),
-      fillPercent: clampPercent((simulationAverageComplexity / 8) * 100)
-    },
-    {
-      label: "Churn",
-      value: `${formatMetricNumber(simulationChurnPerMonth, 0)}/mo`,
-      tone: simulationMetricTone(simulationChurnPerMonth, 8, 16),
-      fillPercent: clampPercent((simulationChurnPerMonth / 18) * 100)
-    }
-  ];
-  const simulationModuleCards = simulationModuleCardsFor(forecast, simulationResponsibilities);
-
-  return {
-    pressurePercent,
-    weatherVerdict,
-    weatherVerdictTone,
-    signalCards: [
-      {
-        icon: "files",
-        label: "Responsibilities",
-        value: `${responsibilityCount} detected`,
-        tone: toneForThreshold(responsibilityCount, 1, 3),
-        fillPercent: clampPercent((responsibilityCount / 5) * 100)
-      },
-      {
-        icon: "function",
-        label: "Functions",
-        value: `${functionCount} total`,
-        tone: toneForThreshold(functionCount, 20, 50),
-        fillPercent: clampPercent(functionCount)
-      },
-      {
-        icon: "chart-line",
-        label: "Complexity",
-        value: complexityTone === "storm" ? "Critical" : complexityTone === "warm" ? "Warming" : "Stable",
-        tone: complexityTone,
-        fillPercent: clampPercent((cyclomatic / 20) * 100)
-      },
-      {
-        icon: "git-commit",
-        label: "Churn",
-        value: `${churnPerMonth}/month`,
-        tone: toneForThreshold(churnPerDay, 2, 5),
-        fillPercent: clampPercent((churnPerDay / 8) * 100)
-      }
-    ],
-    weatherFlagRows: flagRowsForSignals(weatherForecast?.signals ?? forecast.pressureSignals, 5),
-    simulationResponsibilities,
-    simulationPressureDimensions,
-    simulationModuleCards,
-    simulationImpactMetrics: [
-      { label: "Review surface", direction: "down", before: "100%", after: "30%", beforeLevel: 10, afterLevel: 3 },
-      { label: "Change isolation", direction: "up", before: "1x", after: "4x", beforeLevel: 1, afterLevel: 4 },
-      { label: "AI edit risk", direction: "down", before: "high", after: "low", beforeLevel: 4, afterLevel: 1 },
-      { label: "Dependency clarity", direction: "up", before: "low", after: "high", beforeLevel: 1, afterLevel: 4 }
-    ],
-    consequenceTitle: consequence.title,
-    consequenceBody: consequence.body
   };
 }
 
@@ -652,9 +896,11 @@ function metadataForecastSignalSeverity(signal: string): ForecastSignalSeverity 
 
   if (
     normalizedSignal.includes("health score") ||
+    normalizedSignal.includes("health stress") ||
     normalizedSignal.includes("storm") ||
     normalizedSignal.includes("high risk") ||
-    normalizedSignal.includes("spreading")
+    normalizedSignal.includes("spreading") ||
+    normalizedSignal.includes("high complexity")
   ) {
     return "danger";
   }
@@ -862,7 +1108,7 @@ interface ConnectedFileGroupsByDirection {
 }
 
 type RelationshipFollowDirection = "imports" | "imported-by";
-type FileMetadataSectionId = "stats" | "role" | "recent";
+type FileMetadataSectionId = "structure";
 
 interface RelationshipFollowContext {
   direction: RelationshipFollowDirection;
@@ -913,6 +1159,7 @@ interface CollapsibleSemanticRegionProps {
 interface CollapsibleMetadataSectionProps {
   id: FileMetadataSectionId;
   title: string;
+  summary?: string;
   isCollapsed: boolean;
   className?: string;
   onToggle: (sectionId: FileMetadataSectionId) => void;
@@ -947,6 +1194,7 @@ function CollapsibleSemanticRegion({
 function CollapsibleMetadataSection({
   id,
   title,
+  summary,
   isCollapsed,
   className = "",
   onToggle,
@@ -967,6 +1215,7 @@ function CollapsibleMetadataSection({
         onClick={() => onToggle(id)}
       >
         <span className="metadata-panel__section-title">{title}</span>
+        {summary ? <span className="metadata-panel__section-summary">{summary}</span> : null}
         <span className="metadata-panel__section-chevron" aria-hidden="true" />
       </button>
       {!isCollapsed ? (
@@ -978,242 +1227,11 @@ function CollapsibleMetadataSection({
   );
 }
 
-const METADATA_HEALTH_COMPONENT_ORDER: HealthComponentId[] = [
-  "cyclomatic",
-  "cognitive",
-  "duplication",
-  "churn",
-  "ghostRatio"
-];
-
-interface ComponentHealthContext {
-  medianBadness: number;
-  worseThanPercent: number;
-}
-
-interface FileHealthRankContext {
-  rank: number;
-  total: number;
-  components: Partial<Record<HealthComponentId, ComponentHealthContext>>;
-}
-
-interface HealthMetricDisplayRow {
-  id: HealthComponentId;
-  label: string;
-  valueText: string;
-  contributionText: string;
-  explanation: string;
-  scale: {
-    markerPercent: number;
-    minLabel: string;
-    normalLabel: string;
-    highLabel: string;
-  };
-}
-
-interface HealthTooltipState {
-  kind: "label" | "scale";
-  row: HealthMetricDisplayRow;
-  left: number;
-  top: number;
-}
-
-function healthSummaryText(score: number): string {
-  if (score >= 70) {
-    return "No significant issues detected.";
-  }
-
-  if (score >= 40) {
-    return "Some complexity worth reviewing.";
-  }
-
-  return "High complexity. Recommend inspection.";
-}
-
-function healthScoreColor(score: number): string {
-  if (score >= 70) {
-    return "#06b6d4";
-  }
-
-  if (score >= 40) {
-    return "#d97706";
-  }
-
-  return "#ef4444";
-}
-
-function healthProblemColor(badness: number): string {
-  const fillPercent = badness * 100;
-
-  if (fillPercent < 40) {
-    return "#06b6d4";
-  }
-
-  if (fillPercent < 70) {
-    return "#d97706";
-  }
-
-  return "#ef4444";
-}
-
-function medianValue(values: number[]): number {
-  if (values.length === 0) {
-    return 0;
-  }
-
-  const sortedValues = values.slice().sort((left, right) => left - right);
-  const middle = Math.floor(sortedValues.length / 2);
-
-  return sortedValues.length % 2 === 0
-    ? (sortedValues[middle - 1] + sortedValues[middle]) / 2
-    : sortedValues[middle];
-}
-
-function worseThanPercent(value: number, values: number[]): number {
-  if (values.length === 0) {
-    return 0;
-  }
-
-  const healthierCount = values.filter((candidate) => candidate < value).length;
-  return Math.round((healthierCount / values.length) * 100);
-}
-
 function formatMetricNumber(value: number, maximumFractionDigits = 2): string {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 0,
     maximumFractionDigits
   }).format(value);
-}
-
-function formatPercent(value: number): string {
-  return `${formatMetricNumber(value * 100, 1)}%`;
-}
-
-function scaledMetricPercent(value: number, highValue: number): number {
-  if (highValue <= 0) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(100, (value / highValue) * 100));
-}
-
-function tooltipPositionForElement(element: HTMLElement, width: number): { left: number; top: number } {
-  const gutter = 12;
-  const rect = element.getBoundingClientRect();
-  const leftOfElement = rect.left - width - gutter;
-  const rightOfElement = rect.right + gutter;
-  const left = leftOfElement >= gutter
-    ? leftOfElement
-    : Math.min(Math.max(gutter, rightOfElement), window.innerWidth - width - gutter);
-  const top = Math.min(Math.max(gutter, rect.top - 8), window.innerHeight - 140);
-
-  return { left, top };
-}
-
-function functionGlobalId(filePath: string, waypointId: string | undefined): string | null {
-  return waypointId ? `${filePath}:${waypointId}` : null;
-}
-
-function isExemptFromGhostPenalty(
-  waypoint: NonNullable<NonNullable<AtlasNode["metadata"]>["functionWaypoints"]>[number],
-  fileIsStaticEntrypoint: boolean
-): boolean {
-  if (waypoint.exported || (waypoint.exportNames?.length ?? 0) > 0) {
-    return true;
-  }
-
-  const frameworkPatterns = [
-    /^use[A-Z]/,
-    /^on[A-Z]/,
-    /^handle[A-Z]/,
-    /^render[A-Z]/,
-    /^get[A-Z]/,
-    /^set[A-Z]/,
-    /^(componentDidMount|componentDidUpdate|componentWillUnmount)$/,
-    /^(getServerSideProps|getStaticProps|getStaticPaths)$/,
-    /^(loader|action)$/
-  ];
-
-  return fileIsStaticEntrypoint || frameworkPatterns.some((pattern) => pattern.test(waypoint.name));
-}
-
-function resolveCallTargetId(
-  graph: NonNullable<GraphViewProps["graph"]>,
-  call: NonNullable<NonNullable<AtlasNode["metadata"]>["functionWaypoints"]>[number]["calls"][number]
-): string | null {
-  if (!call.definitionPath) {
-    return null;
-  }
-
-  const targetFile = graph.nodes.find((node) => node.type === "file" && node.path === call.definitionPath);
-  const waypoints = targetFile?.metadata?.functionWaypoints ?? [];
-
-  if (call.definitionWaypointId) {
-    const target = waypoints.find((waypoint) => waypoint.waypointId === call.definitionWaypointId);
-    if (target?.waypointId) {
-      return functionGlobalId(call.definitionPath, target.waypointId);
-    }
-  }
-
-  if (call.definitionStartLine !== undefined && call.definitionEndLine !== undefined) {
-    const target = waypoints.find(
-      (waypoint) =>
-        waypoint.startLine === call.definitionStartLine &&
-        waypoint.endLine === call.definitionEndLine
-    );
-    if (target?.waypointId) {
-      return functionGlobalId(call.definitionPath, target.waypointId);
-    }
-  }
-
-  if (call.definitionName) {
-    const namedTargets = waypoints.filter((waypoint) => waypoint.name === call.definitionName);
-    if (namedTargets.length === 1 && namedTargets[0].waypointId) {
-      return functionGlobalId(call.definitionPath, namedTargets[0].waypointId);
-    }
-  }
-
-  return null;
-}
-
-function calledFunctionIds(graph: NonNullable<GraphViewProps["graph"]>): Set<string> {
-  const ids = new Set<string>();
-
-  for (const node of graph.nodes) {
-    if (node.type !== "file") {
-      continue;
-    }
-
-    for (const waypoint of node.metadata?.functionWaypoints ?? []) {
-      for (const call of waypoint.calls) {
-        const targetId = resolveCallTargetId(graph, call);
-        if (targetId) {
-          ids.add(targetId);
-        }
-      }
-    }
-
-    for (const call of node.metadata?.moduleLinks ?? []) {
-      const targetId = resolveCallTargetId(graph, call);
-      if (targetId) {
-        ids.add(targetId);
-      }
-    }
-  }
-
-  return ids;
-}
-
-function hasDetectedCallSite(
-  filePath: string,
-  waypoint: NonNullable<NonNullable<AtlasNode["metadata"]>["functionWaypoints"]>[number],
-  detectedCallIds: Set<string>
-): boolean {
-  const id = functionGlobalId(filePath, waypoint.waypointId);
-  return (
-    (id !== null && detectedCallIds.has(id)) ||
-    waypoint.inputs.some((input) => (input.sources?.length ?? 0) > 0)
-  );
 }
 
 function refactorRiskPressureFor(node: AtlasNode, importedByCount: number): RefactorRiskPressure {
@@ -2163,8 +2181,11 @@ export function GraphView({
 }: GraphViewProps) {
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
   const [sourceModalFile, setSourceModalFile] = useState<AtlasNode | null>(null);
+  const [sourceModalInventoryMode, setSourceModalInventoryMode] = useState<SourceModalInventoryMode>(null);
   const [metadataForecastNodeId, setMetadataForecastNodeId] = useState<string | null>(null);
-  const [metadataForecastPageIndex, setMetadataForecastPageIndex] = useState(0);
+  const [activePressureInvestigation, setActivePressureInvestigation] = useState<ActivePressureInvestigation | null>(null);
+  const [selectedPressureFunctionId, setSelectedPressureFunctionId] = useState<string | null>(null);
+  const [pressureSimulation, setPressureSimulation] = useState<PressureSimulationState | null>(null);
   const [filePanelView, setFilePanelView] = useState<"metadata" | "wires">("metadata");
   const [currentContextId, setCurrentContextId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
@@ -2195,7 +2216,6 @@ export function GraphView({
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance<AtlasFlowNode, AtlasFlowEdge> | null>(null);
   const [runtimeState, setRuntimeState] = useState<RuntimeState>(inactiveRuntimeState);
   const [runtimePlaybackActive, setRuntimePlaybackActive] = useState(false);
-  const [healthTooltip, setHealthTooltip] = useState<HealthTooltipState | null>(null);
   const [viewportSnapshot, setViewportSnapshot] = useState<SavedMapViewState["viewport"]>(null);
   const graphShellRef = useRef<HTMLDivElement | null>(null);
   const pendingContextCameraRef = useRef<PendingContextCamera | null>(null);
@@ -2212,24 +2232,10 @@ export function GraphView({
     pointer: null
   });
   const selectionAutoPanFrameRef = useRef<number | null>(null);
+  const pressureSimulationTimerRef = useRef<number[]>([]);
   const structuralSelectionActive = selectionToolActive && !runtimeState.active;
   const traceSignatureForIds = useCallback((edgeIds: string[]) => {
     return [...new Set(edgeIds)].sort().join("|");
-  }, []);
-  const showHealthTooltip = useCallback((
-    event: ReactMouseEvent<HTMLElement>,
-    row: HealthMetricDisplayRow,
-    kind: HealthTooltipState["kind"]
-  ) => {
-    const width = kind === "scale" ? 260 : 220;
-    setHealthTooltip({
-      kind,
-      row,
-      ...tooltipPositionForElement(event.currentTarget, width)
-    });
-  }, []);
-  const hideHealthTooltip = useCallback(() => {
-    setHealthTooltip(null);
   }, []);
   const laidOut = useMemo(
     () => (graph ? layoutStructuralContext(graph, currentContextId, pageIndex) : null),
@@ -2360,7 +2366,10 @@ export function GraphView({
     setPinnedTraceGroups([]);
     setSelectedRuntimeFileId(null);
     setSourceModalFile(null);
+    setSourceModalInventoryMode(null);
     setMetadataForecastNodeId(null);
+    setActivePressureInvestigation(null);
+    setSelectedPressureFunctionId(null);
     setFilePanelView("metadata");
     setExpandedPanelRegion({ nodeId: null, region: null });
     setInteractionResidueByNodeId({});
@@ -2397,7 +2406,10 @@ export function GraphView({
     setPinnedTraceGroups([]);
     setSelectedRuntimeFileId(null);
     setSourceModalFile(null);
+    setSourceModalInventoryMode(null);
     setMetadataForecastNodeId(null);
+    setActivePressureInvestigation(null);
+    setSelectedPressureFunctionId(null);
     setFilePanelView("metadata");
     setExpandedPanelRegion({ nodeId: null, region: null });
     setSelectedNode(null);
@@ -2689,6 +2701,7 @@ export function GraphView({
     setMetadataForecastNodeId(null);
     setFilePanelView("metadata");
     setExpandedPanelRegion({ nodeId: node.id, region: null });
+    setSourceModalInventoryMode(null);
     setSourceModalFile(node);
   }, [recordNodeFocus]);
   const showWiresFromNodeMenu = useCallback((node: AtlasNode) => {
@@ -2802,69 +2815,6 @@ export function GraphView({
     };
     appliedViewStateKeyRef.current = viewStateKey;
   }, [currentContextId, graph, graphNodeById, initialViewState, viewStateKey]);
-  const healthRankContextById = useMemo(() => {
-    const contexts = new Map<string, FileHealthRankContext>();
-    if (!graph) {
-      return contexts;
-    }
-
-    const fileNodes = graph.nodes.filter(
-      (node): node is AtlasNode & { healthScore: number } =>
-        node.type === "file" &&
-        typeof node.healthScore === "number" &&
-        node.healthTier !== "unscored" &&
-        Boolean(node.healthComponents)
-    );
-    const detailsById = new Map(
-      fileNodes.map((node) => [node.id, computeHealthDetails(node as GraphNode)] as const)
-    );
-    const badnessValuesByComponent = new Map<HealthComponentId, number[]>();
-
-    for (const componentId of METADATA_HEALTH_COMPONENT_ORDER) {
-      badnessValuesByComponent.set(
-        componentId,
-        fileNodes
-          .map((node) => detailsById.get(node.id)?.components[componentId].badness)
-          .filter((value): value is number => typeof value === "number")
-      );
-    }
-
-    const medianBadnessByComponent = new Map<HealthComponentId, number>();
-    for (const [componentId, values] of badnessValuesByComponent.entries()) {
-      medianBadnessByComponent.set(componentId, medianValue(values));
-    }
-
-    const sortedByHealth = fileNodes
-      .slice()
-      .sort((left, right) =>
-        left.healthScore - right.healthScore ||
-        left.path.localeCompare(right.path)
-      );
-
-    sortedByHealth.forEach((node, index) => {
-      const details = detailsById.get(node.id);
-      const components: FileHealthRankContext["components"] = {};
-
-      if (details) {
-        for (const componentId of METADATA_HEALTH_COMPONENT_ORDER) {
-          const values = badnessValuesByComponent.get(componentId) ?? [];
-          const badness = details.components[componentId].badness;
-          components[componentId] = {
-            medianBadness: medianBadnessByComponent.get(componentId) ?? 0,
-            worseThanPercent: worseThanPercent(badness, values)
-          };
-        }
-      }
-
-      contexts.set(node.id, {
-        rank: index + 1,
-        total: sortedByHealth.length,
-        components
-      });
-    });
-
-    return contexts;
-  }, [graph]);
   const collapsedFileSectionSet = useMemo(() => new Set(collapsedFileSections), [collapsedFileSections]);
   const collapsedFileConnectionSectionSet = useMemo(
     () => new Set(collapsedFileConnectionSections),
@@ -3180,6 +3130,11 @@ export function GraphView({
           ? runtimeNodePositions[node.id] ?? runtimeLayout.positions.get(node.id) ?? node.position
           : manualNodePositions[node.id] ?? node.position;
       const refactorRisk = data.type === "file" ? refactorRiskByNodeId.get(realNodeId) : undefined;
+      const pressureSimulationClass = pressureSimulation
+        ? realNodeId === pressureSimulation.nodeId
+          ? "pressure-simulation-focus"
+          : "pressure-simulation-dim"
+        : "";
 
       return {
         ...node,
@@ -3219,7 +3174,7 @@ export function GraphView({
                 }
               : undefined
         },
-        className: resolvedVisualState.className
+        className: [resolvedVisualState.className, pressureSimulationClass].filter(Boolean).join(" ")
       };
     });
 
@@ -3275,6 +3230,7 @@ export function GraphView({
     activeTraceFolderRelationCounts,
     focusedNodeId,
     activeTemporalState,
+    pressureSimulation,
     graph?.fileHistory,
     refactorRiskByNodeId,
     runtimeLayout,
@@ -3691,20 +3647,200 @@ export function GraphView({
       : null,
     [importedByCount, selectedFileForecast, selectedNode]
   );
-  const selectedForecastFlowData = useMemo(
-    () => selectedNode?.type === "file" && selectedFileForecast?.available
-      ? forecastFlowDataFor(
-        selectedNode,
-        selectedFileForecast,
-        selectedFileWeatherForecast,
-        graph
-      )
-      : null,
-    [graph, selectedFileForecast, selectedFileWeatherForecast, selectedNode]
+  const selectedFilePressureRules = useMemo(
+    () => selectedNode?.type === "file"
+      ? pressureRuleCardsForFile(selectedNode, selectedFileForecast, importedByCount)
+      : [],
+    [importedByCount, selectedFileForecast, selectedNode]
   );
-  useEffect(() => {
-    setMetadataForecastPageIndex(0);
-  }, [forecastInspectionMode, metadataForecastActive, metadataForecastNodeId]);
+  const selectedFileHasPressure = selectedFilePressureRules.length > 0 && Boolean(selectedFileForecast?.available);
+  const pressureSimulationActive = Boolean(
+    pressureSimulation &&
+      metadataForecastActive &&
+      selectedNode?.type === "file" &&
+      selectedNode.id === pressureSimulation.nodeId
+  );
+  const pressureSimulationProjection = useMemo(() => {
+    if (
+      !pressureSimulationActive ||
+      !pressureSimulation ||
+      !selectedNode ||
+      selectedNode.type !== "file" ||
+      !selectedFileForecast
+    ) {
+      return { nodes: [] as AtlasFlowNode[], edges: [] as AtlasFlowEdge[] };
+    }
+
+    const sourceFlowNode = displayedLayoutNodes.find((candidate) => (
+      flowNodeRealId(candidate) === selectedNode.id &&
+      Number((candidate.data as AtlasNode).corridorIndex ?? 0) === selectedCorridorIndex
+    )) ?? displayedLayoutNodes.find((candidate) => flowNodeRealId(candidate) === selectedNode.id);
+
+    if (!sourceFlowNode) {
+      return { nodes: [] as AtlasFlowNode[], edges: [] as AtlasFlowEdge[] };
+    }
+
+    const sourceData = sourceFlowNode.data as AtlasNode;
+    const sourcePosition = manualNodePositions[sourceFlowNode.id] ?? sourceFlowNode.position;
+    const sourceWidth = Number(sourceData.layoutWidth ?? 148);
+    const sourceHeight = Number(sourceData.layoutHeight ?? 102);
+    const sourceCenterX = sourcePosition.x + sourceWidth / 2;
+    const sourceCenterY = sourcePosition.y + sourceHeight / 2;
+    const ghostBlocks = selectedFileForecast.suggested.slice(1, 7);
+    const visibleFolders = pressureSimulationPhaseAtLeast(pressureSimulation.phase, "folders");
+    const visibleFiles = pressureSimulationPhaseAtLeast(pressureSimulation.phase, "files");
+    const visibleEdges = pressureSimulationPhaseAtLeast(pressureSimulation.phase, "edges");
+
+    if (!visibleFolders || ghostBlocks.length === 0) {
+      return { nodes: [] as AtlasFlowNode[], edges: [] as AtlasFlowEdge[] };
+    }
+
+    const ghostBlockLayouts = ghostBlocks.map((block, index) => {
+      const responsibility = pressureResponsibilityForBlock(block);
+      const duplicateSlot = ghostBlocks
+        .slice(0, index)
+        .filter((candidate) => pressureResponsibilityKeyForBlock(candidate) === pressureResponsibilityKeyForBlock(block))
+        .length;
+      const stagger = duplicateSlot * 72;
+
+      return {
+        block,
+        responsibility,
+        folderName: folderNameFromSuggestedTitle(block.title),
+        fileName: fileNameFromSuggestedTitle(block.title),
+        position: {
+          x: sourceCenterX + responsibility.offsetX - 74 + (responsibility.offsetX === 0 ? stagger : 0),
+          y: sourceCenterY + responsibility.offsetY - 51 + (responsibility.offsetY === 0 ? stagger : Math.sign(responsibility.offsetY) * stagger)
+        }
+      };
+    });
+    const folderGroups = [...new Set(ghostBlockLayouts.map((layout) => layout.folderName))]
+      .map((folderName) => ({
+        folderName,
+        children: ghostBlockLayouts.filter((layout) => layout.folderName === folderName)
+      }));
+
+    const folderNodes: AtlasFlowNode[] = folderGroups.map(({ folderName, children }) => {
+      const nodeId = `pressure-sim-folder:${selectedNode.id}:${folderName}`;
+      const minX = Math.min(...children.map((layout) => layout.position.x));
+      const minY = Math.min(...children.map((layout) => layout.position.y));
+      const maxX = Math.max(...children.map((layout) => layout.position.x + 148));
+      const maxY = Math.max(...children.map((layout) => layout.position.y + 102));
+      const folderWidth = Math.max(178, maxX - minX + 34);
+      const folderHeight = Math.max(142, maxY - minY + 42);
+      const folderData: AtlasNode = {
+        id: nodeId,
+        type: "folder",
+        label: `${folderName}/`,
+        path: `${selectedNode.path}::projection/${folderName}`,
+        parent: selectedNode.parent,
+        healthTier: "unscored",
+        metadata: {
+          childCount: children.length
+        },
+        layoutWidth: folderWidth,
+        layoutHeight: folderHeight,
+        layoutScale: 0.86,
+        pressureSimulationGhost: true
+      };
+
+      return {
+        id: nodeId,
+        type: "folder",
+        position: {
+          x: minX - 17,
+          y: minY - 24
+        },
+        width: folderWidth,
+        height: folderHeight,
+        draggable: false,
+        selectable: false,
+        zIndex: 70,
+        className: "pressure-ghost-node pressure-ghost-node--folder pressure-ghost-node--visible",
+        data: folderData
+      };
+    });
+
+    const fileNodes: AtlasFlowNode[] = ghostBlockLayouts.map((layout, index) => {
+      const nodeId = `pressure-sim-file:${selectedNode.id}:${index}`;
+      const fileData: AtlasNode = {
+        id: nodeId,
+        type: "file",
+        label: layout.fileName,
+        path: `${selectedNode.path}::projection/${layout.block.title}`,
+        parent: `pressure-sim-folder:${selectedNode.id}:${layout.folderName}`,
+        healthTier: "unscored",
+        metadata: {
+          extension: fileExtensionFromTitle(layout.fileName),
+          linesOfCode: 0,
+          functionCount: 0,
+          importCount: 0
+        },
+        layoutWidth: 148,
+        layoutHeight: 102,
+        layoutScale: 0.92,
+        pressureSimulationGhost: true,
+        pressureSimulationChip: `${layout.responsibility.label} ${layout.responsibility.percent}%`
+      };
+
+      return {
+        id: nodeId,
+        type: "file",
+        position: visibleFiles
+          ? layout.position
+          : { x: sourcePosition.x, y: sourcePosition.y },
+        width: 148,
+        height: 102,
+        draggable: false,
+        selectable: false,
+        zIndex: 90,
+        className: [
+          "pressure-ghost-node",
+          "pressure-ghost-node--file",
+          visibleFiles ? "pressure-ghost-node--visible" : "pressure-ghost-node--pending"
+        ].join(" "),
+        data: fileData
+      };
+    });
+
+    const fileEdges: AtlasFlowEdge[] = fileNodes.map((fileNode) => ({
+      id: `pressure-sim-edge:${sourceFlowNode.id}->${fileNode.id}`,
+      source: sourceFlowNode.id,
+      target: fileNode.id,
+      type: "structural",
+      animated: true,
+      zIndex: 75,
+      data: {
+        kind: "pressure-simulation",
+        direction: "outgoing"
+      },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: "#7dd3fc"
+      }
+    }));
+
+    return {
+      nodes: [...folderNodes, ...fileNodes],
+      edges: visibleEdges && visibleFiles ? fileEdges : []
+    };
+  }, [
+    displayedLayoutNodes,
+    manualNodePositions,
+    pressureSimulation,
+    pressureSimulationActive,
+    selectedCorridorIndex,
+    selectedFileForecast,
+    selectedNode
+  ]);
+  const renderedNodes = useMemo(
+    () => [...nodes, ...pressureSimulationProjection.nodes],
+    [nodes, pressureSimulationProjection.nodes]
+  );
+  const renderedEdges = useMemo(
+    () => [...edges, ...pressureSimulationProjection.edges],
+    [edges, pressureSimulationProjection.edges]
+  );
   const selectedFileFunctionCount = useMemo(() => {
     if (!selectedNode || selectedNode.type !== "file" || !hasFunctionMetadata(selectedNode)) {
       return 0;
@@ -3712,6 +3848,14 @@ export function GraphView({
 
     return selectedNode.metadata?.functionWaypoints?.length ?? selectedNode.metadata?.functionCount ?? 0;
   }, [selectedNode]);
+  const selectedPressureFunctionRows = useMemo(
+    () => selectedNode?.type === "file" ? pressureFunctionRowsForFile(selectedNode) : [],
+    [selectedNode]
+  );
+  const selectedPressureFunction =
+    selectedPressureFunctionRows.find((row) => row.id === selectedPressureFunctionId) ??
+    selectedPressureFunctionRows[0] ??
+    null;
   const selectedFileInspection = useMemo(() => {
     if (!selectedNode || selectedNode.type !== "file") {
       return null;
@@ -3733,113 +3877,6 @@ export function GraphView({
 
     return graph?.fileHistory?.[selectedNode.path]?.recentCommits.slice(0, 3) ?? [];
   }, [graph?.fileHistory, selectedNode]);
-  const selectedFileHealthDetails = useMemo(() => {
-    if (!selectedNode || selectedNode.type !== "file") {
-      return null;
-    }
-
-    if (
-      selectedNode.healthTier === "unscored" ||
-      typeof selectedNode.healthScore !== "number" ||
-      !selectedNode.healthComponents
-    ) {
-      return null;
-    }
-
-    return computeHealthDetails(selectedNode as GraphNode);
-  }, [selectedNode]);
-  const selectedFileHealthRankContext = useMemo(() => {
-    if (!selectedNode || selectedNode.type !== "file") {
-      return null;
-    }
-
-    return healthRankContextById.get(selectedNode.id) ?? null;
-  }, [healthRankContextById, selectedNode]);
-  const selectedFileHealthMetricRows = useMemo<HealthMetricDisplayRow[] | null>(() => {
-    if (!graph || !selectedNode || selectedNode.type !== "file" || !selectedFileHealthDetails) {
-      return null;
-    }
-
-    const functions = selectedNode.metadata?.functionWaypoints ?? [];
-    const functionCount = functions.length;
-    const detectedCallIds = calledFunctionIds(graph);
-    const duplicatedFunctions = functions.filter((waypoint) => waypoint.duplicateOf !== null);
-    const duplicationRatio = functionCount > 0 ? duplicatedFunctions.length / functionCount : 0;
-    const eligibleGhostFunctions = functions.filter(
-      (waypoint) => !isExemptFromGhostPenalty(waypoint, selectedNode.metadata?.staticEntrypoint === true)
-    );
-    const ghostCount = eligibleGhostFunctions.filter(
-      (waypoint) => !hasDetectedCallSite(selectedNode.path, waypoint, detectedCallIds)
-    ).length;
-    const ghostRatio = eligibleGhostFunctions.length > 0 ? ghostCount / eligibleGhostFunctions.length : 0;
-    const history = graph.fileHistory?.[selectedNode.path];
-    const churnValue = history?.churnRate ?? history?.commitCount ?? 0;
-    const averageCyclomatic = functionCount > 0
-      ? functions.reduce((total, waypoint) => total + Number(waypoint.cyclomaticComplexity ?? 1), 0) / functionCount
-      : 0;
-    const averageCognitive = functionCount > 0
-      ? functions.reduce((total, waypoint) => total + Number(waypoint.cognitiveComplexity ?? 0), 0) / functionCount
-      : 0;
-
-    return METADATA_HEALTH_COMPONENT_ORDER.map((componentId) => {
-      const component = selectedFileHealthDetails.components[componentId];
-
-      let valueText = "";
-      let markerPercent = 0;
-      let minLabel = "Min 0";
-      let normalLabel = "";
-      let highLabel = "";
-      if (componentId === "cyclomatic") {
-        valueText = `avg ${formatMetricNumber(averageCyclomatic)}`;
-        markerPercent = scaledMetricPercent(averageCyclomatic, 15);
-        normalLabel = "Normal <=3";
-        highLabel = "High 15+";
-      } else if (componentId === "cognitive") {
-        valueText = `avg ${formatMetricNumber(averageCognitive)}`;
-        markerPercent = scaledMetricPercent(averageCognitive, 20);
-        normalLabel = "Normal <=5";
-        highLabel = "High 20+";
-      } else if (componentId === "duplication") {
-        valueText = `${duplicatedFunctions.length}/${functionCount} functions (${formatPercent(duplicationRatio)})`;
-        markerPercent = scaledMetricPercent(duplicationRatio, 0.25);
-        normalLabel = "Normal <=10%";
-        highLabel = "High 25%+";
-      } else if (componentId === "churn") {
-        valueText = `${formatMetricNumber(churnValue)} changes/month`;
-        markerPercent = scaledMetricPercent(churnValue, 5);
-        normalLabel = "Normal <=0.5";
-        highLabel = "High 5+";
-      } else {
-        valueText = `${ghostCount}/${eligibleGhostFunctions.length} eligible functions (${formatPercent(ghostRatio)})`;
-        markerPercent = scaledMetricPercent(ghostRatio, 0.6);
-        normalLabel = "Normal <=10%";
-        highLabel = "High 60%+";
-      }
-
-      return {
-        id: component.id,
-        label: component.label,
-        valueText,
-        contributionText: `+${component.points}/${component.weight}`,
-        explanation:
-          componentId === "cyclomatic"
-            ? "Average branching complexity per function. More decision paths means lower health contribution."
-            : componentId === "cognitive"
-              ? "Average mental overhead per function. More nesting and control-flow complexity lowers the contribution."
-              : componentId === "duplication"
-                ? "Share of functions flagged as duplicates. More duplicated functions reduces the contribution."
-                : componentId === "churn"
-                  ? "Recent change frequency from git history. Files changing more often are scored as less stable."
-                  : "Share of non-exempt functions with no detected static call site. More ghost functions lowers the contribution.",
-        scale: {
-          markerPercent,
-          minLabel,
-          normalLabel,
-          highLabel
-        }
-      };
-    });
-  }, [graph, selectedFileHealthDetails, selectedNode]);
   const selectedFileRole = useMemo(() => {
     if (!selectedNode || selectedNode.type !== "file" || !selectedFileInspection) {
       return null;
@@ -4010,6 +4047,30 @@ export function GraphView({
         lastModified: sourceModalHistory?.lastModified
       }
     : undefined;
+  const sourceModalInventoryFunctionCounts = useMemo(() => {
+    if (!sourceModalFile || sourceModalInventoryMode !== "function-count") {
+      return undefined;
+    }
+
+    const functions = sourceModalFile.metadata?.functionWaypoints ?? [];
+    const complexFunctionCount = functions.filter((waypoint) =>
+      Number(waypoint.cyclomaticComplexity ?? 0) > PRESSURE_CYCLOMATIC_TARGET ||
+      Number(waypoint.cognitiveComplexity ?? 0) > PRESSURE_COGNITIVE_TARGET
+    ).length;
+
+    return [
+      {
+        id: "raw" as const,
+        label: "Functions",
+        value: Number(sourceModalFile.metadata?.functionCount ?? functions.length)
+      },
+      {
+        id: "complex" as const,
+        label: "Complex",
+        value: complexFunctionCount
+      }
+    ];
+  }, [sourceModalFile, sourceModalInventoryMode]);
   const sourceModalRuntimeNode =
     sourceModalFile && runtimeState.active
       ? runtimeState.chain?.nodes.find((node) => node.id === sourceModalFile.id)
@@ -4154,15 +4215,15 @@ export function GraphView({
     }
   }, [selectedNode, selectedRuntimeFileId, startRuntimeFromFile]);
 
-  const centerVisibleGraphNode = useCallback((node: AtlasNode) => {
+  const centerVisibleGraphNode = useCallback((node: AtlasNode, zoomFloor = 1.12, duration = 420) => {
     if (!reactFlowInstance) {
       return;
     }
 
-    const flowNode = nodes.find((candidate) => (
+    const flowNode = renderedNodes.find((candidate) => (
       flowNodeRealId(candidate) === node.id &&
       Number((candidate.data as AtlasNode).corridorIndex ?? 0) === selectedCorridorIndex
-    )) ?? nodes.find((candidate) => flowNodeRealId(candidate) === node.id);
+    )) ?? renderedNodes.find((candidate) => flowNodeRealId(candidate) === node.id);
 
     if (!flowNode) {
       return;
@@ -4170,10 +4231,50 @@ export function GraphView({
 
     const bounds = reactFlowInstance.getNodesBounds([flowNode]);
     void reactFlowInstance.setCenter(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, {
-      zoom: Math.max(reactFlowInstance.getViewport().zoom, 1.12),
-      duration: 420
+      zoom: Math.max(reactFlowInstance.getViewport().zoom, zoomFloor),
+      duration
     });
-  }, [nodes, reactFlowInstance, selectedCorridorIndex]);
+  }, [reactFlowInstance, renderedNodes, selectedCorridorIndex]);
+
+  const clearPressureSimulationTimers = useCallback(() => {
+    for (const timerId of pressureSimulationTimerRef.current) {
+      window.clearTimeout(timerId);
+    }
+
+    pressureSimulationTimerRef.current = [];
+  }, []);
+
+  const exitPressureSimulation = useCallback(() => {
+    clearPressureSimulationTimers();
+    setPressureSimulation(null);
+  }, [clearPressureSimulationTimers]);
+
+  const showPressureImpact = useCallback(() => {}, []);
+
+  const startPressureSimulation = useCallback(() => {
+    if (!selectedNode || selectedNode.type !== "file" || !selectedFileForecast?.available) {
+      return;
+    }
+
+    clearPressureSimulationTimers();
+    setMetadataForecastNodeId(selectedNode.id);
+    setFilePanelView("metadata");
+    setFocusedNodeId(selectedNode.id);
+    setPressureSimulation({ nodeId: selectedNode.id, phase: "centering" });
+    centerVisibleGraphNode(selectedNode, 1.18, 520);
+
+    pressureSimulationTimerRef.current = [
+      window.setTimeout(() => {
+        setPressureSimulation((current) => current?.nodeId === selectedNode.id ? { ...current, phase: "folders" } : current);
+      }, 300),
+      window.setTimeout(() => {
+        setPressureSimulation((current) => current?.nodeId === selectedNode.id ? { ...current, phase: "files" } : current);
+      }, 650),
+      window.setTimeout(() => {
+        setPressureSimulation((current) => current?.nodeId === selectedNode.id ? { ...current, phase: "edges" } : current);
+      }, 980)
+    ];
+  }, [centerVisibleGraphNode, clearPressureSimulationTimers, selectedFileForecast?.available, selectedNode]);
 
   const enterMetadataForecast = useCallback(() => {
     if (!selectedNode || selectedNode.type !== "file") {
@@ -4181,20 +4282,92 @@ export function GraphView({
     }
 
     setMetadataForecastNodeId(selectedNode.id);
+    setActivePressureInvestigation(null);
+    setSelectedPressureFunctionId(null);
     setFilePanelView("metadata");
     setFocusedNodeId(selectedNode.id);
     centerVisibleGraphNode(selectedNode);
   }, [centerVisibleGraphNode, selectedNode]);
 
+  const investigatePressureRule = useCallback((rule: PressureRuleCard) => {
+    if (!selectedNode || selectedNode.type !== "file") {
+      return;
+    }
+
+    if (rule.action === "function-inventory") {
+      setSourceModalInventoryMode("function-count");
+      setSourceModalFile(selectedNode);
+      return;
+    }
+
+    if (rule.action === "function-loc") {
+      const firstLargeFunction = pressureFunctionRowsForFile(selectedNode)
+        .find((row) => row.lineCount > PRESSURE_FUNCTION_LOC_TARGET);
+      setSelectedPressureFunctionId(firstLargeFunction?.id ?? null);
+    }
+
+    setActivePressureInvestigation({
+      kind: rule.action,
+      title: rule.title
+    });
+  }, [selectedNode]);
+
   const openWiresPanel = useCallback(() => {
     setMetadataForecastNodeId(null);
+    setActivePressureInvestigation(null);
+    exitPressureSimulation();
     setFilePanelView("wires");
-  }, []);
+  }, [exitPressureSimulation]);
 
   const openMetadataPanel = useCallback(() => {
     setMetadataForecastNodeId(null);
+    setActivePressureInvestigation(null);
+    exitPressureSimulation();
     setFilePanelView("metadata");
-  }, []);
+  }, [exitPressureSimulation]);
+
+  useEffect(() => {
+    return () => clearPressureSimulationTimers();
+  }, [clearPressureSimulationTimers]);
+
+  useEffect(() => {
+    if (!pressureSimulation) {
+      return;
+    }
+
+    if (selectedNode?.id !== pressureSimulation.nodeId) {
+      exitPressureSimulation();
+    }
+  }, [exitPressureSimulation, pressureSimulation, selectedNode?.id]);
+
+  useEffect(() => {
+    if (!reactFlowInstance || !pressureSimulationActive || !pressureSimulation) {
+      return;
+    }
+
+    if (pressureSimulation.phase !== "files" && pressureSimulation.phase !== "edges") {
+      return;
+    }
+
+    const simulationNodeIds = renderedNodes
+      .filter((node) => (
+        flowNodeRealId(node) === pressureSimulation.nodeId ||
+        (node.data as AtlasNode).pressureSimulationGhost === true
+      ))
+      .map((node) => ({ id: node.id }));
+
+    if (simulationNodeIds.length < 2) {
+      return;
+    }
+
+    void reactFlowInstance.fitView({
+      nodes: simulationNodeIds,
+      padding: 0.22,
+      duration: 520,
+      minZoom: 0.72,
+      maxZoom: 1.08
+    });
+  }, [pressureSimulation, pressureSimulationActive, reactFlowInstance, renderedNodes]);
 
   const focusGraphNode = useCallback((node: AtlasNode, relationshipContext?: RelationshipFollowContext) => {
     const originFileNode = selectedNode?.type === "file" ? selectedNode : null;
@@ -4553,7 +4726,7 @@ export function GraphView({
             </span>
             <span className="graph-idle-state__pill">
               <span className="graph-idle-state__dot is-indigo" />
-              <span>Refactor forecast</span>
+              <span>Pressure analysis</span>
             </span>
             <span className="graph-idle-state__pill">
               <span className="graph-idle-state__dot is-cyan" />
@@ -4593,7 +4766,8 @@ export function GraphView({
         "graph-shell",
         structuralSelectionActive ? "is-selection-mode" : "",
         refactorRiskMode ? "is-refactor-risk-mode" : "",
-        refactorRiskScanActive ? "is-refactor-risk-scanning" : ""
+        refactorRiskScanActive ? "is-refactor-risk-scanning" : "",
+        pressureSimulationActive ? "is-pressure-simulation-mode" : ""
       ].filter(Boolean).join(" ")}
       onPointerDownCapture={handleSelectionPointerDownCapture}
       onPointerMoveCapture={handleSelectionPointerMoveCapture}
@@ -4672,8 +4846,8 @@ export function GraphView({
       {refactorRiskScanActive ? <div className="refactor-risk-scanline" aria-hidden="true" /> : null}
 
       <ReactFlow<AtlasFlowNode, AtlasFlowEdge>
-        nodes={nodes}
-        edges={edges}
+        nodes={renderedNodes}
+        edges={renderedEdges}
         onNodesChange={handleNodesChange}
         edgeTypes={edgeTypes}
         nodeTypes={nodeTypes}
@@ -4719,6 +4893,7 @@ export function GraphView({
           setExpandedPanelRegion({ nodeId: null, region: null });
           setSelectedNode(null);
           setFilePanelView("metadata");
+          exitPressureSimulation();
         }}
       >
         <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="#263244" />
@@ -4774,6 +4949,27 @@ export function GraphView({
         commits={commits}
       />
 
+      {pressureSimulationActive ? (
+        <div className="pressure-simulation-header" aria-label="Simulation mode">
+          <div>
+            <strong>SIMULATION MODE</strong>
+            <span>Pressure redistribution preview</span>
+            <small>This is a projection, not an actual refactor.</small>
+          </div>
+          <div className="pressure-simulation-header__actions">
+            <button type="button" onClick={showPressureImpact} disabled={pressureSimulation?.phase !== "edges"}>Show Impact</button>
+            <button
+              type="button"
+              onClick={() => {
+                exitPressureSimulation();
+              }}
+            >
+              Exit Simulation
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="context-panel">
         <div className="context-panel__label">Structural - Level {laidOut.level + 1}</div>
         <div className="context-panel__title">{laidOut.contextLabel}</div>
@@ -4817,340 +5013,143 @@ export function GraphView({
           <aside
             className={`metadata-panel metadata-panel--file ${
               metadataForecastActive
-                ? `metadata-panel--forecast metadata-panel--forecast-${forecastInspectionMode}`
+                ? "metadata-panel--forecast metadata-panel--forecast-pressure"
                 : filePanelView === "wires"
                   ? "metadata-panel--wires"
                   : ""
             }`.trim()}
           >
-            {metadataForecastActive && selectedFileForecast && selectedForecastFlowData ? (
+            {metadataForecastActive ? (
               <>
                 <header
                   className="metadata-panel__forecast-header"
-                  aria-label={forecastInspectionMode === "simulation" ? "Refactor Simulation" : "Code Weather Forecast"}
+                  aria-label="Pressure analysis"
                 >
                   <div className="metadata-panel__forecast-title-group">
                     <div>
-                      <div className="metadata-panel__forecast-eyebrow">
-                        {forecastInspectionMode === "simulation" ? "Refactor Simulation" : "Forecast"}
-                      </div>
-                      <h2>{forecastInspectionMode === "simulation" ? "Simulate Refactor" : "Code Weather Forecast"}</h2>
+                      <h2>PRESSURE ANALYSIS</h2>
+                      <div className="metadata-panel__analysis-file">{selectedNode.label}</div>
                       <div className="metadata-panel__forecast-path">{selectedNode.path}</div>
+                      <div className="metadata-panel__analysis-count">Pressure Signals: {selectedFilePressureRules.length}</div>
                     </div>
                     <button
                       type="button"
                       className="metadata-panel__forecast-return"
                       aria-label="Return to file details"
-                      onClick={() => setMetadataForecastNodeId(null)}
+                      onClick={() => {
+                        setMetadataForecastNodeId(null);
+                        setActivePressureInvestigation(null);
+                        exitPressureSimulation();
+                      }}
                     >
-                      ← Return
+                      {"\u2190"} Return
                     </button>
                   </div>
                 </header>
 
-                <div className="metadata-panel__forecast-pager" aria-label="Forecast questions">
-                  <span>{FORECAST_FLOW_QUESTIONS[forecastInspectionMode][metadataForecastPageIndex]}</span>
-                  <div className="metadata-panel__forecast-dots" aria-label="Forecast page navigation">
-                    {FORECAST_FLOW_QUESTIONS[forecastInspectionMode].map((question, index) => (
+                {activePressureInvestigation ? (
+                  <div className="metadata-panel__analysis-surface" aria-label={`${activePressureInvestigation.title} investigation`}>
+                    <div className="metadata-panel__analysis-surface-header">
                       <button
                         type="button"
-                        className={[
-                          "metadata-panel__forecast-dot",
-                          index === metadataForecastPageIndex ? "is-active" : "",
-                          index < metadataForecastPageIndex ? "is-done" : ""
-                        ].filter(Boolean).join(" ")}
-                        key={question}
-                        aria-label={`Go to ${question}`}
-                        aria-current={index === metadataForecastPageIndex ? "step" : undefined}
-                        onClick={() => setMetadataForecastPageIndex(index)}
-                      />
-                    ))}
+                        className="metadata-panel__analysis-back"
+                        onClick={() => setActivePressureInvestigation(null)}
+                      >
+                        Rules
+                      </button>
+                      <div>
+                        <span>Investigation</span>
+                        <strong>{activePressureInvestigation.title}</strong>
+                      </div>
+                    </div>
+
+                    {activePressureInvestigation.kind === "function-loc" ? (
+                      <div className="metadata-panel__function-investigation">
+                        <div className="metadata-panel__function-rail" aria-label="Function rail">
+                          {selectedPressureFunctionRows.map((row) => (
+                            <button
+                              type="button"
+                              className={`metadata-panel__function-rail-row metadata-panel__function-rail-row--${row.tone} ${selectedPressureFunction?.id === row.id ? "is-active" : ""}`.trim()}
+                              key={row.id}
+                              onClick={() => setSelectedPressureFunctionId(row.id)}
+                            >
+                              <span>{row.name}</span>
+                              <strong>{row.lineCount}</strong>
+                            </button>
+                          ))}
+                        </div>
+                        <div className="metadata-panel__function-source">
+                          {selectedPressureFunction ? (
+                            <>
+                              <div className="metadata-panel__function-source-head">
+                                <strong>{selectedPressureFunction.name}</strong>
+                                <span>{selectedPressureFunction.lineCount} LOC</span>
+                                <span>CC {selectedPressureFunction.cyclomaticComplexity}</span>
+                                <span>Cog {selectedPressureFunction.cognitiveComplexity}</span>
+                              </div>
+                              <pre><code>{selectedPressureFunction.source || "Source unavailable."}</code></pre>
+                            </>
+                          ) : (
+                            <div className="metadata-panel__analysis-empty">No functions found.</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="metadata-panel__analysis-placeholder-panel">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                          <rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                        </svg>
+                        <strong>
+                          {activePressureInvestigation.kind === "dependency-placeholder"
+                            ? "Dependency Investigation"
+                            : activePressureInvestigation.kind === "complexity-placeholder"
+                              ? "Complexity Investigation"
+                              : "UNDER CONSTRUCTION"}
+                        </strong>
+                        <span>
+                          {activePressureInvestigation.kind === "under-construction"
+                            ? "This investigation surface is planned but not implemented yet."
+                            : "This investigation surface is planned but not implemented yet."}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                </div>
-
-                <div className="metadata-panel__forecast-page-area">
-                  {forecastInspectionMode === "weather" ? (
-                    <>
-                      <section
-                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 0 ? "is-active" : ""}`.trim()}
-                        aria-hidden={metadataForecastPageIndex !== 0}
-                      >
-                        <div className="metadata-panel__pressure-gauge">
-                          <div className="metadata-panel__pressure-label">Pressure level</div>
-                          <div className="metadata-panel__pressure-track">
-                            <div className="metadata-panel__pressure-fill" />
-                            <span
-                              className="metadata-panel__pressure-cursor"
-                              style={{ left: `${selectedForecastFlowData.pressurePercent}%` }}
-                              aria-hidden="true"
-                            />
-                          </div>
-                          <div className="metadata-panel__pressure-scale" aria-hidden="true">
-                            <span>Calm</span>
-                            <span>Warming</span>
-                            <span>Storm</span>
-                          </div>
-                          <div className={`metadata-panel__pressure-verdict metadata-panel__pressure-verdict--${selectedForecastFlowData.weatherVerdictTone}`}>
-                            {selectedForecastFlowData.weatherVerdict}
-                          </div>
-                        </div>
-
-                        <div className="metadata-panel__signal-card-grid">
-                          {selectedForecastFlowData.signalCards.map((card) => (
-                            <article className={`metadata-panel__signal-card metadata-panel__signal-card--${card.tone}`} key={card.label}>
-                              <div className="metadata-panel__signal-card-head">
-                                <span className="metadata-panel__signal-card-icon">
-                                  <ForecastFlowIcon icon={card.icon} />
-                                </span>
-                                <span>{card.label}</span>
-                              </div>
-                              <strong>{card.value}</strong>
-                              <div className="metadata-panel__signal-card-bar" aria-hidden="true">
-                                <span style={{ width: `${card.fillPercent}%` }} />
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      </section>
-
-                      <section
-                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 1 ? "is-active" : ""}`.trim()}
-                        aria-hidden={metadataForecastPageIndex !== 1}
-                      >
-                        <div className="metadata-panel__forecast-flag-list">
-                          {selectedForecastFlowData.weatherFlagRows.map((row) => (
-                            <article className={`metadata-panel__forecast-flag-row metadata-panel__forecast-flag-row--${row.severity}`} key={row.text}>
-                              <span className="metadata-panel__forecast-flag-icon">
-                                <ForecastFlowIcon icon="alert" />
-                              </span>
-                              <span>{row.text}</span>
-                              <strong>{row.severity === "high" ? "HIGH" : "MED"}</strong>
-                            </article>
-                          ))}
-                        </div>
-                      </section>
-
-                      <section
-                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 2 ? "is-active" : ""}`.trim()}
-                        aria-hidden={metadataForecastPageIndex !== 2}
-                      >
-                        <article className="metadata-panel__consequence-block">
-                          <span className="metadata-panel__consequence-icon">
-                            <ForecastFlowIcon icon="cloud-storm" />
-                          </span>
-                          <strong>{selectedForecastFlowData.consequenceTitle}</strong>
-                          <p>{selectedForecastFlowData.consequenceBody}</p>
-                          <small>Signal, not verdict. You decide when to act.</small>
-                        </article>
-                      </section>
-                    </>
-                  ) : (
-                    <>
-                      <section
-                        className={`metadata-panel__forecast-page ${metadataForecastPageIndex === 0 ? "is-active" : ""}`.trim()}
-                        aria-hidden={metadataForecastPageIndex !== 0}
-                      >
-                        <article className="metadata-panel__simulation-visual-card" aria-label="Responsibility mass">
-                          <div className="metadata-panel__simulation-card-heading">
-                            <span>Responsibility Mass</span>
-                            <strong>{selectedForecastFlowData.simulationResponsibilities.reduce((total, responsibility) => total + responsibility.percent, 0)}% claimed</strong>
-                          </div>
-                          <div className="metadata-panel__simulation-mass-map" aria-hidden="true">
-                            {selectedForecastFlowData.simulationResponsibilities.map((responsibility) => (
-                              <div
-                                className="metadata-panel__simulation-mass-block"
-                                key={responsibility.label}
-                                style={{
-                                  "--responsibility-color": responsibility.color,
-                                  "--responsibility-flex": responsibility.percent
-                                } as CSSProperties}
-                              >
-                                <strong>{responsibility.shortLabel}</strong>
-                                <span>{responsibility.percent}%</span>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="metadata-panel__simulation-mass-legend">
-                            {selectedForecastFlowData.simulationResponsibilities.map((responsibility) => (
-                              <div key={responsibility.label}>
-                                <span
-                                  className="metadata-panel__simulation-legend-dot"
-                                  style={{ "--responsibility-color": responsibility.color } as CSSProperties}
-                                  aria-hidden="true"
-                                />
-                                <span>{responsibility.label}</span>
-                                <strong>{responsibility.percent}%</strong>
-                              </div>
-                            ))}
-                          </div>
-                        </article>
-
-                        <article className="metadata-panel__simulation-visual-card" aria-label="Pressure per dimension">
-                          <div className="metadata-panel__simulation-card-heading">
-                            <span>Pressure per Dimension</span>
-                          </div>
-                          <div className="metadata-panel__simulation-pressure-list">
-                            {selectedForecastFlowData.simulationPressureDimensions.map((dimension) => (
-                              <div
-                                className={`metadata-panel__simulation-pressure-row metadata-panel__simulation-pressure-row--${dimension.tone}`}
-                                key={dimension.label}
-                              >
-                                <span>{dimension.label}</span>
-                                <div className="metadata-panel__simulation-pressure-track" aria-hidden="true">
-                                  <span style={{ width: `${dimension.fillPercent}%` }} />
-                                </div>
-                                <strong>{dimension.value}</strong>
-                              </div>
-                            ))}
-                          </div>
-                        </article>
-
-                        <div className="metadata-panel__simulation-warning-strip">
-                          This file is four files wearing a trench coat.
-                        </div>
-                      </section>
-
-                      <section
-                        className={`metadata-panel__forecast-page metadata-panel__forecast-page--pressure-release ${metadataForecastPageIndex === 1 ? "is-active" : ""}`.trim()}
-                        aria-hidden={metadataForecastPageIndex !== 1}
-                      >
-                        <article className="metadata-panel__simulation-gravity-card" aria-label="Responsibility gravity visualization">
-                          <div className="metadata-panel__simulation-gravity-title">Responsibility Gravity</div>
-                          <div className="metadata-panel__simulation-satellite-stage">
-                            <svg className="metadata-panel__simulation-satellite-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                              {selectedForecastFlowData.simulationResponsibilities.map((responsibility) => (
-                                <line
-                                  key={`${responsibility.label}:line`}
-                                  x1="50"
-                                  y1="50"
-                                  x2={responsibility.satelliteX}
-                                  y2={responsibility.satelliteY}
-                                />
-                              ))}
-                            </svg>
-                            <div className="metadata-panel__simulation-file-artifact metadata-panel__simulation-file-artifact--pressure">
-                              <div className="metadata-panel__simulation-file-fold" aria-hidden="true" />
-                              <strong>{selectedFileForecast.current.title}</strong>
-                              <small>
-                                {selectedNode.metadata?.linesOfCode ?? 2682}L {"\u00b7"} {selectedNode.metadata?.functionCount ?? selectedNode.metadata?.functionWaypoints?.length ?? 66}F
-                              </small>
-                              <span>{selectedForecastFlowData.simulationResponsibilities.length} responsibility centers</span>
-                              <div className="metadata-panel__simulation-file-bars" aria-hidden="true">
-                                {selectedForecastFlowData.simulationResponsibilities.map((responsibility) => (
-                                  <i
-                                    key={`${responsibility.label}:bar`}
-                                    style={{
-                                      "--responsibility-color": responsibility.color,
-                                      "--responsibility-width": `${responsibility.percent}%`
-                                    } as CSSProperties}
-                                  />
-                                ))}
-                              </div>
+                ) : (
+                  <div className="metadata-panel__analysis-rule-list" aria-label="Active pressure rules">
+                    {selectedFilePressureRules.length > 0 ? (
+                      selectedFilePressureRules.map((rule) => (
+                        <article className={`metadata-panel__analysis-rule-card metadata-panel__analysis-rule-card--${rule.tone}`} key={rule.id}>
+                          <div className="metadata-panel__analysis-rule-main">
+                            <span className="metadata-panel__analysis-rule-dot" aria-hidden="true" />
+                            <div>
+                              <h3>{rule.title}</h3>
+                              <p>{rule.description}</p>
                             </div>
-                            {selectedForecastFlowData.simulationResponsibilities.map((responsibility) => (
-                              <div
-                                className="metadata-panel__simulation-satellite"
-                                key={responsibility.label}
-                                style={{
-                                  "--responsibility-color": responsibility.color,
-                                  "--satellite-x": `${responsibility.satelliteX}%`,
-                                  "--satellite-y": `${responsibility.satelliteY}%`,
-                                  "--satellite-size": `${responsibility.satelliteSize}px`
-                                } as CSSProperties}
-                              >
-                                <strong>{responsibility.shortLabel}</strong>
-                                <span>{responsibility.percent}%</span>
-                              </div>
-                            ))}
                           </div>
-                          <p className="metadata-panel__simulation-caption">
-                            Each satellite represents a responsibility claiming ownership inside {selectedFileForecast.current.title}.
-                          </p>
+                          <div className="metadata-panel__analysis-rule-values">
+                            <div>
+                              <span>Current</span>
+                              <strong>{rule.current}</strong>
+                            </div>
+                            <div>
+                              <span>Target</span>
+                              <strong>{rule.target}</strong>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="metadata-panel__analysis-investigate"
+                            onClick={() => investigatePressureRule(rule)}
+                          >
+                            Investigate
+                          </button>
                         </article>
-                      </section>
-
-                      <section
-                        className={`metadata-panel__forecast-page metadata-panel__forecast-page--release-result ${metadataForecastPageIndex === 2 ? "is-active" : ""}`.trim()}
-                        aria-hidden={metadataForecastPageIndex !== 2}
-                      >
-                        <div className="metadata-panel__simulation-release-label">Release result</div>
-                        <div className="metadata-panel__simulation-release-hero" aria-label="Before and after release visualization">
-                          <svg className="metadata-panel__simulation-release-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                            <path d="M50 23 L10 73" />
-                            <path d="M50 23 L30 73" />
-                            <path d="M50 23 L50 73" />
-                            <path d="M50 23 L70 73" />
-                            <path d="M50 23 L90 73" />
-                          </svg>
-                          <div className="metadata-panel__simulation-file-artifact metadata-panel__simulation-file-artifact--release-source">
-                            <div className="metadata-panel__simulation-file-fold" aria-hidden="true" />
-                            <strong>{selectedFileForecast.current.title}</strong>
-                            <span>under pressure</span>
-                          </div>
-                          <div className="metadata-panel__simulation-release-marker">{"\u2193"} pressure released</div>
-                          <div className="metadata-panel__simulation-release-grid">
-                            {selectedForecastFlowData.simulationModuleCards.map((card) => (
-                              <article
-                                className={`metadata-panel__simulation-file-artifact metadata-panel__simulation-file-artifact--ghost ${card.status === "KEEP" ? "is-keep" : "is-new"}`}
-                                key={`${card.status}:${card.title}`}
-                              >
-                                <div className="metadata-panel__simulation-file-fold" aria-hidden="true" />
-                                <span className="metadata-panel__simulation-file-tag">{card.status}</span>
-                                <strong>{card.title}</strong>
-                                <small>{card.role}</small>
-                              </article>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="metadata-panel__simulation-release-metrics" aria-label="Before and after release metrics">
-                          {selectedForecastFlowData.simulationImpactMetrics.map((metric) => (
-                            <article className="metadata-panel__simulation-release-metric" key={metric.label}>
-                              <span>{metric.label}</span>
-                              <div className="metadata-panel__simulation-release-meter" aria-hidden="true">
-                                <i
-                                  style={{ "--metric-width": `${metric.beforeLevel * 10}%` } as CSSProperties}
-                                />
-                                <small>{"\u2192"}</small>
-                                <i
-                                  className={`metadata-panel__simulation-release-meter-after metadata-panel__simulation-release-meter-after--${metric.direction}`}
-                                  style={{ "--metric-width": `${metric.afterLevel * 10}%` } as CSSProperties}
-                                />
-                              </div>
-                              <div className="metadata-panel__simulation-release-values">
-                                <strong>{metric.before}</strong>
-                                <strong className={`metadata-panel__simulation-release-metric-after metadata-panel__simulation-release-metric-after--${metric.direction}`}>
-                                  {metric.after}
-                                </strong>
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                        <div className="metadata-panel__simulation-info-box">
-                          Each released module becomes independently reviewable. Future changes affect a smaller blast radius.
-                        </div>
-                      </section>
-                    </>
-                  )}
-                </div>
-
-                <div className="metadata-panel__forecast-nav" aria-label="Forecast page controls">
-                  <button
-                    type="button"
-                    className={`metadata-panel__forecast-nav-button ${metadataForecastPageIndex === 0 ? "is-hidden" : ""}`.trim()}
-                    onClick={() => setMetadataForecastPageIndex((page) => Math.max(0, page - 1))}
-                  >
-                    {"\u2190"} Back
-                  </button>
-                  <span>{metadataForecastPageIndex + 1} of 3</span>
-                  <button
-                    type="button"
-                    className={`metadata-panel__forecast-nav-button metadata-panel__forecast-nav-button--next ${metadataForecastPageIndex === 2 ? "is-hidden" : ""}`.trim()}
-                    onClick={() => setMetadataForecastPageIndex((page) => Math.min(2, page + 1))}
-                  >
-                    {FORECAST_FLOW_NEXT_LABELS[forecastInspectionMode][metadataForecastPageIndex]}
-                  </button>
-                </div>
+                      ))
+                    ) : (
+                      <div className="metadata-panel__analysis-empty">No active pressure rules.</div>
+                    )}
+                  </div>
+                )}
               </>
             ) : filePanelView === "wires" ? (
               <>
@@ -5270,28 +5269,73 @@ export function GraphView({
               </>
             ) : (
               <>
-            <section className="metadata-panel__section metadata-panel__header-section" aria-label="File header">
-              <div className="metadata-panel__eyebrow">File</div>
-              <div className="metadata-panel__file-title-row">
-                <div className="metadata-panel__filename">{selectedNode.label}</div>
-                {selectedNode.metadata?.extension ? (
-                  <span className="metadata-panel__ext-badge">{selectedNode.metadata.extension}</span>
+            <section
+              className={`metadata-panel__section metadata-panel__pressure-section ${selectedFileHasPressure ? "is-active" : "is-quiet"}`.trim()}
+              aria-label="Pressure"
+            >
+              <div className="metadata-panel__pressure-topline">
+                <span className="metadata-panel__pressure-title">PRESSURE</span>
+                <span
+                  className="metadata-panel__pressure-indicator"
+                  aria-label={`${selectedFileHasPressure ? selectedFilePressureRules.length : 0} pressure signals`}
+                >
+                  <span
+                    className={[
+                      "metadata-panel__pressure-dot",
+                      selectedFileHasPressure ? "is-active" : "",
+                      selectedFileHasPressure && selectedNode.healthTier === "critical" ? "is-critical" : "",
+                      selectedFileHasPressure && selectedNode.healthTier === "warning" ? "is-warning" : ""
+                    ].filter(Boolean).join(" ")}
+                    aria-hidden="true"
+                  />
+                  <span className="metadata-panel__pressure-count">
+                    {selectedFileHasPressure ? selectedFilePressureRules.length : 0}
+                  </span>
+                </span>
+              </div>
+              <button
+                type="button"
+                className="metadata-panel__pressure-analysis-button"
+                disabled={!selectedFileForecast?.available}
+                onClick={enterMetadataForecast}
+              >
+                Pressure Analysis
+              </button>
+            </section>
+
+            <CollapsibleMetadataSection
+              id="structure"
+              title="Structure"
+              summary={`${selectedFileFunctionCount} functions / ${selectedNode.metadata?.importCount ?? 0} imports`}
+              isCollapsed={collapsedFileSectionSet.has("structure")}
+              onToggle={toggleFileMetadataSection}
+            >
+              <div className="metadata-panel__file-identity">
+                <div className="metadata-panel__file-title-row">
+                  <div className="metadata-panel__filename">{selectedNode.label}</div>
+                  {selectedNode.metadata?.extension ? (
+                    <span className="metadata-panel__ext-badge">{selectedNode.metadata.extension}</span>
+                  ) : null}
+                </div>
+                <div className="metadata-panel__path">{parentDirectoryPath(selectedNode)}</div>
+                {selectedNode.metadata?.staticEntrypoint ? (
+                  <div className="metadata-panel__role-pill metadata-panel__role-pill--entrypoint">
+                    <span className="metadata-panel__role-dot" />
+                    <span>Confirmed static entrypoint</span>
+                  </div>
                 ) : null}
               </div>
-              <div className="metadata-panel__path">{parentDirectoryPath(selectedNode)}</div>
-              {selectedNode.metadata?.staticEntrypoint ? (
-                <div className="metadata-panel__role-pill metadata-panel__role-pill--entrypoint">
-                  <span className="metadata-panel__role-dot" />
-                  <span>Confirmed static entrypoint</span>
-                </div>
-              ) : null}
+
               <div className="metadata-panel__actions">
                 <button
                   type="button"
                   className="metadata-panel__button metadata-panel__button--primary"
-                  onClick={() => setSourceModalFile(selectedNode)}
+                  onClick={() => {
+                    setSourceModalInventoryMode(null);
+                    setSourceModalFile(selectedNode);
+                  }}
                 >
-                  Inspect source
+                  Inspect Code
                 </button>
                 <button
                   type="button"
@@ -5309,14 +5353,7 @@ export function GraphView({
                   <span>Wires</span>
                 </button>
               </div>
-            </section>
 
-            <CollapsibleMetadataSection
-              id="stats"
-              title="Stats"
-              isCollapsed={collapsedFileSectionSet.has("stats")}
-              onToggle={toggleFileMetadataSection}
-            >
               <div className="metadata-panel__stats-grid">
                 <div className="metadata-panel__stat">
                   <strong className={typeof selectedNode.metadata?.linesOfCode === "number" && selectedNode.metadata.linesOfCode === 0 ? "metadata-panel__stat-number metadata-panel__stat-number--zero" : "metadata-panel__stat-number"}>
@@ -5343,85 +5380,7 @@ export function GraphView({
                   <span>Imported by</span>
                 </div>
               </div>
-            </CollapsibleMetadataSection>
 
-            {selectedNode?.type === "file" ? (
-              <section className="metadata-panel__section metadata-panel__health-section" aria-label="File health">
-                <div className="metadata-panel__section-title">Health</div>
-                {selectedNode.healthTier === "unscored" ? (
-                  <>
-                    <p className="metadata-panel__health-summary">Health scoring not applicable</p>
-                    <p className="metadata-panel__health-rank">No analyzable functions in this file.</p>
-                  </>
-                ) : selectedFileHealthDetails ? (
-                  <>
-                    <div className="metadata-panel__health-score">
-                      <strong style={{ color: healthScoreColor(selectedFileHealthDetails.score) }}>
-                        {Math.round(selectedFileHealthDetails.score)}
-                      </strong>
-                      <span>/ 100</span>
-                    </div>
-                    <div className="metadata-panel__health-bars">
-                      {selectedFileHealthMetricRows?.map((row) => (
-                        <div
-                          className="metadata-panel__health-bar-row"
-                          key={row.id}
-                        >
-                          <span
-                            className="metadata-panel__health-label"
-                            onMouseEnter={(event) => showHealthTooltip(event, row, "label")}
-                            onMouseLeave={hideHealthTooltip}
-                          >
-                            {row.label}
-                          </span>
-                          <span className="metadata-panel__health-metric">
-                            <span
-                              className="metadata-panel__health-metric-value"
-                              onMouseEnter={(event) => showHealthTooltip(event, row, "scale")}
-                              onMouseLeave={hideHealthTooltip}
-                            >
-                              {row.valueText}
-                            </span>
-                            <span
-                              className="metadata-panel__health-metric-score"
-                              style={{ color: healthProblemColor(1 - selectedFileHealthDetails.components[row.id].points / selectedFileHealthDetails.components[row.id].weight) }}
-                            >
-                              {row.contributionText}
-                            </span>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="metadata-panel__health-summary">
-                      {healthSummaryText(selectedFileHealthDetails.score)}
-                    </p>
-                    {selectedFileHealthRankContext ? (
-                      <p className="metadata-panel__health-rank">
-                        Ranked {selectedFileHealthRankContext.rank} of {selectedFileHealthRankContext.total} files in this repo
-                      </p>
-                    ) : null}
-                    {selectedFileForecast?.available ? (
-                      <div className="metadata-panel__forecast-entry" aria-label="Forecast available">
-                        <span>{forecastInspectionMode === "simulation" ? "Refactor Simulation" : "Architectural Weather"}</span>
-                        <button
-                          type="button"
-                          onClick={enterMetadataForecast}
-                        >
-                          {forecastInspectionMode === "simulation" ? "Simulate Refactor" : "Forecast"}
-                        </button>
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-              </section>
-            ) : null}
-
-            <CollapsibleMetadataSection
-              id="role"
-              title="Role in codebase"
-              isCollapsed={collapsedFileSectionSet.has("role")}
-              onToggle={toggleFileMetadataSection}
-            >
               <div className="metadata-panel__role-pill">
                 <span className="metadata-panel__role-dot" />
                 <span>{selectedFileRole?.label ?? "Support module"}</span>
@@ -5431,27 +5390,6 @@ export function GraphView({
               </p>
             </CollapsibleMetadataSection>
 
-            <CollapsibleMetadataSection
-              id="recent"
-              title="Recent changes"
-              className="metadata-panel__recent-section"
-              isCollapsed={collapsedFileSectionSet.has("recent")}
-              onToggle={toggleFileMetadataSection}
-            >
-              <div className="metadata-panel__recent-list">
-                {selectedFileRecentCommits.length > 0 ? (
-                  selectedFileRecentCommits.map((commit, index) => (
-                    <div className="metadata-panel__recent-row" key={commit.hash}>
-                      <span className={`metadata-panel__recent-dot ${index === 0 ? "is-active" : ""}`.trim()} />
-                      <span className="metadata-panel__recent-message">{commit.message}</span>
-                      <span className="metadata-panel__recent-age">{formatRelativeAge(commit.date)}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="metadata-panel__empty-line">No recent commits recorded.</div>
-                )}
-              </div>
-            </CollapsibleMetadataSection>
               </>
             )}
           </aside>
@@ -5503,45 +5441,6 @@ export function GraphView({
           </aside>
         ) : null
       ) : null}
-      {healthTooltip && typeof document !== "undefined"
-        ? createPortal(
-          healthTooltip.kind === "label" ? (
-            <div
-              className="metadata-panel__health-bubble metadata-panel__health-bubble--portal"
-              role="tooltip"
-              style={{ left: healthTooltip.left, top: healthTooltip.top }}
-            >
-              {healthTooltip.row.explanation}
-            </div>
-          ) : (
-            <div
-              className="metadata-panel__health-scale-bubble metadata-panel__health-scale-bubble--portal"
-              role="tooltip"
-              style={{ left: healthTooltip.left, top: healthTooltip.top }}
-            >
-              <span className="metadata-panel__health-scale-head">
-                <strong>{healthTooltip.row.valueText}</strong>
-                <span>{healthTooltip.row.contributionText}</span>
-              </span>
-              <span className="metadata-panel__health-scale-track" aria-hidden="true">
-                <span className="metadata-panel__health-scale-segment metadata-panel__health-scale-segment--normal" />
-                <span className="metadata-panel__health-scale-segment metadata-panel__health-scale-segment--warning" />
-                <span className="metadata-panel__health-scale-segment metadata-panel__health-scale-segment--high" />
-                <span
-                  className="metadata-panel__health-scale-marker"
-                  style={{ left: `${healthTooltip.row.scale.markerPercent}%` }}
-                />
-              </span>
-              <span className="metadata-panel__health-scale-labels">
-                <span>{healthTooltip.row.scale.minLabel}</span>
-                <span>{healthTooltip.row.scale.normalLabel}</span>
-                <span>{healthTooltip.row.scale.highLabel}</span>
-              </span>
-            </div>
-          ),
-          document.body
-        )
-        : null}
       {sourceModalFile ? (
         <Suspense fallback={<div className="source-modal__backdrop"><div className="source-modal__loading">Loading Raw Source</div></div>}>
           <SourceCodeModal
@@ -5550,7 +5449,14 @@ export function GraphView({
             runtimeContext={sourceModalRuntimeContext}
             fileContext={sourceModalFileContext}
             inspectionMode={forecastInspectionMode}
-            onClose={() => setSourceModalFile(null)}
+            inventoryMode={sourceModalInventoryMode === "function-count"}
+            inventoryFunctionCounts={sourceModalInventoryFunctionCounts}
+            inventorySortExplanation={sourceModalInventoryMode === "function-count" ? "Function inventory opened from pressure analysis." : undefined}
+            inventorySortMode={sourceModalInventoryMode === "function-count" ? "complex" : undefined}
+            onClose={() => {
+              setSourceModalFile(null);
+              setSourceModalInventoryMode(null);
+            }}
           />
         </Suspense>
       ) : null}

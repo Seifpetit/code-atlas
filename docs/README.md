@@ -108,6 +108,7 @@ Archive checklist:
 - Update `docs/VOCABULARY.md` when a recurring concept, component, interaction, or technical term is introduced or renamed.
 - Update `docs/DECISIONS.md` when a product, UX, or architecture direction is accepted, reversed, or deprecated.
 - Update `docs/BUGS.md` when a bug is found, fixed, removed, deferred, or causes a feature to be disabled.
+- Use `docs/PRESSURE_RULES_SPEC.md` for the pressure-first interpretation of the Power of 10 rules in Code Atlas language, UI, and UX.
 - Use `docs/WORKFLOW.md` for the full production loop.
 - Use `docs/ai-prompts/archive-pass.md` as the prompt command for an end-of-session archive pass.
 - Use the skill specs in `docs/ai-skills/` to keep archive updates consistent.

@@ -470,10 +470,14 @@ function NodeContent({
   const importedByCount = Number(data.importedByCount ?? 0);
   const shouldShowFileFunctionCount = resolvedFunctionCount > 0;
   const shouldShowImportedByCount = importedByCount > 0;
+  const isPressureGhost = data.pressureSimulationGhost === true;
+  const pressureSimulationChip = typeof data.pressureSimulationChip === "string" ? data.pressureSimulationChip : "";
   const metaLabel =
     structuralKind === "folder"
       ? `${data.metadata?.childCount ?? 0} items`
-      : `${resolvedLinesOfCode} lines of code${shouldShowFileFunctionCount ? `, ${resolvedFunctionCount} functions` : ""}${shouldShowImportedByCount ? `, imported by ${importedByCount}` : ""}`;
+      : isPressureGhost && pressureSimulationChip
+        ? pressureSimulationChip
+        : `${resolvedLinesOfCode} lines of code${shouldShowFileFunctionCount ? `, ${resolvedFunctionCount} functions` : ""}${shouldShowImportedByCount ? `, imported by ${importedByCount}` : ""}`;
 
   if (structuralKind === "file") {
     return (
@@ -491,22 +495,28 @@ function NodeContent({
         <div className="atlas-node__label atlas-node__label--file" title={data.label}>{data.label}</div>
         {extension ? <div className="atlas-node__extension" title={extension}>{extension}</div> : null}
         <div className="atlas-node__meta atlas-node__meta--file" aria-label={metaLabel}>
-          <span className="atlas-node__file-primary-stat">
-            <span className="atlas-node__file-primary-stat-number">{resolvedLinesOfCode}</span>
-            <span className="atlas-node__file-primary-stat-unit">L</span>
-          </span>
-          {shouldShowFileFunctionCount ? (
+          {isPressureGhost && pressureSimulationChip ? (
+            <span className="atlas-node__pressure-chip">{pressureSimulationChip}</span>
+          ) : (
             <>
-              <FileStatSeparator />
-              <span className="atlas-node__file-secondary-stat">{resolvedFunctionCount}F</span>
+              <span className="atlas-node__file-primary-stat">
+                <span className="atlas-node__file-primary-stat-number">{resolvedLinesOfCode}</span>
+                <span className="atlas-node__file-primary-stat-unit">L</span>
+              </span>
+              {shouldShowFileFunctionCount ? (
+                <>
+                  <FileStatSeparator />
+                  <span className="atlas-node__file-secondary-stat">{resolvedFunctionCount}F</span>
+                </>
+              ) : null}
+              {shouldShowImportedByCount ? (
+                <>
+                  {shouldShowFileFunctionCount ? <FileStatSeparator /> : null}
+                  <span className="atlas-node__file-secondary-stat">{importedByCount}in</span>
+                </>
+              ) : null}
             </>
-          ) : null}
-          {shouldShowImportedByCount ? (
-            <>
-              {shouldShowFileFunctionCount ? <FileStatSeparator /> : null}
-              <span className="atlas-node__file-secondary-stat">{importedByCount}in</span>
-            </>
-          ) : null}
+          )}
         </div>
       </div>
     );
@@ -579,7 +589,7 @@ function FileShape(props: NodeChromeProps) {
         >
           <path
             className="atlas-node__file-paper"
-            d="M 1 101 L 1 10 L 132 10 L 147 27 L 147 101 Z"
+            d="M 9 101 Q 1 101 1 93 L 1 18 Q 1 10 9 10 L 132 10 L 147 27 L 147 93 Q 147 101 139 101 Z"
             fill="#0d1117"
             stroke="#1a2332"
             strokeWidth="1"
@@ -594,7 +604,7 @@ function FileShape(props: NodeChromeProps) {
           />
           <path
             className="atlas-node__file-accent"
-            d="M 1 10 L 132 10 L 147 27"
+            d="M 9 10 L 132 10 L 147 27"
             fill="none"
             stroke={accentColor}
             strokeWidth="3"
@@ -612,6 +622,7 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
   const historyBadge = typeof data.historyBadge === "string" ? data.historyBadge : undefined;
   const defaultNodeHeight = structuralKind === "file" ? 102 : 92;
   const viewVariant = typeof data.viewVariant === "string" ? data.viewVariant : "rect";
+  const isPressureGhost = data.pressureSimulationGhost === true;
   const refactorRiskLabel = typeof data.refactorRiskLabel === "string" ? data.refactorRiskLabel : "";
   const refactorRiskReasons = Array.isArray(data.refactorRiskReasons)
     ? data.refactorRiskReasons.filter((reason): reason is string => typeof reason === "string")
@@ -619,7 +630,8 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
   const className = [
     "atlas-node",
     `atlas-node--${structuralKind}`,
-    `atlas-node--${viewVariant}`
+    `atlas-node--${viewVariant}`,
+    isPressureGhost ? "atlas-node--pressure-ghost" : ""
   ]
     .filter(Boolean)
     .join(" ");
@@ -700,7 +712,7 @@ function AtlasNodeCard({ data, structuralKind }: { data: AtlasNode; structuralKi
           historyBadge={historyBadge}
         />
       )}
-      {structuralKind === "file" ? <FileNodeMenu data={data} /> : null}
+      {structuralKind === "file" && !isPressureGhost ? <FileNodeMenu data={data} /> : null}
       {relationStub?.outgoingCount ? (
         <button
           type="button"

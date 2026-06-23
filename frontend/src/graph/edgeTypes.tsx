@@ -13,8 +13,9 @@ export function StructuralEdge(props: EdgeProps) {
   const isLineage = data?.kind === "lineage-chain" || data?.kind === "lineage-child";
   const isRuntime = typeof data?.kind === "string" && data.kind.startsWith("runtime-");
   const isCorridorLink = data?.kind === "corridor-link";
+  const isPressureSimulation = data?.kind === "pressure-simulation";
   const direction = data?.direction === "incoming" ? "incoming" : "outgoing";
-  const mode = isLineage ? "lineage" : isRuntime ? "runtime" : isCorridorLink ? "corridor-link" : "focus";
+  const mode = isLineage ? "lineage" : isRuntime ? "runtime" : isCorridorLink ? "corridor-link" : isPressureSimulation ? "pressure-simulation" : "focus";
   const [edgePath] = getBezierPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY + laneOffset,
@@ -26,6 +27,7 @@ export function StructuralEdge(props: EdgeProps) {
   const className = [
     "structural-edge",
     isLineage ? "structural-edge--lineage" : isRuntime || isCorridorLink ? `structural-edge--${data?.kind}` : `structural-edge--${direction}`,
+    isPressureSimulation ? "structural-edge--pressure-simulation" : "",
     isCorridorLink ? `structural-edge--corridor-link-${direction}` : "",
     data?.subdued === true ? "structural-edge--subdued" : "",
     data?.kind === "lineage-child" ? "structural-edge--lineage-child" : "",
