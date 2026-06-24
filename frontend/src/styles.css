@@ -7,5 +7,6 @@
 @import "./styles/metadata-panel.css";
 @import "./styles/metadata-controls.css";
 @import "./styles/source-modal.css";
+@import "./styles/floating-window.css";
 @import "./styles/runtime.css";
 @import "./styles/responsive.css";

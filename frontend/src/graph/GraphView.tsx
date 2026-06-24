@@ -37,6 +37,7 @@ import { inactiveRuntimeState, type RuntimeState } from "../runtime/runtimeTypes
 import { RuntimeXRayOverlay } from "../runtime/RuntimeXRayOverlay";
 import { visualStateStyle } from "./attention/applyNodeVisualState";
 import { composeNodeVisualState } from "./attention/composeNodeVisualState";
+import { PressureAnalysisWindow } from "./PressureAnalysisWindow";
 import { inspectSource } from "./sourceInspection";
 import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
@@ -2183,6 +2184,7 @@ export function GraphView({
   const [sourceModalFile, setSourceModalFile] = useState<AtlasNode | null>(null);
   const [sourceModalInventoryMode, setSourceModalInventoryMode] = useState<SourceModalInventoryMode>(null);
   const [metadataForecastNodeId, setMetadataForecastNodeId] = useState<string | null>(null);
+  const [pressureAnalysisWindowOpen, setPressureAnalysisWindowOpen] = useState(false);
   const [activePressureInvestigation, setActivePressureInvestigation] = useState<ActivePressureInvestigation | null>(null);
   const [selectedPressureFunctionId, setSelectedPressureFunctionId] = useState<string | null>(null);
   const [pressureSimulation, setPressureSimulation] = useState<PressureSimulationState | null>(null);
@@ -2378,6 +2380,7 @@ export function GraphView({
     setRefactorRiskMode(false);
     setRefactorRiskScanActive(false);
     setSelectedNode(null);
+    setPressureAnalysisWindowOpen(false);
     setPageIndex(0);
     setLinkedCorridors([]);
     setCorridorLinks([]);
@@ -2413,6 +2416,7 @@ export function GraphView({
     setFilePanelView("metadata");
     setExpandedPanelRegion({ nodeId: null, region: null });
     setSelectedNode(null);
+    setPressureAnalysisWindowOpen(false);
     setPageIndex(0);
     setRuntimeNodePositions({});
     setSelectedObjectIds([]);
@@ -4258,6 +4262,7 @@ export function GraphView({
 
     clearPressureSimulationTimers();
     setMetadataForecastNodeId(selectedNode.id);
+    setPressureAnalysisWindowOpen(true);
     setFilePanelView("metadata");
     setFocusedNodeId(selectedNode.id);
     setPressureSimulation({ nodeId: selectedNode.id, phase: "centering" });
@@ -4282,6 +4287,7 @@ export function GraphView({
     }
 
     setMetadataForecastNodeId(selectedNode.id);
+    setPressureAnalysisWindowOpen(true);
     setActivePressureInvestigation(null);
     setSelectedPressureFunctionId(null);
     setFilePanelView("metadata");
@@ -5012,14 +5018,12 @@ export function GraphView({
         selectedNode.type === "file" ? (
           <aside
             className={`metadata-panel metadata-panel--file ${
-              metadataForecastActive
-                ? "metadata-panel--forecast metadata-panel--forecast-pressure"
-                : filePanelView === "wires"
-                  ? "metadata-panel--wires"
-                  : ""
+              filePanelView === "wires"
+                ? "metadata-panel--wires"
+                : ""
             }`.trim()}
           >
-            {metadataForecastActive ? (
+            {false ? (
               <>
                 <header
                   className="metadata-panel__forecast-header"
@@ -5028,8 +5032,8 @@ export function GraphView({
                   <div className="metadata-panel__forecast-title-group">
                     <div>
                       <h2>PRESSURE ANALYSIS</h2>
-                      <div className="metadata-panel__analysis-file">{selectedNode.label}</div>
-                      <div className="metadata-panel__forecast-path">{selectedNode.path}</div>
+                      <div className="metadata-panel__analysis-file">{selectedNode!.label}</div>
+                      <div className="metadata-panel__forecast-path">{selectedNode!.path}</div>
                       <div className="metadata-panel__analysis-count">Pressure Signals: {selectedFilePressureRules.length}</div>
                     </div>
                     <button
@@ -5048,7 +5052,7 @@ export function GraphView({
                 </header>
 
                 {activePressureInvestigation ? (
-                  <div className="metadata-panel__analysis-surface" aria-label={`${activePressureInvestigation.title} investigation`}>
+                  <div className="metadata-panel__analysis-surface" aria-label={`${activePressureInvestigation!.title} investigation`}>
                     <div className="metadata-panel__analysis-surface-header">
                       <button
                         type="button"
@@ -5059,11 +5063,11 @@ export function GraphView({
                       </button>
                       <div>
                         <span>Investigation</span>
-                        <strong>{activePressureInvestigation.title}</strong>
+                        <strong>{activePressureInvestigation!.title}</strong>
                       </div>
                     </div>
 
-                    {activePressureInvestigation.kind === "function-loc" ? (
+                    {activePressureInvestigation!.kind === "function-loc" ? (
                       <div className="metadata-panel__function-investigation">
                         <div className="metadata-panel__function-rail" aria-label="Function rail">
                           {selectedPressureFunctionRows.map((row) => (
@@ -5100,14 +5104,14 @@ export function GraphView({
                           <rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
                         </svg>
                         <strong>
-                          {activePressureInvestigation.kind === "dependency-placeholder"
+                          {activePressureInvestigation!.kind === "dependency-placeholder"
                             ? "Dependency Investigation"
-                            : activePressureInvestigation.kind === "complexity-placeholder"
+                            : activePressureInvestigation!.kind === "complexity-placeholder"
                               ? "Complexity Investigation"
                               : "UNDER CONSTRUCTION"}
                         </strong>
                         <span>
-                          {activePressureInvestigation.kind === "under-construction"
+                          {activePressureInvestigation!.kind === "under-construction"
                             ? "This investigation surface is planned but not implemented yet."
                             : "This investigation surface is planned but not implemented yet."}
                         </span>
@@ -5441,6 +5445,21 @@ export function GraphView({
           </aside>
         ) : null
       ) : null}
+      <PressureAnalysisWindow
+        open={pressureAnalysisWindowOpen && selectedNode?.type === "file"}
+        mode={forecastInspectionMode}
+        fileName={selectedNode?.label ?? "No file selected"}
+        filePath={selectedNode?.path}
+        pressureSignalCount={selectedFileHasPressure ? selectedFilePressureRules.length : 0}
+        pressureRules={selectedFilePressureRules}
+        activePressureInvestigation={activePressureInvestigation}
+        selectedPressureFunctionRows={selectedPressureFunctionRows}
+        selectedPressureFunction={selectedPressureFunction}
+        onInvestigateRule={investigatePressureRule}
+        onBackToRules={() => setActivePressureInvestigation(null)}
+        onSelectPressureFunctionId={setSelectedPressureFunctionId}
+        onClose={() => setPressureAnalysisWindowOpen(false)}
+      />
       {sourceModalFile ? (
         <Suspense fallback={<div className="source-modal__backdrop"><div className="source-modal__loading">Loading Raw Source</div></div>}>
           <SourceCodeModal

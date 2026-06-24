@@ -36,6 +36,7 @@ import {
 } from "./api";
 import { clusteringOptions, type ClusteringMode } from "./graph/clustering";
 import { GraphView } from "./graph/GraphView";
+import { FloatingWindowProvider } from "./ui/FloatingWindow";
 
 const SourceCodeModal = lazy(() =>
   import("./graph/SourceCodeModal").then((module) => ({ default: module.SourceCodeModal }))
@@ -1847,29 +1848,31 @@ export default function App() {
         </section>
       ) : null}
 
-      <GraphView
-        graph={graph}
-        searchTerm={searchTerm}
-        clusteringMode={clusteringMode}
-        repoUrl={repoUrl}
-        onRepoUrlChange={setRepoUrl}
-        onAnalyzeRepoUrl={handleAnalyzeRepoUrl}
-        onAnalyzeExampleRepo={handleAnalyzeExampleRepo}
-        isAnalyzing={isAnalyzing}
-        analyzeElapsedLabel={formatDuration(analyzeElapsedMs)}
-        isEstimatingAnalyze={isEstimatingAnalyze}
-        analyzeEstimateLabel={analyzeInitialEstimateLabel(analyzeEstimate)}
-        analyzeEstimateMeta={analyzeEstimateMeta(analyzeEstimate)}
-        analyzeProgressPercent={displayedAnalyzeProgress}
-        analyzeProgressMode={analyzeProgressMode}
-        analyzeProgressTransitionMs={ANALYZE_PROGRESS_TRANSITION_MS}
-        initialViewState={restoreGraphViewState}
-        viewStateKey={restoreGraphViewStateKey}
-        onViewStateChange={handleGraphViewStateChange}
-        githubConnected={githubStatus.connected}
-        githubUserLogin={githubStatus.user?.login}
-        onConnectGitHub={handleConnectGitHub}
-      />
+      <FloatingWindowProvider>
+        <GraphView
+          graph={graph}
+          searchTerm={searchTerm}
+          clusteringMode={clusteringMode}
+          repoUrl={repoUrl}
+          onRepoUrlChange={setRepoUrl}
+          onAnalyzeRepoUrl={handleAnalyzeRepoUrl}
+          onAnalyzeExampleRepo={handleAnalyzeExampleRepo}
+          isAnalyzing={isAnalyzing}
+          analyzeElapsedLabel={formatDuration(analyzeElapsedMs)}
+          isEstimatingAnalyze={isEstimatingAnalyze}
+          analyzeEstimateLabel={analyzeInitialEstimateLabel(analyzeEstimate)}
+          analyzeEstimateMeta={analyzeEstimateMeta(analyzeEstimate)}
+          analyzeProgressPercent={displayedAnalyzeProgress}
+          analyzeProgressMode={analyzeProgressMode}
+          analyzeProgressTransitionMs={ANALYZE_PROGRESS_TRANSITION_MS}
+          initialViewState={restoreGraphViewState}
+          viewStateKey={restoreGraphViewStateKey}
+          onViewStateChange={handleGraphViewStateChange}
+          githubConnected={githubStatus.connected}
+          githubUserLogin={githubStatus.user?.login}
+          onConnectGitHub={handleConnectGitHub}
+        />
+      </FloatingWindowProvider>
       {functionModalOpen && functionStatusSummary ? (
         <div className="function-modal" role="dialog" aria-modal="true" aria-label="Function inventory">
           <div className="function-modal__backdrop" onClick={closeFunctionInventory} />

@@ -6,7 +6,7 @@
   right: 16px;
   bottom: 16px;
   z-index: 9;
-  width: min(320px, calc(100vw - 32px));
+  width: min(440px, calc(100vw - 32px));
   max-height: calc(100% - 32px);
   overflow: auto;
   border: 1px solid #293548;
@@ -75,6 +75,8 @@
   height: auto;
   gap: 0;
   overflow: hidden;
+  width: min(1000px, calc(100vw - 80px));
+  height: calc(100vh - 120px);
   border-color: #1a2332;
   background: #0d1117;
   padding: 0;
@@ -700,6 +702,9 @@
 
 .metadata-panel--forecast-pressure {
   --forecast-accent: #06b6d4;
+
+  width: min(1200px, calc(100vw - 64px));
+  height: calc(100vh - 96px);
 }
 
 .metadata-panel--forecast-simulation {
