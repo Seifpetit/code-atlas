@@ -35,9 +35,10 @@ import { layoutRuntimeCorridor } from "../runtime/runtimeLayout";
 import { RuntimeScrubber } from "../runtime/RuntimeScrubber";
 import { inactiveRuntimeState, type RuntimeState } from "../runtime/runtimeTypes";
 import { RuntimeXRayOverlay } from "../runtime/RuntimeXRayOverlay";
+import { useFloatingWindowManager } from "../ui/FloatingWindow";
 import { visualStateStyle } from "./attention/applyNodeVisualState";
 import { composeNodeVisualState } from "./attention/composeNodeVisualState";
-import { PressureAnalysisWindow } from "./PressureAnalysisWindow";
+import { PressureAnalysisWindow, PRESSURE_ANALYSIS_WINDOW_ID } from "./PressureAnalysisWindow";
 import { inspectSource } from "./sourceInspection";
 import type { ClusteringMode } from "./clustering";
 import { edgeTypes } from "./edgeTypes";
@@ -2180,6 +2181,7 @@ export function GraphView({
   githubUserLogin,
   onConnectGitHub
 }: GraphViewProps) {
+  const { bringToFront } = useFloatingWindowManager();
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
   const [sourceModalFile, setSourceModalFile] = useState<AtlasNode | null>(null);
   const [sourceModalInventoryMode, setSourceModalInventoryMode] = useState<SourceModalInventoryMode>(null);
@@ -4255,6 +4257,11 @@ export function GraphView({
 
   const showPressureImpact = useCallback(() => {}, []);
 
+  const openPressureAnalysisWindow = useCallback(() => {
+    setPressureAnalysisWindowOpen(true);
+    bringToFront(PRESSURE_ANALYSIS_WINDOW_ID);
+  }, [bringToFront]);
+
   const startPressureSimulation = useCallback(() => {
     if (!selectedNode || selectedNode.type !== "file" || !selectedFileForecast?.available) {
       return;
@@ -4262,7 +4269,7 @@ export function GraphView({
 
     clearPressureSimulationTimers();
     setMetadataForecastNodeId(selectedNode.id);
-    setPressureAnalysisWindowOpen(true);
+    openPressureAnalysisWindow();
     setFilePanelView("metadata");
     setFocusedNodeId(selectedNode.id);
     setPressureSimulation({ nodeId: selectedNode.id, phase: "centering" });
@@ -4279,7 +4286,7 @@ export function GraphView({
         setPressureSimulation((current) => current?.nodeId === selectedNode.id ? { ...current, phase: "edges" } : current);
       }, 980)
     ];
-  }, [centerVisibleGraphNode, clearPressureSimulationTimers, selectedFileForecast?.available, selectedNode]);
+  }, [centerVisibleGraphNode, clearPressureSimulationTimers, openPressureAnalysisWindow, selectedFileForecast?.available, selectedNode]);
 
   const enterMetadataForecast = useCallback(() => {
     if (!selectedNode || selectedNode.type !== "file") {
@@ -4287,13 +4294,13 @@ export function GraphView({
     }
 
     setMetadataForecastNodeId(selectedNode.id);
-    setPressureAnalysisWindowOpen(true);
+    openPressureAnalysisWindow();
     setActivePressureInvestigation(null);
     setSelectedPressureFunctionId(null);
     setFilePanelView("metadata");
     setFocusedNodeId(selectedNode.id);
     centerVisibleGraphNode(selectedNode);
-  }, [centerVisibleGraphNode, selectedNode]);
+  }, [centerVisibleGraphNode, openPressureAnalysisWindow, selectedNode]);
 
   const investigatePressureRule = useCallback((rule: PressureRuleCard) => {
     if (!selectedNode || selectedNode.type !== "file") {
@@ -5023,139 +5030,7 @@ export function GraphView({
                 : ""
             }`.trim()}
           >
-            {false ? (
-              <>
-                <header
-                  className="metadata-panel__forecast-header"
-                  aria-label="Pressure analysis"
-                >
-                  <div className="metadata-panel__forecast-title-group">
-                    <div>
-                      <h2>PRESSURE ANALYSIS</h2>
-                      <div className="metadata-panel__analysis-file">{selectedNode!.label}</div>
-                      <div className="metadata-panel__forecast-path">{selectedNode!.path}</div>
-                      <div className="metadata-panel__analysis-count">Pressure Signals: {selectedFilePressureRules.length}</div>
-                    </div>
-                    <button
-                      type="button"
-                      className="metadata-panel__forecast-return"
-                      aria-label="Return to file details"
-                      onClick={() => {
-                        setMetadataForecastNodeId(null);
-                        setActivePressureInvestigation(null);
-                        exitPressureSimulation();
-                      }}
-                    >
-                      {"\u2190"} Return
-                    </button>
-                  </div>
-                </header>
-
-                {activePressureInvestigation ? (
-                  <div className="metadata-panel__analysis-surface" aria-label={`${activePressureInvestigation!.title} investigation`}>
-                    <div className="metadata-panel__analysis-surface-header">
-                      <button
-                        type="button"
-                        className="metadata-panel__analysis-back"
-                        onClick={() => setActivePressureInvestigation(null)}
-                      >
-                        Rules
-                      </button>
-                      <div>
-                        <span>Investigation</span>
-                        <strong>{activePressureInvestigation!.title}</strong>
-                      </div>
-                    </div>
-
-                    {activePressureInvestigation!.kind === "function-loc" ? (
-                      <div className="metadata-panel__function-investigation">
-                        <div className="metadata-panel__function-rail" aria-label="Function rail">
-                          {selectedPressureFunctionRows.map((row) => (
-                            <button
-                              type="button"
-                              className={`metadata-panel__function-rail-row metadata-panel__function-rail-row--${row.tone} ${selectedPressureFunction?.id === row.id ? "is-active" : ""}`.trim()}
-                              key={row.id}
-                              onClick={() => setSelectedPressureFunctionId(row.id)}
-                            >
-                              <span>{row.name}</span>
-                              <strong>{row.lineCount}</strong>
-                            </button>
-                          ))}
-                        </div>
-                        <div className="metadata-panel__function-source">
-                          {selectedPressureFunction ? (
-                            <>
-                              <div className="metadata-panel__function-source-head">
-                                <strong>{selectedPressureFunction.name}</strong>
-                                <span>{selectedPressureFunction.lineCount} LOC</span>
-                                <span>CC {selectedPressureFunction.cyclomaticComplexity}</span>
-                                <span>Cog {selectedPressureFunction.cognitiveComplexity}</span>
-                              </div>
-                              <pre><code>{selectedPressureFunction.source || "Source unavailable."}</code></pre>
-                            </>
-                          ) : (
-                            <div className="metadata-panel__analysis-empty">No functions found.</div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="metadata-panel__analysis-placeholder-panel">
-                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                          <rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                        </svg>
-                        <strong>
-                          {activePressureInvestigation!.kind === "dependency-placeholder"
-                            ? "Dependency Investigation"
-                            : activePressureInvestigation!.kind === "complexity-placeholder"
-                              ? "Complexity Investigation"
-                              : "UNDER CONSTRUCTION"}
-                        </strong>
-                        <span>
-                          {activePressureInvestigation!.kind === "under-construction"
-                            ? "This investigation surface is planned but not implemented yet."
-                            : "This investigation surface is planned but not implemented yet."}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="metadata-panel__analysis-rule-list" aria-label="Active pressure rules">
-                    {selectedFilePressureRules.length > 0 ? (
-                      selectedFilePressureRules.map((rule) => (
-                        <article className={`metadata-panel__analysis-rule-card metadata-panel__analysis-rule-card--${rule.tone}`} key={rule.id}>
-                          <div className="metadata-panel__analysis-rule-main">
-                            <span className="metadata-panel__analysis-rule-dot" aria-hidden="true" />
-                            <div>
-                              <h3>{rule.title}</h3>
-                              <p>{rule.description}</p>
-                            </div>
-                          </div>
-                          <div className="metadata-panel__analysis-rule-values">
-                            <div>
-                              <span>Current</span>
-                              <strong>{rule.current}</strong>
-                            </div>
-                            <div>
-                              <span>Target</span>
-                              <strong>{rule.target}</strong>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            className="metadata-panel__analysis-investigate"
-                            onClick={() => investigatePressureRule(rule)}
-                          >
-                            Investigate
-                          </button>
-                        </article>
-                      ))
-                    ) : (
-                      <div className="metadata-panel__analysis-empty">No active pressure rules.</div>
-                    )}
-                  </div>
-                )}
-              </>
-            ) : filePanelView === "wires" ? (
+            {filePanelView === "wires" ? (
               <>
                 <section className="metadata-panel__section metadata-panel__header-section metadata-panel__wires-header" aria-label="Wires header">
                   <div className="metadata-panel__switch-title-row">

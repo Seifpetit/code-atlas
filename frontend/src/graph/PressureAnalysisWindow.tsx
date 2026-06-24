@@ -10,6 +10,8 @@ type PressureRuleAction =
   | "under-construction";
 type PressureInvestigationKind = Exclude<PressureRuleAction, "function-inventory">;
 
+export const PRESSURE_ANALYSIS_WINDOW_ID = "pressure-analysis";
+
 export interface PressureRuleCard {
   id: string;
   title: string;
@@ -79,7 +81,7 @@ export function PressureAnalysisWindow({
 }: PressureAnalysisWindowProps) {
   return (
     <FloatingWindow
-      windowId="pressure-analysis"
+      windowId={PRESSURE_ANALYSIS_WINDOW_ID}
       title={mode === "simulation" ? "Refactor Investigation" : "Pressure Analysis"}
       centerLabel={fileName}
       open={open}
