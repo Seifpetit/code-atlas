@@ -3659,7 +3659,7 @@ export function GraphView({
       : [],
     [importedByCount, selectedFileForecast, selectedNode]
   );
-  const selectedFileHasPressure = selectedFilePressureRules.length > 0 && Boolean(selectedFileForecast?.available);
+  const selectedFileHasPressure = selectedFilePressureRules.length > 0;
   const pressureSimulationActive = Boolean(
     pressureSimulation &&
       metadataForecastActive &&
@@ -5175,7 +5175,7 @@ export function GraphView({
               <button
                 type="button"
                 className="metadata-panel__pressure-analysis-button"
-                disabled={!selectedFileForecast?.available}
+                disabled={!selectedFileHasPressure}
                 onClick={enterMetadataForecast}
               >
                 Pressure Analysis
