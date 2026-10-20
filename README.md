@@ -1,229 +1,110 @@
 # Code Atlas
 
-**You make better decisions in a codebase when you can see the full picture without being overwhelmed by it.**
+**Explore any GitHub codebase as an interactive graph, one click at a time.**
 
-→ Live: [code-atlas.up.railway.app](https://code-atlas.up.railway.app)
-→ Stack: Node.js · Express · React · React Flow · TypeScript · Docker · Railway
+[![Live demo](https://img.shields.io/badge/live-code--atlas.up.railway.app-blue)](https://code-atlas.up.railway.app)
+![TypeScript](https://img.shields.io/badge/TypeScript-React%20%2B%20Express-3178c6)
+![Deterministic](https://img.shields.io/badge/analysis-no%20LLMs-green)
 
----
+AI made code generation cheap. Understanding remained expensive. Code Atlas reduces that understanding cost: point it at a GitHub repository and it builds an interactive dependency graph of the folders, files and imports, using static AST analysis. No LLMs, no embeddings, so the same repo always produces the same graph.
 
-<!-- DEMO GIF — main canvas, navigating the graph -->
-![Code Atlas Demo](docs/demo.gif)
+The graph starts at the repository root and shows only what you ask for. You build your own mental map by drilling into folders and following imports, instead of being handed a diagram you cannot trust.
 
----
+![Code Atlas demo: navigating a repository graph, opening a file and following its imports](docs/demo.gif)
 
-## Why this exists
+## Try it
 
-I'm a student learning how to work inside large codebases from scratch. The first question you ask when onboarding a new repo isn't technical — it's spatial. *Where do I even look first?*
+Open [code-atlas.up.railway.app](https://code-atlas.up.railway.app) and either:
 
-Dumping everything at once seems smart, but it isn't. It creates noise, not clarity. You end up with a diagram you can read but don't trust, because you didn't build the mental model yourself — it was handed to you.
+- search for a public repository,
+- paste any public GitHub URL, or
+- connect your GitHub account and pick one of your own repos.
 
-Code Atlas is built around a different idea: **clarity emerges from interactivity**. You don't get the full picture upfront. You reveal it by navigating — clicking what matters to you, following the connections that make sense in context, building a mental map you actually own.
+Analysis time scales with repo size: about 15 seconds for Code Atlas itself, about 4 minutes for `facebook/react`.
 
-The result is confidence. Not just understanding what a file does, but feeling certain enough to act on it.
+## What you can do
 
----
+- **Navigate the graph**: click into folders to reveal only the current level and its neighbors. Files with many inbound imports are load-bearing, files with none are safe leaves.
+- **Inspect a file**: see lines, functions, imports, imported-by, and a plain-language role (entry point, coordinator, shared utility, leaf). Click a dependency to recenter the graph on it.
+- **Follow connections**: hover the left dot of a file to reveal who imports it, the right dot to reveal what it imports.
+- **Read source with context**: split view with a structured outline (imports, functions, variables). Variables are sorted by how widely they are referenced.
+- **Explore the timeline**: pick a commit to see which files changed and where complexity has been accumulating.
 
-## How it works
+Supported import analysis: JavaScript / TypeScript and Python.
 
-Point Code Atlas at any GitHub repository. It clones it, parses the file structure and import relationships using AST analysis, and generates an interactive spatial graph — no LLMs, no embeddings, fully deterministic. The same repo always produces the same graph.
+## Run it locally
 
-Analysis time depends on repo size:
-- Code Atlas itself → ~15s
-- facebook/react → ~4min
+You need Node.js and npm.
 
-**Three ways to get started:**
-- Search a public repo — good for studying open source projects
-- Paste any public GitHub URL
-- Connect your GitHub account and select from your own repos
-
----
-
-## What you can do with it
-
-The core design principle is what I call an **intent wall**: nothing is shown to you that you didn't ask for. The interface responds to where you click, what you focus on, and how deep you choose to go. Complexity is always there — it just stays hidden until you're ready for it.
-
----
-
-### Navigate the graph
-
-The canvas starts at the root of the repository. Folders and files are nodes, connections are import relationships. Drill down by clicking into any folder — each level reveals only the current context and its immediate neighbors.
-
-At a glance you can already read the codebase topology: files with many inbound connections are load-bearing, files with none are safe leaves. No clicking required to see that.
-
-<!-- GIF — canvas navigation, drilling into a folder, seeing the graph shift -->
-![Graph navigation](docs/screenshots/navigation.gif)
-
----
-
-### Inspect any file
-
-Click a file and the metadata panel opens on the right. You see the stats that actually matter — lines, functions, imports, imported by — and a plain-language role: entry point, coordinator, shared utility, leaf.
-
-The connectivity section shows every file this one imports and every file that imports it back. Each row is clickable. Click a dependency and the graph recenters around it.
-
-If the target file lives in a different part of the graph, a bridge path is created — connecting your current position to the target through the actual import chain, recursively. You can reset at any moment and return to where you were.
-
-<!-- GIF — clicking a file, metadata panel, clicking a dependency, graph recentering -->
-![File inspection](docs/screenshots/inspection.gif)
-
----
-
-### Follow the connections
-
-Every file node has two handle dots — one on each side. Hover the left dot to reveal all files that import this one. Hover the right dot to reveal everything this file imports. The edges only appear on intent — keeping the canvas clean until you ask.
-
-<!-- GIF — hovering handle dots, edges appearing, following a connection -->
-![Connection handles](docs/screenshots/handles.gif)
-
----
-
-### Read the source with context
-
-Hit Inspect Source and the file opens in a split view — raw code on the right, a structured outline on the left grouped by imports, functions, and variables.
-
-Click any row in the outline to jump to that line in the code. Variables are sorted by blast radius — the ones referenced most across the codebase float to the top, color-coded by scope. Before you read a single line of code you already know which variables are dangerous to touch and which ones are safe.
-
-Expand any function and it reveals its runtime placement: the 1–2 functions that call into it, and the 1–2 functions it calls out to — with a count of remaining direct calls if there are more.
-
-<!-- GIF — source inspector, clicking a function, blast radius variables -->
-![Source inspector](docs/screenshots/source.gif)
-
----
-
-### Explore the timeline
-
-The timeline view maps which files changed across commits. Select any commit to see what was touched, what shifted structurally, and where complexity has been accumulating over time.
-
-<!-- GIF — timeline view, selecting a commit, files lighting up -->
-![Timeline](docs/screenshots/timeline.gif)
-
----
-
-## How it's built
-
-No LLMs. No AI inference. Every node, every edge, every role classification comes from file system traversal, AST parsing, and static import analysis. Nothing is guessed. Nothing hallucinates.
-
-Each analysis request clones the repo, extracts structure and imports, builds the graph, then discards the clone. No repository data is stored.
-
-```
-code-atlas/
-├── backend/src/
-│   ├── extractGraph.ts       AST parsing — JS/TS import resolution
-│   ├── extractPython.ts      AST parsing — Python import resolution
-│   ├── buildGraph.ts         graph assembly from extracted nodes
-│   ├── cloneRepo.ts          temporary repo cloning + cleanup
-│   ├── gitHistory.ts         commit history extraction
-│   ├── gitDiff.ts            per-commit structural diff
-│   ├── githubAuth.ts         OAuth + repo access
-│   ├── server.ts             Express API + routes
-│   └── types.ts              shared graph types
-│
-└── frontend/src/
-    ├── App.tsx               root state + layout
-    ├── api.ts                backend communication
-    ├── graph/
-    │   ├── GraphView.tsx         main canvas — React Flow
-    │   ├── nodeTypes.tsx         file + folder node components
-    │   ├── edgeTypes.tsx         connection edge components
-    │   ├── layout.ts             spatial layout engine
-    │   ├── SourceCodeModal.tsx   source inspector split view
-    │   ├── sourceInspection.ts   outline parsing — functions, vars, imports
-    │   ├── sourceSyntaxHighlighting.ts   code highlighting
-    │   ├── filePalette.ts        file type color system
-    │   ├── overlap.ts            node collision resolution
-    │   └── attention/            focus + highlight state
-    ├── runtime/
-    │   ├── buildRuntimeChain.ts  execution path resolution
-    │   ├── runtimeLayout.ts      runtime graph projection
-    │   ├── RuntimeScrubber.tsx   runtime replay UI
-    │   └── runtimeTypes.ts       runtime data types
-    ├── history/
-    │   ├── TimelinePanel.tsx     commit timeline UI
-    │   └── historyUtils.ts       commit data helpers
-    └── time/
-        ├── TemporalScrubber.tsx  temporal navigation UI
-        ├── temporalPressure.ts   file churn + hotspot scoring
-        └── landmarkExtraction.ts structural change detection
-```
-
----
-
-## Run it yourself
-
-```bash
+```sh
 git clone https://github.com/Seifpetit/code-atlas.git
 cd code-atlas
+cd backend && npm install
+cd ../frontend && npm install
 ```
 
-Install dependencies:
+Start the backend (http://localhost:4000) in one terminal:
 
-```bash
-cd backend
-npm install
-
-cd ../frontend
-npm install
-```
-
-Start the backend in one terminal:
-
-```bash
+```sh
 cd backend
 npm run dev
 ```
 
-The API runs on:
+Start the frontend in a second terminal, then open http://localhost:5173:
 
-```text
-http://localhost:4000
-```
-
-Start the frontend in a second terminal:
-
-```bash
+```sh
 cd frontend
 npm run dev
 ```
 
-Open the Vite URL:
+Public repositories work without any further setup. Paste a URL such as `https://github.com/vitejs/vite`.
 
-```text
-http://localhost:5173
-```
+To enable "connect your GitHub account" locally, create a GitHub OAuth app with the callback URL `http://localhost:4000/auth/github/callback`, then:
 
-You can analyze public GitHub repositories without any OAuth setup. Paste a repo URL such as:
-
-```text
-https://github.com/vitejs/vite
-```
-
-To enable connected GitHub repositories locally, copy the backend env example and fill in your GitHub OAuth app values:
-
-```bash
+```sh
 cd backend
 cp .env.example .env
 ```
 
-```text
+and fill in `.env`:
+
+```sh
 GITHUB_CLIENT_ID=your_github_client_id
 GITHUB_CLIENT_SECRET=your_github_client_secret
 GITHUB_OAUTH_CALLBACK_URL=http://localhost:4000/auth/github/callback
 FRONTEND_URL=http://localhost:5173
 ```
 
-Register this callback URL in the GitHub OAuth app:
+Check that both parts build:
 
-```text
-http://localhost:4000/auth/github/callback
+```sh
+cd backend && npm run build
+cd ../frontend && npm run build
 ```
 
-Build checks:
+A `Dockerfile` is included (`npm run docker:build` at the root), and the live site is deployed on Railway.
 
-```bash
-cd backend
-npm run build
+## How it works
 
-cd ../frontend
-npm run build
-```
+Each request clones the repository, extracts its structure and imports with AST parsing, builds the graph, then discards the clone. No repository data is stored.
+
+- `backend/src/`: Express API, repo cloning, JS/TS and Python import extraction, graph assembly, git history and diffs, GitHub OAuth.
+- `frontend/src/`: React and React Flow canvas, layout engine, source inspector, runtime replay, commit timeline.
+
+Deeper docs:
+
+- [Product setup, deployment and API](docs/README.md)
+- [Vocabulary](docs/VOCABULARY.md): canonical product and interaction terms
+- [Decisions](docs/DECISIONS.md): accepted, paused and superseded product decisions
+- [UI layout](docs/UI_LAYOUT.md): dimensions, positions and color roles
+- [Workflow](docs/WORKFLOW.md) and [CONTEXT.md](CONTEXT.md): how the project is developed
+
+## Known issues
+
+- Hover tracing on connection handles was recently fixed in code but still needs visual verification in the browser. Details in [bugs.md](bugs.md) and [docs/BUGS.md](docs/BUGS.md).
+- Import analysis covers JS/TS and Python only; other languages show structure but no import edges.
+- Very large repositories take minutes to analyze.
+
+## License
+
+No license file is present in the repository yet.
